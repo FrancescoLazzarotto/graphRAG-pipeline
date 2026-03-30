@@ -1,31 +1,15 @@
 # GraphRAG Pipeline
 
-Progetto GraphRAG con retrieval su Neo4j, orchestrazione a grafo e generazione opzionale con modello locale Hugging Face.
+A simple GraphRAG project that combines Neo4j graph retrieval with an LLM-based answer pipeline.
 
-## Cosa e cambiato
+## What this project does
 
-- Refactor da monolite a package modulare in src.
-- Rimozione credenziali hardcoded: ora tutto passa da variabili ambiente.
-- CLI pronta per demo locale e sviluppo incrementale.
-- Struttura pronta per versionamento e pubblicazione su GitHub.
+- Connects to a Neo4j knowledge graph.
+- Retrieves nodes, triples, neighbors, subgraphs, and shortest paths.
+- Builds context from graph results.
+- Optionally generates answers with a local Hugging Face model.
 
-## Struttura
-
-- src/graphrag/config.py: configurazione agente e KG.
-- src/graphrag/types.py: stati e tipi condivisi.
-- src/graphrag/kg/: manager Neo4j, retriever, seed dataset.
-- src/graphrag/agent/: cache, compressione contesto, agente LangGraph.
-- src/graphrag/llm/: prompt library e manager modello locale.
-- src/graphrag/experiments/: runner esperimenti e export JSONL.
-- src/graphrag/cli.py: entrypoint da linea di comando.
-
-## Setup rapido
-
-1. Crea ambiente virtuale e installa dipendenze.
-2. Copia .env.example in .env e imposta le credenziali Neo4j.
-3. Avvia la demo.
-
-Comandi consigliati:
+## Quick start
 
 ```powershell
 python -m venv .venv
@@ -33,29 +17,21 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install -e .
 Copy-Item .env.example .env
+```
+
+Set your Neo4j credentials in `.env`, then run:
+
+```powershell
 graphrag-demo --seed-movie-dataset
 ```
 
-Per abilitare la generazione con LLM locale:
+Enable local LLM generation:
 
 ```powershell
 graphrag-demo --llm --model-id Qwen/Qwen2.5-3B-Instruct
 ```
 
-## Miglioramenti consigliati
+## Main entrypoint
 
-- Aggiungere test unitari su prompt routing e retrieval strategy.
-- Aggiungere benchmark automatici su diversi dataset.
-- Versionare prompt e config per esperimenti riproducibili.
-
-## Pubblicazione su GitHub
-
-Se non hai ancora creato il repository remoto, crealo su GitHub e poi esegui:
-
-```powershell
-git add .
-git commit -m "Initial GraphRAG modular refactor"
-git branch -M main
-git remote add origin https://github.com/<user>/<repo>.git
-git push -u origin main
-```
+- CLI: `graphrag-demo`
+- Script: `GraphRAG_v1.0.py`
