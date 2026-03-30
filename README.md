@@ -34,4 +34,3 @@ graphrag-demo --llm --model-id Qwen/Qwen2.5-3B-Instruct
 ## Main entrypoint
 
 - CLI: `graphrag-demo`
-- Script: `GraphRAG_v1.0.py`

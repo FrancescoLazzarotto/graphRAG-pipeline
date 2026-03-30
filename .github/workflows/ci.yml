@@ -19,4 +19,4 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -m compileall src GraphRAG_v1.0.py
+          python -m compileall src
