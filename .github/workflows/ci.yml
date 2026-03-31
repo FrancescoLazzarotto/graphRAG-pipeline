@@ -19,4 +19,4 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -m compileall src
+          python -m compileall src scripts

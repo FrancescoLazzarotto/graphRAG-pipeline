@@ -28,3 +28,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Cluster logs
+logs/

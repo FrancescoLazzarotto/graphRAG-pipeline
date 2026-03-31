@@ -45,6 +45,7 @@ class AgentConfig:
     decomposition_prompt: str = ""
     reflection_prompt: str = ""
     adaptive_router_prompt: str = ""
+    llm_warmup: bool = False
     enable_cache: bool = True
     cache_maxsize: int = 128
     max_content_tokens: int = 200

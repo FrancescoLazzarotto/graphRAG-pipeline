@@ -27,6 +27,10 @@ class KGRAGAgent:
         self.llm = llm
         self.compressor = ContextCompressor(config.max_content_tokens, config.token_estimator_ratio)
         self.cache = LRUCache(config.cache_maxsize) if config.enable_cache else None
+
+        if self.llm is not None and self.config.llm_warmup:
+            self.llm.warmup()
+
         self.graph = self._build_graph()
 
     def _build_graph(self):
@@ -71,7 +75,7 @@ class KGRAGAgent:
         if self.llm is None:
             return {"sub_questions": [question]}
 
-        model = self.llm.load_llm(self.llm.model_id)
+        model = self.llm.load_llm()
         output = model.invoke(rendered)
         text = output.content if hasattr(output, "content") else str(output)
         text = text.strip()
@@ -96,7 +100,7 @@ class KGRAGAgent:
         if self.llm is None:
             return {"rewritten_question": question}
 
-        model = self.llm.load_llm(self.llm.model_id)
+        model = self.llm.load_llm()
         output = model.invoke(rendered)
         rewritten = str(output.content if hasattr(output, "content") else output).strip()
         rewrite_count = state.get("rewrite_count", 0) + 1
@@ -115,7 +119,7 @@ class KGRAGAgent:
 
         prompt = PromptLibrary.adaptive_router_prompt(self.config)
         rendered = prompt.invoke({"question": question})
-        model = self.llm.load_llm(self.llm.model_id)
+        model = self.llm.load_llm()
         output = model.invoke(rendered)
         mode = str(output.content if hasattr(output, "content") else output).strip().upper()
 

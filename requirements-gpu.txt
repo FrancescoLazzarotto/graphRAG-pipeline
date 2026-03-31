@@ -1,0 +1,13 @@
+# Install a CUDA-compatible PyTorch build if your cluster requires a custom index.
+# Example: pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+torch>=2.3,<3.0
+langchain-community>=0.3,<0.4
+langchain-huggingface>=0.1,<0.2
+langchain-core>=0.3,<0.4
+langgraph>=0.2,<0.4
+transformers>=4.45,<5.0
+accelerate>=1.0,<2.0
+neo4j>=5.20,<6.0
+python-dotenv>=1.0,<2.0
+bitsandbytes>=0.43,<0.47

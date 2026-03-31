@@ -16,9 +16,13 @@ dependencies = [
     "langgraph",
     "transformers",
     "accelerate",
-    "bitsandbytes",
     "neo4j",
     "python-dotenv",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "bitsandbytes",
 ]
 
 [project.scripts]

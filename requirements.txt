@@ -1,3 +1,4 @@
+# Base dependencies (CPU-friendly)
 torch
 langchain-community
 langchain-huggingface
@@ -5,6 +6,8 @@ langchain-core
 langgraph
 transformers
 accelerate
-bitsandbytes
 neo4j
 python-dotenv
+
+# Optional GPU quantization dependency:
+# bitsandbytes
