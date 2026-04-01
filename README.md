@@ -7,7 +7,7 @@ A simple GraphRAG framework that combines Neo4j graph retrieval with an LLM-base
 - Connects to a Neo4j knowledge graph.
 - Retrieves nodes, triples, neighbors, subgraphs, and shortest paths.
 - Builds context from graph results.
-- Optionally generates answers with a local Hugging Face model.
+- Generates answers with a local Hugging Face model.
 
 ## Quick start
 
