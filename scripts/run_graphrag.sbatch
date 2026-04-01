@@ -38,6 +38,13 @@ export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME}"
 
 python scripts/smoke_check.py --check-neo4j
 
+# Hard fail if this GPU job cannot actually use CUDA.
+python -c "import torch;\
+import sys;\
+(_ for _ in ()).throw(SystemExit('CUDA is not available. Aborting GPU job to avoid CPU fallback.')) if not torch.cuda.is_available() else None;\
+print(f'CUDA detected: {torch.cuda.device_count()} device(s)');\
+[print(f'- GPU {idx}: {torch.cuda.get_device_name(idx)}') for idx in range(torch.cuda.device_count())]"
+
 CMD=(
   graphrag-demo
   --question "$QUESTION"

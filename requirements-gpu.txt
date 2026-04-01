@@ -1,7 +1,7 @@
-# Install a CUDA-compatible PyTorch build if your cluster requires a custom index.
-# Example: pip install torch --index-url https://download.pytorch.org/whl/cu124
-
-torch>=2.3,<3.0
+# Pin PyTorch GPU wheel to a known-good build for CUDA 12.x drivers.
+# The extra index is required for `+cu124` wheels.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
 langchain-community>=0.3,<0.4
 langchain-huggingface>=0.1,<0.2
 langchain-core>=0.3,<0.4
