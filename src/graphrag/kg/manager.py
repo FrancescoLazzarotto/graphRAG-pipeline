@@ -141,7 +141,7 @@ class KnowledgeGraphManager:
         RETURN DISTINCT
             elementId(s) AS subject_id,
             {self._coalesce_name_expr('s')} AS subject,
-            coalesce(r.predicate, type(r)) AS predicate,
+            coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(o) AS object_id,
             {self._coalesce_name_expr('o')} AS object,
             labels(s) AS subject_labels,
@@ -178,7 +178,7 @@ class KnowledgeGraphManager:
         RETURN DISTINCT
             elementId(startNode(r)) AS subject_id,
             {self._coalesce_name_expr('startNode(r)')} AS subject,
-            coalesce(r.predicate, type(r)) AS predicate,
+            coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(endNode(r)) AS object_id,
             {self._coalesce_name_expr('endNode(r)')} AS object,
             labels(startNode(r)) AS subject_labels,
@@ -242,7 +242,7 @@ class KnowledgeGraphManager:
         RETURN DISTINCT
             elementId(startNode(r)) AS subject_id,
             {self._coalesce_name_expr('startNode(r)')} AS subject,
-            coalesce(r.predicate, type(r)) AS predicate,
+                        coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(endNode(r)) AS object_id,
             {self._coalesce_name_expr('endNode(r)')} AS object,
             labels(startNode(r)) AS subject_labels,
@@ -278,15 +278,20 @@ class KnowledgeGraphManager:
 
     def _node_text_match_clause(self, alias: str, param_name: str, exact: bool = False) -> str:
         operator = "=" if exact else "CONTAINS"
+        properties_expr = f"properties({alias})"
         comparisons = [
-            f"toLower(coalesce(toString({alias}.{prop}), '')) {operator} toLower(${param_name})"
+            f"toLower(coalesce(toString({properties_expr}['{prop}']), '')) {operator} toLower(${param_name})"
             for prop in self.config.node_name_properties
         ]
         comparisons.append(f"elementId({alias}) {operator} ${param_name}")
         return "(" + " OR ".join(comparisons) + ")"
 
     def _coalesce_name_expr(self, alias: str) -> str:
-        props = ", ".join(f"{alias}.{prop}" for prop in self.config.node_name_properties)
+        properties_expr = f"properties({alias})"
+        props = ", ".join(
+            f"toString({properties_expr}['{prop}'])"
+            for prop in self.config.node_name_properties
+        )
         return f"coalesce({props}, elementId({alias}))"
 
     @staticmethod

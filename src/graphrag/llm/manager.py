@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import threading
 
@@ -29,16 +30,28 @@ class LLMManager:
         tokenizer = AutoTokenizer.from_pretrained(model_id)
 
         if torch.cuda.is_available():
-            base_model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                quantization_config=BitsAndBytesConfig(
-                    load_in_4bit=True,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_use_double_quant=True,
-                ),
-                device_map="auto",
-            )
+            try:
+                importlib.metadata.version("bitsandbytes")
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    quantization_config=BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.float16,
+                        bnb_4bit_use_double_quant=True,
+                    ),
+                    device_map="auto",
+                )
+            except importlib.metadata.PackageNotFoundError:
+                logger.warning(
+                    "bitsandbytes not installed: loading model on GPU without 4-bit quantization. "
+                    "Install bitsandbytes for lower VRAM usage."
+                )
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                )
         else:
             base_model = AutoModelForCausalLM.from_pretrained(
                 model_id,
@@ -85,3 +98,5 @@ class LLMManager:
         output = model.invoke(rendered)
         answer = str(output.content if hasattr(output, "content") else output).strip()
         return {"answer": answer}
+    
+        

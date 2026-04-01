@@ -40,7 +40,7 @@ CMD=(
   --entity "$ENTITY"
 )
 
-# Optional: enable LLM on CPU (usually slow).
+
 if [ "${RUN_LLM_ON_CPU:-0}" = "1" ]; then
   CMD+=(--llm --model-id "$MODEL_ID")
   if [ "${LLM_WARMUP:-0}" = "1" ]; then
