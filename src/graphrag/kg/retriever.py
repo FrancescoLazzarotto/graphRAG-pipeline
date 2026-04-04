@@ -33,7 +33,7 @@ class KGRetriever:
             triples = self.kg_store.extract_triples(
                 text=query_text,
                 labels=self.config.labels or None,
-                relationship_types=self.config.relationship_types or None,
+                relationship_types=self.config.relationship_types or None, 
                 limit=self.config.triples_limit,
             )
 

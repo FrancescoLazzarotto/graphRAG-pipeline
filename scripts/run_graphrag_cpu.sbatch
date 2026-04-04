@@ -28,7 +28,7 @@ fi
 : "${NEO4J_USERNAME:?NEO4J_USERNAME is required}"
 : "${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}"
 export NEO4J_DATABASE="${NEO4J_DATABASE:-neo4j}"
-export MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-3B-Instruct}"
+export MODEL_ID="${MODEL_ID:-Qwen/Qwen2.5-7B-Instruct}"
 export QUESTION="${QUESTION:-Who directed and acted in The Matrix?}"
 export ENTITY="${ENTITY:-The Matrix}"
 

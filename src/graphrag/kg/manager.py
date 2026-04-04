@@ -4,7 +4,10 @@ import os
 import re
 from typing import Any, Sequence
 
-from langchain_community.graphs import Neo4jGraph
+try:
+    from langchain_neo4j import Neo4jGraph
+except ImportError:  # pragma: no cover - compatibility fallback
+    from langchain_community.graphs import Neo4jGraph
 
 from graphrag.config import KGConfig
 from graphrag.types import KGNode, KGTriple

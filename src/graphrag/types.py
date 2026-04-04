@@ -24,6 +24,9 @@ class RAGState(TypedDict, total=False):
     rewrite_count: int
     text_context: str
     kg_triples: list[Triple]
+    retrieved_neighbors_count: int
+    retrieved_subgraph_count: int
+    retrieved_shortest_path_count: int
     kg_context: str
     merged_context: str
     chosen_retrieval_mode: str

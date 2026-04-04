@@ -141,10 +141,22 @@ class KGRAGAgent:
             retrieved_data = self.kg_retriever.retrieve(query)
             context = str(retrieved_data.get("context_text", ""))
         else:
+            retrieved_data = {}
             context = ""
 
         compressed_context = self.compressor.compress(context)
-        result = {"text_context": compressed_context}
+        triples = retrieved_data.get("triples", []) if isinstance(retrieved_data, dict) else []
+        neighbors = retrieved_data.get("neighbors", []) if isinstance(retrieved_data, dict) else []
+        subgraph = retrieved_data.get("subgraph", []) if isinstance(retrieved_data, dict) else []
+        shortest_path = retrieved_data.get("shortest_path", []) if isinstance(retrieved_data, dict) else []
+
+        result = {
+            "text_context": compressed_context,
+            "kg_triples": triples if isinstance(triples, list) else [],
+            "retrieved_neighbors_count": len(neighbors) if isinstance(neighbors, list) else 0,
+            "retrieved_subgraph_count": len(subgraph) if isinstance(subgraph, list) else 0,
+            "retrieved_shortest_path_count": len(shortest_path) if isinstance(shortest_path, list) else 0,
+        }
 
         if self.cache:
             self.cache.put(query, mode, result)

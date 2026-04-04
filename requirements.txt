@@ -1,6 +1,7 @@
 # Base dependencies (CPU-friendly)
 torch
 langchain-community
+langchain-neo4j
 langchain-huggingface
 langchain-core
 langgraph

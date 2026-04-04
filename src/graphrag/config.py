@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 
 
-DEFAULT_MODEL_ID = "Qwen/Qwen2.5-3B-Instruct"
+DEFAULT_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 
 class OUTPUT_TONE(enum.Enum):
