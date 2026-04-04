@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "torch",
     "langchain-community",
+    "langchain-neo4j",
     "langchain-huggingface",
     "langchain-core",
     "langgraph",

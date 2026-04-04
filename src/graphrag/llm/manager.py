@@ -52,6 +52,17 @@ class LLMManager:
                     torch_dtype=torch.float16,
                     device_map="auto",
                 )
+            except Exception as exc:  # pragma: no cover - depends on GPU/runtime setup
+                logger.warning(
+                    "bitsandbytes is installed, but 4-bit loading failed (%s). "
+                    "Falling back to standard fp16 GPU loading.",
+                    exc,
+                )
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                )
         else:
             base_model = AutoModelForCausalLM.from_pretrained(
                 model_id,

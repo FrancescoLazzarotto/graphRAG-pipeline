@@ -58,7 +58,7 @@ Required:
 Optional:
 
 - NEO4J_DATABASE (default: neo4j)
-- MODEL_ID (default: Qwen/Qwen2.5-3B-Instruct)
+- MODEL_ID (default: Qwen/Qwen2.5-7B-Instruct)
 - HF_HOME / TRANSFORMERS_CACHE for model cache location
 
 ## 4. Manual Install (Optional)
@@ -124,6 +124,34 @@ To inspect live logs:
 squeue -u $USER
 tail -f logs/graphrag-gpu-<job_id>.out
 tail -f logs/graphrag-gpu-<job_id>.err
+```
+
+## 7.1 Long Matrix Benchmark (2x A40)
+
+For long-running comparisons across retrieval strategies and LLMs, use:
+
+- `scripts/run_experiment_matrix_gpu.sbatch`
+
+Recommended submission pattern for two GPUs:
+
+```bash
+MODELS_CSV="Qwen/Qwen2.5-3B-Instruct,Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct" \
+STRATEGIES="default,text_only,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
+RUNS_PER_STRATEGY=3 \
+CONDA_ENV=graphllm \
+sbatch -p <gpu_partition> --array=0-2%2 scripts/run_experiment_matrix_gpu.sbatch
+```
+
+Notes:
+
+- `--array=0-2%2` runs up to 2 tasks concurrently (one model per task).
+- Each task requests 1 GPU, 12 CPU, 64G RAM, 24h walltime by default.
+- Override `QUESTIONS_FILE`, `OUTPUT_DIR`, and `EXPERIMENT_TAG_PREFIX` as needed.
+
+Aggregate all produced run folders with:
+
+```bash
+python scripts/analyze_matrix.py artifacts/experiments --tag-contains matrix_long
 ```
 
 ## 8. Troubleshooting

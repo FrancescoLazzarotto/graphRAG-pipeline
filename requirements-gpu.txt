@@ -3,6 +3,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.5.1+cu124
 langchain-community>=0.3,<0.4
+langchain-neo4j
 langchain-huggingface>=0.1,<0.2
 langchain-core>=0.3,<0.4
 langgraph>=0.2,<0.4

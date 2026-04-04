@@ -1,0 +1,75 @@
+Chi ha diretto The Matrix?
+Chi sono i registi di The Matrix?
+Chi ha recitato in The Matrix?
+Elenca gli attori principali di The Matrix.
+Qual e il ruolo di Keanu Reeves in The Matrix?
+Che personaggio interpreta Carrie-Anne Moss in The Matrix?
+Che personaggio interpreta Laurence Fishburne in The Matrix?
+Che personaggio interpreta Hugo Weaving in The Matrix?
+Quali persone sono collegate a The Matrix nel grafo?
+Quali relazioni partono da Keanu Reeves verso The Matrix?
+Quali relazioni partono da Carrie-Anne Moss verso The Matrix?
+Quali relazioni partono da Laurence Fishburne verso The Matrix?
+Quali relazioni partono da Hugo Weaving verso The Matrix?
+Quali relazioni collegano Lana Wachowski a The Matrix?
+Quali relazioni collegano Lilly Wachowski a The Matrix?
+Chi ha sia diretto sia lavorato sul film The Matrix?
+Nel grafo, quale nodo movie e collegato a Neo?
+Nel grafo, quale nodo movie e collegato a Trinity?
+Nel grafo, quale nodo movie e collegato a Morpheus?
+Nel grafo, quale nodo movie e collegato a Agent Smith?
+Chi interpreta Neo?
+Chi interpreta Trinity?
+Chi interpreta Morpheus?
+Chi interpreta Agent Smith?
+Qual e la tagline di The Matrix?
+In che anno e uscito The Matrix?
+Quali persone nate nel 1967 sono collegate a The Matrix?
+Quali persone nate nel 1965 sono collegate a The Matrix?
+Quali persone nate nel 1964 sono collegate a The Matrix?
+Quali persone nate nel 1961 sono collegate a The Matrix?
+Trova un percorso tra Keanu Reeves e The Matrix.
+Trova un percorso tra Lana Wachowski e The Matrix.
+Trova un percorso tra Lilly Wachowski e The Matrix.
+Trova un percorso tra Hugo Weaving e The Matrix.
+Trova un percorso tra Carrie-Anne Moss e The Matrix.
+Trova un percorso tra Laurence Fishburne e The Matrix.
+Esiste un percorso tra Neo e Lana Wachowski passando per The Matrix?
+Esiste un percorso tra Agent Smith e Lilly Wachowski passando per The Matrix?
+Chi sono i vicini di The Matrix nel grafo?
+Chi sono i vicini di Keanu Reeves nel grafo?
+Chi sono i vicini di Lana Wachowski nel grafo?
+Dammi i tripletti principali su The Matrix.
+Dammi i tripletti principali su Keanu Reeves.
+Dammi i tripletti principali su Carrie-Anne Moss.
+Dammi i tripletti principali su Laurence Fishburne.
+Dammi i tripletti principali su Hugo Weaving.
+Dammi i tripletti principali su Lana Wachowski.
+Dammi i tripletti principali su Lilly Wachowski.
+Riassumi il contesto del grafo per The Matrix.
+Riassumi il contesto del grafo per Keanu Reeves.
+Riassumi il contesto del grafo per Lana Wachowski.
+Confronta i ruoli di Neo e Morpheus in The Matrix.
+Confronta i ruoli di Trinity e Agent Smith in The Matrix.
+Quali attori del film The Matrix hanno un ruolo esplicito nel grafo?
+Quali persone hanno relazione DIRECTED con The Matrix?
+Quali persone hanno relazione ACTED_IN con The Matrix?
+Quali soggetti puntano a The Matrix nei tripletti?
+Quali oggetti compaiono nei tripletti che partono da Keanu Reeves?
+Qual e la differenza tra ACTED_IN e DIRECTED nel contesto di The Matrix?
+Quali entita collegano registi e attori nel grafo di The Matrix?
+Se parto da The Matrix, quali persone raggiungo in 1 hop?
+Se parto da The Matrix, quali relazioni vedo in 2 hop?
+Se parto da Keanu Reeves, quali relazioni vedo in 2 hop?
+Se parto da Lana Wachowski, quali relazioni vedo in 2 hop?
+Se parto da Lilly Wachowski, quali relazioni vedo in 2 hop?
+Quali coppie persona-film sono presenti nel grafo?
+Quali informazioni strutturate puoi estrarre su The Matrix?
+Quali informazioni strutturate puoi estrarre su Neo?
+Quali informazioni strutturate puoi estrarre su Trinity?
+Quali informazioni strutturate puoi estrarre su Morpheus?
+Quali informazioni strutturate puoi estrarre su Agent Smith?
+Chi sono i nodi persona collegati direttamente a The Matrix?
+Quali relazioni mostrano che The Matrix e un film diretto da due persone?
+Quali evidenze nel grafo supportano che Keanu Reeves e nel cast di The Matrix?
+Quali evidenze nel grafo supportano che Lana Wachowski e Lilly Wachowski hanno diretto The Matrix?
