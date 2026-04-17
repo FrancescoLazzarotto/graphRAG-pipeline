@@ -32,3 +32,6 @@ htmlcov/
 # Cluster logs
 logs/
 .log
+
+# Local experiment outputs
+artifacts/
