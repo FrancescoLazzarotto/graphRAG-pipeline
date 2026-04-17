@@ -80,6 +80,9 @@ def _load_rows(csv_files: list[Path]) -> list[dict[str, Any]]:
                         "confidence": _safe_float(row.get("confidence", "0")),
                         "reflection_passed": _parse_bool(row.get("reflection_passed", "false")),
                         "kg_triples_used": _safe_int(row.get("kg_triples_used", "0"), default=0),
+                        "kg_neighbors_used": _safe_int(row.get("kg_neighbors_used", "0"), default=0),
+                        "kg_subgraph_triples_used": _safe_int(row.get("kg_subgraph_triples_used", "0"), default=0),
+                        "kg_shortest_path_triples_used": _safe_int(row.get("kg_shortest_path_triples_used", "0"), default=0),
                         "sub_questions": _safe_int(row.get("sub_questions", "0"), default=0),
                     }
                 )
@@ -106,6 +109,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int | 
         confidences = [float(item["confidence"]) for item in items]
         pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(items)
         avg_triples = mean(int(item["kg_triples_used"]) for item in items)
+        avg_neighbors = mean(int(item["kg_neighbors_used"]) for item in items)
+        avg_subgraph = mean(int(item["kg_subgraph_triples_used"]) for item in items)
+        avg_shortest_path = mean(int(item["kg_shortest_path_triples_used"]) for item in items)
         avg_sub_questions = mean(int(item["sub_questions"]) for item in items)
 
         key = f"{model_id}::{strategy}"
@@ -119,6 +125,9 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int | 
             "avg_confidence": mean(confidences),
             "reflection_pass_rate": pass_rate,
             "avg_kg_triples_used": avg_triples,
+            "avg_kg_neighbors_used": avg_neighbors,
+            "avg_kg_subgraph_triples_used": avg_subgraph,
+            "avg_kg_shortest_path_triples_used": avg_shortest_path,
             "avg_sub_questions": avg_sub_questions,
         }
 
@@ -137,7 +146,7 @@ def _print_table(summary: dict[str, dict[str, float | int | str]]) -> None:
 
     header = (
         f"{'model_id':<38} {'strategy':<18} {'runs':>6} {'q':>4} {'avg_ms':>10} {'p95_ms':>10} "
-        f"{'pass_rate':>11} {'avg_conf':>10} {'avg_triples':>12} {'avg_subq':>10}"
+        f"{'pass_rate':>11} {'avg_conf':>10} {'avg_triples':>12} {'avg_neigh':>10} {'avg_subg':>10} {'avg_sp':>10} {'avg_subq':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -153,6 +162,9 @@ def _print_table(summary: dict[str, dict[str, float | int | str]]) -> None:
             f" {float(item['reflection_pass_rate']) * 100:>10.2f}%"
             f" {float(item['avg_confidence']):>10.3f}"
             f" {float(item['avg_kg_triples_used']):>12.2f}"
+            f" {float(item['avg_kg_neighbors_used']):>10.2f}"
+            f" {float(item['avg_kg_subgraph_triples_used']):>10.2f}"
+            f" {float(item['avg_kg_shortest_path_triples_used']):>10.2f}"
             f" {float(item['avg_sub_questions']):>10.2f}"
         )
 
@@ -217,6 +229,9 @@ def main() -> None:
                     "reflection_pass_rate",
                     "avg_confidence",
                     "avg_kg_triples_used",
+                    "avg_kg_neighbors_used",
+                    "avg_kg_subgraph_triples_used",
+                    "avg_kg_shortest_path_triples_used",
                     "avg_sub_questions",
                 ]
             )
@@ -232,6 +247,9 @@ def main() -> None:
                         f"{float(item['reflection_pass_rate']):.6f}",
                         f"{float(item['avg_confidence']):.6f}",
                         f"{float(item['avg_kg_triples_used']):.6f}",
+                        f"{float(item['avg_kg_neighbors_used']):.6f}",
+                        f"{float(item['avg_kg_subgraph_triples_used']):.6f}",
+                        f"{float(item['avg_kg_shortest_path_triples_used']):.6f}",
                         f"{float(item['avg_sub_questions']):.6f}",
                     ]
                 )

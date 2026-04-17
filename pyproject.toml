@@ -19,6 +19,8 @@ dependencies = [
     "accelerate",
     "neo4j",
     "python-dotenv",
+    "pymupdf",
+    "psutil",
 ]
 
 [project.optional-dependencies]

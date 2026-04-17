@@ -10,6 +10,9 @@ from .agent.core import KGRAGAgent
 from .kg.manager import KnowledgeGraphManager
 from .kg.retriever import KGRetriever
 from .llm.manager import LLMManager
+from .text_rag.agent import StandardRAGAgent
+from .text_rag.manager import TextChunk, TextRAGManager
+from .text_rag.pipeline import RetrievedTextChunk, StandardTextRAGPipeline
 from .types import KGNode, KGTriple, ProvenanceRecord, RAGState, Triple
 
 __all__ = [
@@ -23,6 +26,11 @@ __all__ = [
     "KnowledgeGraphManager",
     "KGRetriever",
     "LLMManager",
+    "StandardRAGAgent",
+    "TextChunk",
+    "TextRAGManager",
+    "RetrievedTextChunk",
+    "StandardTextRAGPipeline",
     "KGNode",
     "KGTriple",
     "ProvenanceRecord",

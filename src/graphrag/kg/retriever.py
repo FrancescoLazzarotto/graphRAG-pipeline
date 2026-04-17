@@ -1,10 +1,41 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Sequence
 
 from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.types import KGNode, KGTriple
+
+_QUOTED_ENTITY_RE = re.compile(r"[\"']([^\"']{2,})[\"']")
+_TITLE_ENTITY_RE = re.compile(r"\b(?:[A-Z][\w'-]*)(?:\s+[A-Z][\w'-]*)+\b")
+_SINGLE_TOKEN_ENTITY_RE = re.compile(r"\b[A-Z][\w'-]{2,}\b")
+_TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
+
+_QUESTION_STOPWORDS = {
+    "chi",
+    "come",
+    "cosa",
+    "quando",
+    "dove",
+    "quale",
+    "quali",
+    "perche",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "how",
+    "why",
+    "does",
+    "is",
+    "are",
+    "did",
+    "the",
+    "a",
+    "an",
+}
 
 
 class KGRetriever:
@@ -14,7 +45,8 @@ class KGRetriever:
 
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
-        entity = (self.config.entity or query_text or "").strip()
+        configured_entity = (self.config.entity or "").strip()
+        search_terms = self._build_search_terms(query_text=query_text, configured_entity=configured_entity)
 
         nodes: list[KGNode] = []
         triples: list[KGTriple] = []
@@ -22,33 +54,30 @@ class KGRetriever:
         subgraph: list[KGTriple] = []
         shortest_path: list[KGTriple] = []
 
-        if self.config.include_nodes and query_text:
-            nodes = self.kg_store.extract_nodes(
-                text=query_text,
-                labels=self.config.labels or None,
-                limit=self.config.nodes_limit,
-            )
+        if self.config.include_nodes and search_terms:
+            nodes = self._collect_nodes(search_terms=search_terms, limit=self.config.nodes_limit)
 
-        if self.config.include_triples and query_text:
-            triples = self.kg_store.extract_triples(
-                text=query_text,
-                labels=self.config.labels or None,
-                relationship_types=self.config.relationship_types or None, 
-                limit=self.config.triples_limit,
-            )
+        if self.config.include_triples and search_terms:
+            triples = self._collect_triples(search_terms=search_terms, limit=self.config.triples_limit)
 
-        seed_entities = self._seed_entities(query_text=query_text, nodes=nodes, triples=triples)
+        seed_entities = self._seed_entities(
+            query_text=query_text,
+            nodes=nodes,
+            triples=triples,
+            search_terms=search_terms,
+        )
+        resolved_entity = configured_entity or (seed_entities[0] if seed_entities else "")
 
-        if self.config.include_neighbors and entity:
+        if self.config.include_neighbors and resolved_entity:
             neighbors = self.kg_store.get_neighbors(
-                entity=entity,
+                entity=resolved_entity,
                 limit=self.config.neighbors_limit,
                 relationship_types=self.config.relationship_types or None,
             )
 
-        if self.config.include_subgraph and entity:
+        if self.config.include_subgraph and resolved_entity:
             subgraph = self.kg_store.extract_subgraph(
-                entity=entity,
+                entity=resolved_entity,
                 hops=self.config.hops,
                 limit=self.config.subgraph_limit,
                 relationship_types=self.config.relationship_types or None,
@@ -75,8 +104,9 @@ class KGRetriever:
 
         return {
             "query": query_text,
-            "entity": entity or None,
+            "entity": resolved_entity or None,
             "seed_entities": seed_entities,
+            "search_terms": search_terms,
             "nodes": nodes,
             "triples": triples,
             "neighbors": neighbors,
@@ -111,11 +141,14 @@ class KGRetriever:
         query_text: str,
         nodes: Sequence[KGNode],
         triples: Sequence[KGTriple],
+        search_terms: Sequence[str],
     ) -> list[str]:
         seeds: list[str] = []
 
         if self.config.entity:
             seeds.append(self.config.entity.strip())
+
+        seeds.extend(search_terms)
 
         for node in nodes:
             text = node.get("text", "").strip()
@@ -132,6 +165,92 @@ class KGRetriever:
             seeds.append(query_text)
 
         return self._unique_values(seeds)
+
+    def _build_search_terms(self, query_text: str, configured_entity: str) -> list[str]:
+        terms: list[str] = []
+
+        if configured_entity:
+            terms.append(configured_entity)
+
+        if query_text:
+            terms.extend(self._extract_entity_candidates(query_text))
+
+            # Only use full question text when short, otherwise entity candidates are more precise.
+            if len(_TOKEN_RE.findall(query_text)) <= 8:
+                terms.append(query_text)
+
+        if not terms and query_text:
+            terms.append(query_text)
+
+        return self._unique_values(terms)
+
+    def _extract_entity_candidates(self, text: str) -> list[str]:
+        candidates: list[str] = []
+
+        for match in _QUOTED_ENTITY_RE.findall(text):
+            value = match.strip()
+            if value:
+                candidates.append(value)
+
+        for phrase in _TITLE_ENTITY_RE.findall(text):
+            value = phrase.strip()
+            if value:
+                candidates.append(value)
+
+        for token in _SINGLE_TOKEN_ENTITY_RE.findall(text):
+            if token.lower() not in _QUESTION_STOPWORDS:
+                candidates.append(token)
+
+        return self._unique_values(candidates)
+
+    def _collect_nodes(self, search_terms: Sequence[str], limit: int) -> list[KGNode]:
+        if limit <= 0:
+            return []
+
+        collected: list[KGNode] = []
+        seen: set[str] = set()
+
+        for term in search_terms:
+            rows = self.kg_store.extract_nodes(
+                text=term,
+                labels=self.config.labels or None,
+                limit=limit,
+            )
+            for row in rows:
+                key = self._node_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+                if len(collected) >= limit:
+                    return collected
+
+        return collected
+
+    def _collect_triples(self, search_terms: Sequence[str], limit: int) -> list[KGTriple]:
+        if limit <= 0:
+            return []
+
+        collected: list[KGTriple] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for term in search_terms:
+            rows = self.kg_store.extract_triples(
+                text=term,
+                labels=self.config.labels or None,
+                relationship_types=self.config.relationship_types or None,
+                limit=limit,
+            )
+            for row in rows:
+                key = self._triple_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+                if len(collected) >= limit:
+                    return collected
+
+        return collected
 
     def _build_context_sections(
         self,
@@ -174,3 +293,26 @@ class KGRetriever:
                 seen.add(normalized)
                 unique.append(normalized)
         return unique
+
+    @staticmethod
+    def _node_key(node: KGNode) -> str:
+        node_id = str(node.get("node_id", "")).strip()
+        if node_id:
+            return f"id:{node_id}"
+        text = str(node.get("text", "")).strip().lower()
+        return f"text:{text}"
+
+    @staticmethod
+    def _triple_key(triple: KGTriple) -> tuple[str, str, str]:
+        subject_id = str(triple.get("subject_id", "")).strip()
+        object_id = str(triple.get("object_id", "")).strip()
+        predicate = str(triple.get("predicate", "")).strip().lower()
+
+        if subject_id and object_id:
+            return (f"id:{subject_id}", predicate, f"id:{object_id}")
+
+        subject = str(triple.get("subject", "")).strip().lower()
+        obj = str(triple.get("object", "")).strip().lower()
+        return (subject, predicate, obj)
+
+
