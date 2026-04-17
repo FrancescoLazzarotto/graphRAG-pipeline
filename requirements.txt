@@ -9,6 +9,8 @@ transformers
 accelerate
 neo4j
 python-dotenv
+pymupdf
+psutil
 
 # Optional GPU quantization dependency:
 # bitsandbytes

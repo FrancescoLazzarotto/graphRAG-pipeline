@@ -25,6 +25,9 @@ def _load_rows(csv_path: Path) -> list[dict[str, object]]:
                     "confidence": float(row.get("confidence", "0") or 0.0),
                     "reflection_passed": _parse_bool(row.get("reflection_passed", "false")),
                     "kg_triples_used": int(float(row.get("kg_triples_used", "0") or 0.0)),
+                    "kg_neighbors_used": int(float(row.get("kg_neighbors_used", "0") or 0.0)),
+                    "kg_subgraph_triples_used": int(float(row.get("kg_subgraph_triples_used", "0") or 0.0)),
+                    "kg_shortest_path_triples_used": int(float(row.get("kg_shortest_path_triples_used", "0") or 0.0)),
                     "sub_questions": int(float(row.get("sub_questions", "0") or 0.0)),
                 }
             )
@@ -42,6 +45,9 @@ def _aggregate(rows: list[dict[str, object]]) -> dict[str, dict[str, float | int
         confidences = [float(item["confidence"]) for item in items]
         pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(items)
         avg_triples = mean(int(item["kg_triples_used"]) for item in items)
+        avg_neighbors = mean(int(item["kg_neighbors_used"]) for item in items)
+        avg_subgraph = mean(int(item["kg_subgraph_triples_used"]) for item in items)
+        avg_shortest_path = mean(int(item["kg_shortest_path_triples_used"]) for item in items)
         avg_sub_questions = mean(int(item["sub_questions"]) for item in items)
 
         summary[strategy] = {
@@ -51,6 +57,9 @@ def _aggregate(rows: list[dict[str, object]]) -> dict[str, dict[str, float | int
             "avg_confidence": mean(confidences),
             "reflection_pass_rate": pass_rate,
             "avg_kg_triples_used": avg_triples,
+            "avg_kg_neighbors_used": avg_neighbors,
+            "avg_kg_subgraph_triples_used": avg_subgraph,
+            "avg_kg_shortest_path_triples_used": avg_shortest_path,
             "avg_sub_questions": avg_sub_questions,
         }
 
@@ -78,7 +87,7 @@ def _print_table(summary: dict[str, dict[str, float | int]]) -> None:
 
     header = (
         f"{'strategy':<22} {'runs':>6} {'avg_ms':>10} {'p95_ms':>10} "
-        f"{'pass_rate':>11} {'avg_conf':>10} {'avg_triples':>12} {'avg_subq':>10}"
+        f"{'pass_rate':>11} {'avg_conf':>10} {'avg_triples':>12} {'avg_neigh':>10} {'avg_subg':>10} {'avg_sp':>10} {'avg_subq':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -92,6 +101,9 @@ def _print_table(summary: dict[str, dict[str, float | int]]) -> None:
             f" {float(stats['reflection_pass_rate']) * 100:>10.2f}%"
             f" {float(stats['avg_confidence']):>10.3f}"
             f" {float(stats['avg_kg_triples_used']):>12.2f}"
+            f" {float(stats['avg_kg_neighbors_used']):>10.2f}"
+            f" {float(stats['avg_kg_subgraph_triples_used']):>10.2f}"
+            f" {float(stats['avg_kg_shortest_path_triples_used']):>10.2f}"
             f" {float(stats['avg_sub_questions']):>10.2f}"
         )
 

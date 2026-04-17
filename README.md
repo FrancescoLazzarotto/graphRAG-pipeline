@@ -83,6 +83,67 @@ sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 ```
 
+## Standard Text RAG Pipeline (documents)
+
+The repository includes a base text-only retrieval pipeline for document RAG:
+
+- PDF ingestion via PyMuPDF
+- Text chunking with overlap
+- In-memory retrieval scoring
+
+Quick smoke test on local documents:
+
+```bash
+python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
+```
+
+Smoke test on a specific PDF + markdown:
+
+```bash
+python scripts/smoke_text_rag.py /path/to/file.pdf README.md --query "What are the prerequisites?"
+```
+
+Programmatic entrypoint:
+
+- `graphrag.text_rag.pipeline.StandardTextRAGPipeline`
+
+### Combined Standard RAG + GraphRAG Matrix
+
+You can run a single matrix that includes:
+
+- standard text RAG strategies
+- GraphRAG strategies (`default`, `text_only`, `text_plus_triples`, `neighbors_focus`, `subgraph_2hop`, `shortest_path`)
+
+Smoke-first run (small test):
+
+```bash
+python scripts/run_retrieval_matrix.py \
+	--smoke \
+	--questions-file artifacts/experiments/questions_smoke.txt \
+	--documents docs/ README.md \
+	--runs-per-strategy 1 \
+	--output-dir artifacts/experiments \
+	--experiment-tag retrieval_matrix_smoke
+```
+
+Larger run (all strategies):
+
+```bash
+python scripts/run_retrieval_matrix.py \
+	--questions-file questions.txt \
+	--documents /path/to/docs /path/to/pdfs \
+	--runs-per-strategy 3 \
+	--output-dir artifacts/experiments \
+	--experiment-tag retrieval_matrix_full
+```
+
+Resource telemetry is enabled by default in `run_retrieval_matrix.py` and records CPU/RAM/GPU samples.
+
+Useful flags:
+
+- `--resource-sample-interval 1.0` to control sampling period (seconds)
+- `--no-monitor-resources` to disable telemetry
+
 ## Main entrypoint
 
 - CLI: `graphrag-demo`
@@ -128,6 +189,8 @@ Produced artifacts:
 - `results.csv`: tabular format for spreadsheet/pandas analysis
 - `summary.txt`: quick human-readable overview
 - `summary.json`: structured aggregate metrics per strategy
+- `resource_samples.jsonl`: time-series samples for CPU/RAM/GPU usage
+- `resource_summary.json`: aggregate peaks/averages for sizing comparisons
 
 Analyze a run directory:
 
@@ -139,6 +202,15 @@ Save aggregated metrics to JSON:
 
 ```bash
 python scripts/analyze_experiments.py artifacts/experiments/<run_folder> --save-json artifacts/experiments/<run_folder>/analysis.json
+```
+
+Aggregate resource telemetry across many runs (for multi-LLM sizing):
+
+```bash
+python scripts/analyze_resource_usage.py artifacts/experiments \
+	--tag-contains retrieval_matrix \
+	--save-json artifacts/experiments/resource_usage_summary.json \
+	--save-csv artifacts/experiments/resource_usage_summary.csv
 ```
 
 ## Long Cluster Matrix Benchmark (2x A40)

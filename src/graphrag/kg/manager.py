@@ -237,9 +237,12 @@ class KnowledgeGraphManager:
         max_depth: int = 6,
     ) -> list[KGTriple]:
         cypher = f"""
-        MATCH (a), (b)
+        MATCH (a)
         WHERE {self._node_text_match_clause('a', 'entity_a', exact=True)}
-          AND {self._node_text_match_clause('b', 'entity_b', exact=True)}
+        WITH DISTINCT a
+        MATCH (b)
+        WHERE {self._node_text_match_clause('b', 'entity_b', exact=True)}
+        WITH DISTINCT a, b
         MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
         UNWIND relationships(p) AS r
         RETURN DISTINCT

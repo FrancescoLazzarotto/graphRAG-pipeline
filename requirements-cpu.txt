@@ -8,3 +8,5 @@ transformers>=4.45,<5.0
 accelerate>=1.0,<2.0
 neo4j>=5.20,<6.0
 python-dotenv>=1.0,<2.0
+pymupdf>=1.24,<2.0
+psutil>=5.9,<7.0

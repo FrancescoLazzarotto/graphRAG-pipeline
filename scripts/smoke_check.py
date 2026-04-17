@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 def _check_import(module_name: str) -> tuple[bool, str]:
     try:
@@ -63,6 +65,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
+
+    # Keep pre-existing environment variables, but populate missing values from .env.
+    load_dotenv(override=False)
 
     required_modules = [
         "torch",
