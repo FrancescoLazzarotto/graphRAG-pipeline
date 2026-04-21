@@ -119,3 +119,10 @@ class TextRAGManager:
             score += query_frequency * (1.0 + math.log(document_frequency)) * (idf * idf)
 
         return score / norm
+
+
+    def _check_text():
+        NotImplementedError
+        
+    def _score_check():
+        NotImplementedError
