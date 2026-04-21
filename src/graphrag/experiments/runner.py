@@ -3,13 +3,32 @@ from __future__ import annotations
 import csv
 import dataclasses
 import json
+import logging
+import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 
 class SupportsInvoke(Protocol):
     def invoke(self, question: str) -> dict[str, Any]:
         ...
+
+
+logger = logging.getLogger("graphrag.experiments")
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -29,22 +48,141 @@ class ExperimentResult:
 
 
 class ExperimentRunner:
-    def __init__(self, questions: list[str]) -> None:
+    def __init__(self, questions: list[str], existing_results: list[ExperimentResult] | None = None) -> None:
         self.questions = questions
         self.results: list[ExperimentResult] = []
+        self._completed_keys: set[tuple[str, str, str, int]] = set()
+
+        if existing_results:
+            loaded = self.add_existing_results(existing_results)
+            logger.info("Loaded %d existing checkpoint rows", loaded)
+
+    @staticmethod
+    def completion_key(strategy: str, question: str, framework: str, run_index: int) -> tuple[str, str, str, int]:
+        return (strategy, question, framework, int(run_index))
+
+    def _result_completion_key(self, result: ExperimentResult) -> tuple[str, str, str, int]:
+        framework = str(result.metadata.get("framework", "unknown"))
+        run_index = _safe_int(result.metadata.get("run_index", 1), default=1)
+        return self.completion_key(
+            strategy=result.strategy,
+            question=result.question,
+            framework=framework,
+            run_index=run_index,
+        )
+
+    def has_completion(self, strategy: str, question: str, framework: str, run_index: int) -> bool:
+        return self.completion_key(strategy, question, framework, run_index) in self._completed_keys
+
+    def completed_count(self) -> int:
+        return len(self._completed_keys)
+
+    def add_existing_results(self, results: list[ExperimentResult]) -> int:
+        loaded = 0
+        duplicates = 0
+        for result in results:
+            completion_key = self._result_completion_key(result)
+            if completion_key in self._completed_keys:
+                duplicates += 1
+                continue
+            self.results.append(result)
+            self._completed_keys.add(completion_key)
+            loaded += 1
+
+        if duplicates:
+            logger.warning("Skipped %d duplicate checkpoint rows", duplicates)
+        return loaded
+
+    @staticmethod
+    def load_jsonl(path: str) -> list[ExperimentResult]:
+        rows: list[ExperimentResult] = []
+
+        with open(path, "r", encoding="utf-8") as input_file:
+            for line_number, raw_line in enumerate(input_file, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping invalid JSON at %s:%d", path, line_number)
+                    continue
+
+                if not isinstance(payload, dict):
+                    logger.warning("Skipping non-object payload at %s:%d", path, line_number)
+                    continue
+
+                metadata = payload.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+
+                rows.append(
+                    ExperimentResult(
+                        strategy=str(payload.get("strategy", "")),
+                        question=str(payload.get("question", "")),
+                        answer=str(payload.get("answer", "")),
+                        latency_ms=_safe_float(payload.get("latency_ms", 0.0), default=0.0),
+                        confidence=_safe_float(payload.get("confidence", 0.0), default=0.0),
+                        reflection_passed=bool(payload.get("reflection_passed", True)),
+                        kg_triples_used=_safe_int(payload.get("kg_triples_used", 0), default=0),
+                        kg_neighbors_used=_safe_int(payload.get("kg_neighbors_used", 0), default=0),
+                        kg_subgraph_triples_used=_safe_int(payload.get("kg_subgraph_triples_used", 0), default=0),
+                        kg_shortest_path_triples_used=_safe_int(payload.get("kg_shortest_path_triples_used", 0), default=0),
+                        sub_questions=_safe_int(payload.get("sub_questions", 0), default=0),
+                        metadata=metadata,
+                    )
+                )
+
+        return rows
 
     def run_agent(
         self,
         agent: SupportsInvoke,
         label: str,
         run_metadata: dict[str, Any] | None = None,
+        on_result: Callable[[ExperimentResult], None] | None = None,
     ) -> list[ExperimentResult]:
         batch: list[ExperimentResult] = []
-        for question in self.questions:
+        total_questions = len(self.questions)
+        framework = str(run_metadata.get("framework", "unknown")) if run_metadata else "unknown"
+        run_index = _safe_int(run_metadata.get("run_index", 1), default=1) if run_metadata else 1
+
+        for question_index, question in enumerate(self.questions, start=1):
+            completion_key = self.completion_key(
+                strategy=label,
+                question=question,
+                framework=framework,
+                run_index=run_index,
+            )
+            if completion_key in self._completed_keys:
+                logger.info(
+                    "Progress skip framework=%s strategy=%s run=%s question=%d/%d (already checkpointed)",
+                    framework,
+                    label,
+                    run_index,
+                    question_index,
+                    total_questions,
+                )
+                continue
+
+            logger.info(
+                "Progress start framework=%s strategy=%s run=%s question=%d/%d",
+                framework,
+                label,
+                run_index,
+                question_index,
+                total_questions,
+            )
+
+            question_start = time.perf_counter()
             state = agent.invoke(question)
+            invoke_latency_ms = (time.perf_counter() - question_start) * 1000.0
             metadata: dict[str, Any] = {"run_id": state.get("run_id", "")}
             if run_metadata:
                 metadata.update(run_metadata)
+            metadata.setdefault("framework", framework)
+            metadata.setdefault("run_index", run_index)
             result = ExperimentResult(
                 strategy=label,
                 question=question,
@@ -59,9 +197,24 @@ class ExperimentRunner:
                 sub_questions=len(state.get("sub_questions", [])) if isinstance(state.get("sub_questions", []), list) else 0,
                 metadata=metadata,
             )
-            batch.append(result)
 
-        self.results.extend(batch)
+            logger.info(
+                "Progress done framework=%s strategy=%s run=%s question=%d/%d latency_ms=%.2f invoke_ms=%.2f",
+                framework,
+                label,
+                run_index,
+                question_index,
+                total_questions,
+                result.latency_ms,
+                invoke_latency_ms,
+            )
+
+            self.results.append(result)
+            self._completed_keys.add(completion_key)
+            if on_result is not None:
+                on_result(result)
+
+            batch.append(result)
         return batch
 
     def compare(self) -> dict[str, list[ExperimentResult]]:
