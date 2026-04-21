@@ -26,6 +26,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed-movie-dataset", action="store_true")
     parser.add_argument("--llm", action="store_true", help="Enable Hugging Face local generation")
     parser.add_argument("--llm-warmup", action="store_true", help="Preload model at startup")
+    parser.add_argument("--max-new-tokens", type=int, default=256, help="Maximum generated tokens per response")
+    parser.add_argument(
+        "--gpu-memory-fraction",
+        type=float,
+        default=0.92,
+        help="Fraction of each GPU memory reserved for model placement (0,1]",
+    )
+    parser.add_argument(
+        "--allow-large-model-fp16-fallback",
+        action="store_true",
+        help="Allow fp16 fallback for large models when 4-bit quantized loading fails",
+    )
     parser.add_argument("--experiment", action="store_true", help="Run batch experiments and persist outputs")
     parser.add_argument("--questions-file", help="Path to a UTF-8 text file with one question per line")
     parser.add_argument("--strategies", default="default", help="Comma-separated strategy presets")
@@ -33,6 +45,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="artifacts/experiments")
     parser.add_argument("--experiment-tag", default="")
     return parser
+
+
+def _build_llm_manager(args: argparse.Namespace, warmup: bool) -> LLMManager | None:
+    if not args.llm:
+        return None
+
+    return LLMManager(
+        model_id=args.model_id,
+        warmup=warmup,
+        max_new_tokens=args.max_new_tokens,
+        gpu_memory_fraction=args.gpu_memory_fraction,
+        allow_large_model_fp16_fallback=args.allow_large_model_fp16_fallback,
+    )
 
 
 def _build_base_config(args: argparse.Namespace) -> AgentConfig:
@@ -118,7 +143,7 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
         raise ValueError("--strategies must include at least one strategy")
 
     base_config = _build_base_config(args)
-    llm_manager = LLMManager(model_id=args.model_id, warmup=args.llm_warmup) if args.llm else None
+    llm_manager = _build_llm_manager(args=args, warmup=args.llm_warmup)
     runner = ExperimentRunner(questions=questions)
 
     for strategy in strategies:
@@ -133,6 +158,9 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "run_index": run_index,
                     "model_id": args.model_id if args.llm else "none",
                     "llm_enabled": args.llm,
+                    "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                    "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
                 },
             )
 
@@ -158,6 +186,13 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                 "questions_count": len(questions),
                 "strategies": strategies,
                 "runs_per_strategy": args.runs_per_strategy,
+                "llm": {
+                    "enabled": args.llm,
+                    "model_id": args.model_id if args.llm else "none",
+                    "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                    "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
+                },
                 "stats": runner.summary_stats(),
             },
             ensure_ascii=False,
@@ -186,6 +221,10 @@ def main() -> None:
 
     if args.llm_warmup and not args.llm:
         parser.error("--llm-warmup requires --llm")
+    if args.max_new_tokens < 1:
+        parser.error("--max-new-tokens must be >= 1")
+    if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
+        parser.error("--gpu-memory-fraction must be in (0, 1]")
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -204,7 +243,7 @@ def main() -> None:
     config = _build_base_config(args)
 
     retriever = KGRetriever(kg_store=kg_manager, config=config)
-    llm_manager = LLMManager(model_id=args.model_id) if args.llm else None
+    llm_manager = _build_llm_manager(args=args, warmup=False)
 
     agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
     result = agent.invoke(args.question)
