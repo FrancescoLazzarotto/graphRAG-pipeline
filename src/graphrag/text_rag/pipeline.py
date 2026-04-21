@@ -59,7 +59,10 @@ class StandardTextRAGPipeline:
             raise ValueError("chunk_overlap must be smaller than chunk_size")
         if min_chunk_chars < 1:
             raise ValueError("min_chunk_chars must be >= 1")
-
+        if chunk_overlap > 180:
+            raise ValueError("chunk_overlap can't be over 180")
+        
+        
         self.retriever = retriever or TextRAGManager()
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
