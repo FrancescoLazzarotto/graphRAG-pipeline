@@ -120,9 +120,3 @@ class TextRAGManager:
 
         return score / norm
 
-
-    def _check_text():
-        NotImplementedError
-        
-    def _score_check():
-        NotImplementedError
