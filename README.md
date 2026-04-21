@@ -42,6 +42,43 @@ Enable local LLM generation:
 graphrag-demo --llm --model-id Qwen/Qwen2.5-7B-Instruct
 ```
 
+Production-oriented tuning for larger open models:
+
+```bash
+graphrag-demo \
+	--llm \
+	--model-id Qwen/Qwen2.5-14B-Instruct \
+	--max-new-tokens 128 \
+	--gpu-memory-fraction 0.90
+```
+
+Notes:
+
+- `--max-new-tokens` reduces generation cost without changing model size/capability.
+- `--gpu-memory-fraction` reserves headroom to reduce OOM/termination during loading.
+- For large models (>=30B), fp16 fallback is disabled by default if 4-bit loading fails (safer for production). Enable only if needed with `--allow-large-model-fp16-fallback`.
+- Optional env toggle for batch jobs: `GRAPHRAG_ALLOW_LARGE_MODEL_FP16_FALLBACK=1`.
+
+If you use gated Hugging Face models (for example `meta-llama/*`), request access on the model page and authenticate first:
+
+```bash
+conda activate graphllm
+export HF_TOKEN="<your-hf-token>"
+# Run directly with env token (no login required):
+python -m graphrag.cli --llm --model-id meta-llama/Llama-3.1-70B
+
+# Optional: persist token in Hugging Face cache for this user:
+$CONDA_PREFIX/bin/python -m huggingface_hub.commands.huggingface_cli login --token "$HF_TOKEN"
+```
+
+You can also provide a token via environment variable:
+
+```bash
+export HF_TOKEN="<your-hf-token>"
+```
+
+Note: in some environments, `hf` and `huggingface-cli` can point to stale user-local shims. Prefer the env-pinned `python -m ...` command above.
+
 ## Cluster setup
 
 - CPU nodes: install [requirements-cpu.txt](requirements-cpu.txt)
