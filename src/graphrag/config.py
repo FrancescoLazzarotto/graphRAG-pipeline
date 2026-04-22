@@ -46,6 +46,8 @@ class AgentConfig:
     reflection_prompt: str = ""
     adaptive_router_prompt: str = ""
     llm_warmup: bool = False
+    enable_decomposition_step: bool = False
+    enable_adaptive_routing_step: bool = False
     enable_cache: bool = True
     cache_maxsize: int = 128
     max_content_tokens: int = 200
