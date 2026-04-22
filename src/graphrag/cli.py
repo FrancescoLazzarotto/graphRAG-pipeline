@@ -26,6 +26,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed-movie-dataset", action="store_true")
     parser.add_argument("--llm", action="store_true", help="Enable Hugging Face local generation")
     parser.add_argument("--llm-warmup", action="store_true", help="Preload model at startup")
+    parser.add_argument(
+        "--enable-decomposition-step",
+        action="store_true",
+        help="Enable LLM decomposition step before retrieval",
+    )
+    parser.add_argument(
+        "--enable-adaptive-routing-step",
+        action="store_true",
+        help="Enable LLM adaptive routing step before retrieval",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=256, help="Maximum generated tokens per response")
     parser.add_argument(
         "--gpu-memory-fraction",
@@ -70,6 +80,8 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         include_subgraph=True,
         include_shortest_path=True,
         llm_warmup=args.llm_warmup,
+        enable_decomposition_step=args.enable_decomposition_step,
+        enable_adaptive_routing_step=args.enable_adaptive_routing_step,
     )
 
 
@@ -161,6 +173,8 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
                     "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
+                    "enable_decomposition_step": args.enable_decomposition_step,
+                    "enable_adaptive_routing_step": args.enable_adaptive_routing_step,
                 },
             )
 
@@ -192,6 +206,10 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
                     "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
+                },
+                "agent_pipeline": {
+                    "enable_decomposition_step": args.enable_decomposition_step,
+                    "enable_adaptive_routing_step": args.enable_adaptive_routing_step,
                 },
                 "stats": runner.summary_stats(),
             },
