@@ -69,6 +69,9 @@ class KGRAGAgent:
         if not question:
             return {"sub_questions": []}
 
+        if not self.config.enable_decomposition_step:
+            return {"sub_questions": [question]}
+
         prompt = PromptLibrary.decomposition_prompt(self.config)
         rendered = prompt.invoke({"question": question})
 
@@ -114,6 +117,9 @@ class KGRAGAgent:
 
     def _adaptive_route(self, state: RAGState) -> dict:
         question = state.get("question", "").strip()
+        if not self.config.enable_adaptive_routing_step:
+            return {"chosen_retrieval_mode": "HYBRID"}
+
         if not self.llm:
             return {"chosen_retrieval_mode": "TEXT"}
 
