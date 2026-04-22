@@ -1,0 +1,4 @@
+question,ground_truth,expected_entities_json,gold_triples_json,notes
+"Chi ha diretto The Matrix?","Lana Wachowski e Lilly Wachowski","[\"Lana Wachowski\", \"Lilly Wachowski\", \"The Matrix\"]","[{\"subject\":\"Lana Wachowski\",\"predicate\":\"DIRECTED\",\"object\":\"The Matrix\"},{\"subject\":\"Lilly Wachowski\",\"predicate\":\"DIRECTED\",\"object\":\"The Matrix\"}]","example factual question"
+"Chi ha recitato in The Matrix?","Keanu Reeves, Carrie-Anne Moss, Laurence Fishburne e Hugo Weaving","[\"Keanu Reeves\", \"Carrie-Anne Moss\", \"Laurence Fishburne\", \"Hugo Weaving\", \"The Matrix\"]","[]","fill exact triple labels if available"
+"In che anno e uscito The Matrix?","1999","[\"The Matrix\", \"1999\"]","[]","year answer"

@@ -1,0 +1,9 @@
+# Optional dependencies for evaluation workflows in this folder.
+# Install with:
+# conda run -n graphllm python -m pip install -r evaluation/requirements.txt
+
+ragas>=0.1.10
+pandas>=2.0
+datasets>=2.14
+bert-score>=0.3.13
+sentence-transformers>=2.2.2
