@@ -4,8 +4,9 @@ from graphrag.kg.manager import KnowledgeGraphManager
 
 
 def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
+    kg_manager.clear()
+
     cypher_query = """
-    -- MOVIES
     MERGE (m1:Movie {title: 'The Matrix'})
     ON CREATE SET m1.released = 1999, m1.tagline = 'Welcome to the Real World', m1.budget_usd = 63000000, m1.box_office_usd = 467222728
     MERGE (m2:Movie {title: 'The Matrix Reloaded'})
@@ -15,11 +16,9 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (m4:Movie {title: 'The Matrix Resurrections'})
     ON CREATE SET m4.released = 2021, m4.tagline = 'Return to the Source', m4.budget_usd = 160000000, m4.box_office_usd = 157451968
     MERGE (m5:Movie {title: 'John Wick'})
-    ON CREATE SET m5.released = 2014, m5.tagline = 'Don''t set him off', m5.budget_usd = 20000000, m5.box_office_usd = 426047111
+    ON CREATE SET m5.released = 2014, m5.tagline = 'Dont set him off', m5.budget_usd = 20000000, m5.box_office_usd = 426047111
     MERGE (m6:Movie {title: 'Speed'})
     ON CREATE SET m6.released = 1994, m6.tagline = 'Pop quiz hotshot', m6.budget_usd = 70000000, m6.box_office_usd = 274912974
-    
-    -- PEOPLE - ACTORS
     MERGE (k:Person {name: 'Keanu Reeves', profession: 'Actor'}) ON CREATE SET k.born = 1964, k.birthplace = 'Beirut'
     MERGE (c:Person {name: 'Carrie-Anne Moss', profession: 'Actress'}) ON CREATE SET c.born = 1967, c.birthplace = 'Vancouver'
     MERGE (l:Person {name: 'Laurence Fishburne', profession: 'Actor'}) ON CREATE SET l.born = 1961, l.birthplace = 'Augusta'
@@ -27,29 +26,17 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (j:Person {name: 'Jada Pinkett Smith', profession: 'Actress'}) ON CREATE SET j.born = 1971
     MERGE (m:Person {name: 'Matt Dillon', profession: 'Actor'}) ON CREATE SET m.born = 1962
     MERGE (y:Person {name: 'Yahya Abdul-Mateen II', profession: 'Actor'}) ON CREATE SET y.born = 1986
-    
-    -- PEOPLE - DIRECTORS
     MERGE (lana:Person {name: 'Lana Wachowski', profession: 'Director'}) ON CREATE SET lana.born = 1965, lana.birthplace = 'Chicago'
     MERGE (lilly:Person {name: 'Lilly Wachowski', profession: 'Director'}) ON CREATE SET lilly.born = 1967, lilly.birthplace = 'Chicago'
     MERGE (dc:Person {name: 'David Leitch', profession: 'Director'}) ON CREATE SET dc.born = 1975
     MERGE (jp:Person {name: 'Jan de Bont', profession: 'Director'}) ON CREATE SET jp.born = 1943
-    
-    -- PEOPLE - SCREENWRITERS
-    MERGE (lw1:Person {name: 'Lana Wachowski', profession: 'Screenwriter'})
-    MERGE (lw2:Person {name: 'Lilly Wachowski', profession: 'Screenwriter'})
     MERGE (ls:Person {name: 'Laszlo Kovacs', profession: 'Cinematographer'}) ON CREATE SET ls.born = 1933
-    
-    -- PEOPLE - PRODUCERS
     MERGE (jc:Person {name: 'Joel Silver', profession: 'Producer'}) ON CREATE SET jc.born = 1952
     MERGE (bm:Person {name: 'Basil Iwanyk', profession: 'Producer'}) ON CREATE SET bm.born = 1969
-    
-    -- GENRES
     MERGE (sci_fi:Genre {name: 'Science Fiction'})
     MERGE (action:Genre {name: 'Action'})
     MERGE (thriller:Genre {name: 'Thriller'})
     MERGE (cyberpunk:Genre {name: 'Cyberpunk'})
-    
-    -- MATRIX RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['Neo'], screen_time_minutes: 145}]->(m1)
     MERGE (c)-[:ACTED_IN {roles: ['Trinity'], screen_time_minutes: 98}]->(m1)
     MERGE (l)-[:ACTED_IN {roles: ['Morpheus'], screen_time_minutes: 105}]->(m1)
@@ -57,8 +44,6 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (lana)-[:DIRECTED]->(m1)
     MERGE (lilly)-[:DIRECTED]->(m1)
     MERGE (jc)-[:PRODUCED]->(m1)
-    
-    -- MATRIX RELOADED RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['Neo'], screen_time_minutes: 160}]->(m2)
     MERGE (c)-[:ACTED_IN {roles: ['Trinity'], screen_time_minutes: 120}]->(m2)
     MERGE (l)-[:ACTED_IN {roles: ['Morpheus'], screen_time_minutes: 95}]->(m2)
@@ -67,8 +52,6 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (lana)-[:DIRECTED]->(m2)
     MERGE (lilly)-[:DIRECTED]->(m2)
     MERGE (jc)-[:PRODUCED]->(m2)
-    
-    -- MATRIX REVOLUTIONS RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['Neo'], screen_time_minutes: 155}]->(m3)
     MERGE (c)-[:ACTED_IN {roles: ['Trinity'], screen_time_minutes: 115}]->(m3)
     MERGE (l)-[:ACTED_IN {roles: ['Morpheus'], screen_time_minutes: 70}]->(m3)
@@ -77,24 +60,16 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (lana)-[:DIRECTED]->(m3)
     MERGE (lilly)-[:DIRECTED]->(m3)
     MERGE (jc)-[:PRODUCED]->(m3)
-    
-    -- MATRIX RESURRECTIONS RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['Thomas/Neo'], screen_time_minutes: 168}]->(m4)
     MERGE (c)-[:ACTED_IN {roles: ['Trinity'], screen_time_minutes: 125}]->(m4)
     MERGE (y)-[:ACTED_IN {roles: ['Morpheus'], screen_time_minutes: 95}]->(m4)
     MERGE (jc)-[:PRODUCED]->(m4)
-    
-    -- JOHN WICK RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['John Wick'], screen_time_minutes: 188}]->(m5)
     MERGE (dc)-[:DIRECTED]->(m5)
     MERGE (bm)-[:PRODUCED]->(m5)
-    
-    -- SPEED RELATIONSHIPS
     MERGE (k)-[:ACTED_IN {roles: ['Jack Traven'], screen_time_minutes: 156}]->(m6)
     MERGE (m)-[:ACTED_IN {roles: ['Madman'], screen_time_minutes: 15}]->(m6)
     MERGE (jp)-[:DIRECTED]->(m6)
-    
-    -- GENRE ASSIGNMENTS
     MERGE (m1)-[:HAS_GENRE]->(sci_fi)
     MERGE (m1)-[:HAS_GENRE]->(action)
     MERGE (m1)-[:HAS_GENRE]->(cyberpunk)
@@ -109,13 +84,9 @@ def inject_movie_dataset(kg_manager: KnowledgeGraphManager) -> None:
     MERGE (m5)-[:HAS_GENRE]->(thriller)
     MERGE (m6)-[:HAS_GENRE]->(action)
     MERGE (m6)-[:HAS_GENRE]->(thriller)
-    
-    -- SEQUEL/PREQUEL RELATIONSHIPS
     MERGE (m1)-[:HAS_SEQUEL]->(m2)
     MERGE (m2)-[:HAS_SEQUEL]->(m3)
     MERGE (m3)-[:HAS_SEQUEL]->(m4)
-    
-    -- COLLABORATIONS
     MERGE (lana)-[:COLLABORATED_WITH]->(lilly)
     MERGE (lilly)-[:COLLABORATED_WITH]->(lana)
     MERGE (k)-[:WORKED_WITH]->(c)
