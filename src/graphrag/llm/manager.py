@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import logging
 import os
 import re
 import threading
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -26,15 +30,22 @@ class LLMManager:
         max_new_tokens: int = 256,
         gpu_memory_fraction: float = 0.92,
         allow_large_model_fp16_fallback: bool = False,
+        use_vllm: bool = False,
+        vllm_base_url: str = "http://localhost:8000/v1",
     ) -> None:
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be >= 1")
         if gpu_memory_fraction <= 0 or gpu_memory_fraction > 1:
             raise ValueError("gpu_memory_fraction must be in (0, 1]")
+        if not vllm_base_url.strip():
+            raise ValueError("vllm_base_url must be non-empty")
 
         self.model_id = model_id
         self.max_new_tokens = max_new_tokens
         self.gpu_memory_fraction = gpu_memory_fraction
+        self.use_vllm = bool(use_vllm)
+        self.vllm_base_url = vllm_base_url.strip().rstrip("/")
+        self.vllm_api_key = os.getenv("VLLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "EMPTY"
         env_allow_fallback = os.getenv("GRAPHRAG_ALLOW_LARGE_MODEL_FP16_FALLBACK", "").strip().lower()
         self.allow_large_model_fp16_fallback = allow_large_model_fp16_fallback or env_allow_fallback in {
             "1",
@@ -46,9 +57,28 @@ class LLMManager:
         self._cached_model: Any | None = None
         self._cached_model_id: str | None = None
         self._load_lock = threading.Lock()
+        self._vllm_endpoint_checked = False
+
+        if self.use_vllm:
+            logger.info(
+                "vLLM mode enabled: gpu_memory_fraction and allow_large_model_fp16_fallback are ignored "
+                "for client-side inference (server controls memory/precision)."
+            )
 
         if warmup:
-            self.load_llm()
+            self.warmup()
+
+    @staticmethod
+    def _import_vllm_stack() -> Any:
+        try:
+            from langchain_openai import ChatOpenAI
+        except Exception as exc:
+            raise RuntimeError(
+                "vLLM mode requires langchain-openai. Install it in your runtime env, for example: "
+                "conda run -n graphllm python -m pip install \"langchain-openai>=0.2,<0.4\""
+            ) from exc
+
+        return ChatOpenAI
 
     @staticmethod
     def _import_hf_stack() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -162,6 +192,9 @@ class LLMManager:
         ) from exc
 
     def _build_llm(self, model_id: str) -> Any:
+        if self.use_vllm:
+            return self._build_vllm_llm(model_id)
+
         (
             ChatHuggingFace,
             HuggingFacePipeline,
@@ -259,6 +292,61 @@ class LLMManager:
         )
         return ChatHuggingFace(llm=HuggingFacePipeline(pipeline=generation))
 
+    def _build_vllm_llm(self, model_id: str) -> Any:
+        ChatOpenAI = self._import_vllm_stack()
+        logger.info("Using vLLM OpenAI-compatible endpoint at %s for model %s", self.vllm_base_url, model_id)
+        return ChatOpenAI(
+            model=model_id,
+            base_url=self.vllm_base_url,
+            api_key=self.vllm_api_key,
+            temperature=0,
+            max_tokens=self.max_new_tokens,
+        )
+
+    @staticmethod
+    def _models_url(base_url: str) -> str:
+        return urllib.parse.urljoin(base_url.rstrip("/") + "/", "models")
+
+    def _check_vllm_endpoint(self, target_model_id: str) -> None:
+        models_url = self._models_url(self.vllm_base_url)
+        request = urllib.request.Request(models_url, method="GET")
+        if self.vllm_api_key:
+            request.add_header("Authorization", f"Bearer {self.vllm_api_key}")
+
+        timeout_sec = float(os.getenv("GRAPHRAG_VLLM_HEALTHCHECK_TIMEOUT_SEC", "5"))
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+                status_code = int(getattr(response, "status", 200))
+                if status_code >= 400:
+                    raise RuntimeError(f"vLLM endpoint returned HTTP {status_code} on {models_url}")
+                payload = response.read().decode("utf-8", errors="ignore")
+        except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
+            raise RuntimeError(
+                "Cannot reach vLLM endpoint at '"
+                + models_url
+                + "'. Ensure server is running and reachable from this process. "
+                + "If using sbatch mode, enable USE_VLLM=1 and verify port forwarding/bind address."
+            ) from exc
+
+        reported_models: list[str] = []
+        try:
+            parsed = json.loads(payload)
+            data = parsed.get("data", []) if isinstance(parsed, dict) else []
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                        reported_models.append(item["id"])
+        except json.JSONDecodeError:
+            reported_models = []
+
+        if reported_models and target_model_id not in reported_models:
+            preview = ", ".join(reported_models[:5])
+            logger.warning(
+                "Requested model '%s' not listed by vLLM /models. Reported models: %s",
+                target_model_id,
+                preview,
+            )
+
     def load_llm(self, model_id: str | None = None) -> Any:
         target_model_id = model_id or self.model_id
 
@@ -268,6 +356,10 @@ class LLMManager:
         with self._load_lock:
             if self._cached_model is not None and self._cached_model_id == target_model_id:
                 return self._cached_model
+
+            if self.use_vllm and not self._vllm_endpoint_checked:
+                self._check_vllm_endpoint(target_model_id)
+                self._vllm_endpoint_checked = True
 
             self._cached_model = self._build_llm(target_model_id)
             self._cached_model_id = target_model_id
