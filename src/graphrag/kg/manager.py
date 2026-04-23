@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
+import time
 from typing import Any, Sequence
 
 try:
@@ -9,8 +11,21 @@ try:
 except ImportError:  # pragma: no cover - compatibility fallback
     from langchain_community.graphs import Neo4jGraph
 
+try:  # pragma: no cover - depends on runtime dependency details
+    from neo4j.exceptions import ServiceUnavailable, SessionExpired, TransientError
+
+    _RETRYABLE_NEO4J_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        SessionExpired,
+        ServiceUnavailable,
+        TransientError,
+    )
+except Exception:  # pragma: no cover - fallback if neo4j exception classes are unavailable
+    _RETRYABLE_NEO4J_EXCEPTIONS = ()
+
 from graphrag.config import KGConfig
 from graphrag.types import KGNode, KGTriple
+
+logger = logging.getLogger("graphrag")
 
 
 class KnowledgeGraphManager:
@@ -18,12 +33,52 @@ class KnowledgeGraphManager:
 
     def __init__(self, config: KGConfig, graph: Neo4jGraph | None = None) -> None:
         self.config = config
-        self.graph = graph or Neo4jGraph(
-            url=config.url,
-            username=config.username,
-            password=config.password,
-            database=config.database,
+        self.graph = graph or self._build_graph()
+
+        retry_attempts_raw = os.getenv("GRAPHRAG_NEO4J_QUERY_RETRIES", "3").strip()
+        retry_backoff_raw = os.getenv("GRAPHRAG_NEO4J_QUERY_RETRY_BACKOFF_SEC", "1.0").strip()
+
+        try:
+            self.query_retry_attempts = max(1, int(retry_attempts_raw))
+        except ValueError:
+            self.query_retry_attempts = 3
+
+        try:
+            self.query_retry_backoff_sec = max(0.0, float(retry_backoff_raw))
+        except ValueError:
+            self.query_retry_backoff_sec = 1.0
+
+    def _build_graph(self) -> Neo4jGraph:
+        return Neo4jGraph(
+            url=self.config.url,
+            username=self.config.username,
+            password=self.config.password,
+            database=self.config.database,
         )
+
+    def _reconnect(self) -> None:
+        self.graph = self._build_graph()
+
+    @staticmethod
+    def _is_retryable_query_error(exc: BaseException) -> bool:
+        if _RETRYABLE_NEO4J_EXCEPTIONS and isinstance(exc, _RETRYABLE_NEO4J_EXCEPTIONS):
+            return True
+
+        text = f"{type(exc).__name__}: {exc}".lower()
+        markers = (
+            "sessionexpired",
+            "serviceunavailable",
+            "transienterror",
+            "defunct connection",
+            "connection reset",
+            "connection aborted",
+            "connection was closed",
+            "failed to read from defunct connection",
+            "failed to read",
+            "network",
+            "timed out",
+        )
+        return any(marker in text for marker in markers)
 
     @classmethod
     def from_env(
@@ -51,7 +106,35 @@ class KnowledgeGraphManager:
         return self.schema
 
     def run_query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        return self.graph.query(cypher, params or {})
+        payload = params or {}
+        max_attempts = max(1, self.query_retry_attempts)
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self.graph.query(cypher, payload)
+            except Exception as exc:
+                retryable = self._is_retryable_query_error(exc)
+                if not retryable or attempt >= max_attempts:
+                    raise
+
+                backoff_sec = self.query_retry_backoff_sec * attempt
+                logger.warning(
+                    "Neo4j transient query failure. retry=%d/%d backoff_sec=%.2f error=%s",
+                    attempt,
+                    max_attempts,
+                    backoff_sec,
+                    exc,
+                )
+
+                try:
+                    self._reconnect()
+                except Exception as reconnect_exc:  # pragma: no cover - depends on runtime network state
+                    logger.warning("Neo4j reconnect attempt failed: %s", reconnect_exc)
+
+                if backoff_sec > 0:
+                    time.sleep(backoff_sec)
+
+        return []
 
     def import_triples(
         self,
