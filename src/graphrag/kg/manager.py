@@ -136,6 +136,9 @@ class KnowledgeGraphManager:
 
         return []
 
+    def clear(self) -> None:
+        self.run_query("MATCH (n) DETACH DELETE n")
+
     def import_triples(
         self,
         triples: Sequence[dict[str, Any]],
