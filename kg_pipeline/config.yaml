@@ -1,0 +1,47 @@
+seed: 42
+
+paths:
+  input_dir: ./data/fao_pdfs
+  output_dir: ./kg_pipeline/artifacts
+
+ontology:
+  labels:
+    - Region
+    - Commodity
+    - Indicator
+    - DataValue
+    - Policy
+    - Organization
+    - Event
+    - Concept
+    - TimePeriod
+    - Document
+    - Dataset
+    - Method
+
+chunking:
+  small_max_pages: 10
+  medium_max_pages: 80
+  small_min_tokens: 200
+  small_max_tokens: 400
+  medium_window_tokens: 512
+  medium_overlap_tokens: 128
+  large_window_tokens: 1024
+  large_overlap_tokens: 256
+
+gliner:
+  model_name: urchade/gliner_large-v2.1
+  threshold: 0.45
+
+llm:
+  max_retries_per_chunk: 3
+  temperature: 0.0
+  use_structured_output: true
+
+resolution:
+  embedding_model: sentence-transformers/all-MiniLM-L6-v2
+  similarity_threshold: 0.92
+  context_jaccard_floor: 0.10
+
+neo4j:
+  database: neo4j
