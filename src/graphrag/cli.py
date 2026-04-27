@@ -24,7 +24,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--entity", default="The Matrix")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--seed-movie-dataset", action="store_true")
-    parser.add_argument("--llm", action="store_true", help="Enable Hugging Face local generation")
+    parser.add_argument("--llm", action="store_true", help="Enable LLM generation")
+    parser.add_argument(
+        "--vllm",
+        action="store_true",
+        help="Use a vLLM OpenAI-compatible endpoint instead of local Hugging Face loading",
+    )
+    parser.add_argument(
+        "--vllm-base-url",
+        default="http://localhost:8000/v1",
+        help="Base URL for the vLLM OpenAI-compatible API",
+    )
     parser.add_argument("--llm-warmup", action="store_true", help="Preload model at startup")
     parser.add_argument(
         "--enable-decomposition-step",
@@ -67,6 +77,8 @@ def _build_llm_manager(args: argparse.Namespace, warmup: bool) -> LLMManager | N
         max_new_tokens=args.max_new_tokens,
         gpu_memory_fraction=args.gpu_memory_fraction,
         allow_large_model_fp16_fallback=args.allow_large_model_fp16_fallback,
+        use_vllm=args.vllm,
+        vllm_base_url=args.vllm_base_url,
     )
 
 
@@ -170,6 +182,8 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "run_index": run_index,
                     "model_id": args.model_id if args.llm else "none",
                     "llm_enabled": args.llm,
+                    "vllm_enabled": args.vllm,
+                    "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
                     "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
@@ -203,6 +217,8 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                 "llm": {
                     "enabled": args.llm,
                     "model_id": args.model_id if args.llm else "none",
+                    "vllm_enabled": args.vllm,
+                    "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
                     "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
@@ -239,6 +255,8 @@ def main() -> None:
 
     if args.llm_warmup and not args.llm:
         parser.error("--llm-warmup requires --llm")
+    if args.vllm and not args.llm:
+        parser.error("--vllm requires --llm")
     if args.max_new_tokens < 1:
         parser.error("--max-new-tokens must be >= 1")
     if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
