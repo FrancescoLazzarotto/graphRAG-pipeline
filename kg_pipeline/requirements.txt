@@ -1,0 +1,11 @@
+pymupdf4llm==1.27.2.3
+gliner==0.2.26
+neo4j==6.1.0
+openai==2.32.0
+sentence-transformers==5.4.1
+tqdm==4.67.3
+pydantic==2.13.3
+python-dotenv==1.1.0
+PyYAML==6.0.2
+numpy==2.2.6
+pytest==8.4.0
