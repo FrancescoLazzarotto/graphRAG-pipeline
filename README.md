@@ -8,7 +8,7 @@ A simple GraphRAG framework that combines Neo4j graph retrieval with an LLM-base
 - Connects to a Neo4j knowledge graph.
 - Retrieves nodes, triples, neighbors, subgraphs, and shortest paths.
 - Builds context from graph results.
-- Generates answers with a local Hugging Face model.
+- Generates answers with a local Hugging Face model or a vLLM OpenAI-compatible endpoint.
 
 ## Quick start
 
@@ -33,13 +33,23 @@ For cluster jobs, you can export the same variables from the scheduler/job scrip
 Then run:
 
 ```powershell
-graphrag-demo --seed-movie-dataset
+graphrag-demo --question "Quali sono le relazioni tra Entita A e Entita B?" --entity "Entita A"
 ```
 
 Enable local LLM generation:
 
 ```powershell
 graphrag-demo --llm --model-id Qwen/Qwen2.5-7B-Instruct
+```
+
+Enable vLLM server-backed generation (OpenAI-compatible API):
+
+```bash
+graphrag-demo \
+	--llm \
+	--vllm \
+	--vllm-base-url http://localhost:8000/v1 \
+	--model-id Qwen/Qwen2.5-7B-Instruct
 ```
 
 Production-oriented tuning for larger open models:
@@ -58,6 +68,7 @@ Notes:
 - `--gpu-memory-fraction` reserves headroom to reduce OOM/termination during loading.
 - For large models (>=30B), fp16 fallback is disabled by default if 4-bit loading fails (safer for production). Enable only if needed with `--allow-large-model-fp16-fallback`.
 - Optional env toggle for batch jobs: `GRAPHRAG_ALLOW_LARGE_MODEL_FP16_FALLBACK=1`.
+- In `--vllm` mode, `--gpu-memory-fraction` and `--allow-large-model-fp16-fallback` are client-side no-op flags; memory/precision are controlled by the vLLM server process.
 
 If you use gated Hugging Face models (for example `meta-llama/*`), request access on the model page and authenticate first:
 
@@ -87,6 +98,8 @@ Note: in some environments, `hf` and `huggingface-cli` can point to stale user-l
 - CPU job template: [scripts/run_graphrag_cpu.sbatch](scripts/run_graphrag_cpu.sbatch)
 - Cluster guide: [docs/cluster.md](docs/cluster.md)
 
+If you want server-backed inference on GPU nodes, use [requirements-gpu.txt](requirements-gpu.txt) and enable `USE_VLLM=1` in the job submission environment.
+
 Quick smoke check after installation:
 
 ```bash
@@ -115,6 +128,9 @@ export NEO4J_DATABASE="<your-database>"
 
 # GPU
 sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
+
+# GPU with vLLM server mode (switch-enabled path)
+USE_VLLM=1 sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
 
 # CPU
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
@@ -174,6 +190,20 @@ python scripts/run_retrieval_matrix.py \
 	--experiment-tag retrieval_matrix_full
 ```
 
+vLLM-backed matrix run:
+
+```bash
+python scripts/run_retrieval_matrix.py \
+	--llm \
+	--vllm \
+	--vllm-base-url http://localhost:8000/v1 \
+	--model-id Qwen/Qwen2.5-32B-Instruct \
+	--questions-file questions_matrix_long.txt \
+	--skip-standard \
+	--graph-strategies default \
+	--runs-per-strategy 1
+```
+
 Resource telemetry is enabled by default in `run_retrieval_matrix.py` and records CPU/RAM/GPU samples.
 
 Useful flags:
@@ -193,8 +223,8 @@ Create a question file (one question per line):
 
 ```bash
 cat > questions.txt << 'EOF'
-Chi ha diretto The Matrix?
-Chi ha recitato in The Matrix?
+Quali sono le relazioni tra Entita A e Entita B?
+Quali entita sono collegate a Entita A?
 EOF
 ```
 
@@ -324,7 +354,7 @@ For cluster jobs, you can export the same variables from the scheduler/job scrip
 Then run:
 
 ```powershell
-graphrag-demo --seed-movie-dataset
+graphrag-demo --question "Quali sono le relazioni tra Entita A e Entita B?" --entity "Entita A"
 ```
 
 Enable local LLM generation:
