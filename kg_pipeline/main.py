@@ -170,14 +170,17 @@ def _load_or_run_linking(
     resolved_triples: list[KGTriple],
     registry: dict[str, CanonicalEntityRecord],
     documents: list[DocumentRecord],
+    config: dict[str, Any],
 ) -> list[KGTriple]:
     if paths["triples_linked"].exists():
         return linking.load_triples(paths["triples_linked"])
 
+    include_mentioned_in = bool(config.get("linking", {}).get("include_mentioned_in", True))
     linked = linking.add_cross_document_links(
         triples=resolved_triples,
         registry=registry,
         documents=documents,
+        include_mentioned_in=include_mentioned_in,
     )
     linking.save_triples(paths["triples_linked"], linked)
     return linked
@@ -245,7 +248,7 @@ def main() -> None:
         LOGGER.info("Completed stage=resolution triples=%d canonical_entities=%d", len(resolved_triples), len(registry))
         return
 
-    linked_triples = _load_or_run_linking(paths, resolved_triples, registry, documents)
+    linked_triples = _load_or_run_linking(paths, resolved_triples, registry, documents, config)
     if args.stage == "linking":
         LOGGER.info("Completed stage=linking triples=%d", len(linked_triples))
         return

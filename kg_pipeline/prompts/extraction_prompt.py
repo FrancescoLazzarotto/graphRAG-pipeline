@@ -41,7 +41,10 @@ Task:
 Strict rules:
 - Allowed labels: {json.dumps(allowed_labels)}
 - You may introduce a new label only if none of the allowed labels fits.
-- Predicates must be SCREAMING_SNAKE_CASE.
+- Do not use meta labels like Email, PageRange, SectionTitle, Chunk, Grant, Identifier.
+- Document label is only for whole documents (filename or full document title), not section headings.
+- Predicates must be SCREAMING_SNAKE_CASE, short (1-3 words), and reusable across documents.
+- Avoid generic predicates like RELATED_TO and do not emit MENTIONED_IN (added later by the system).
 - Output must be pure JSON array only. No prose.
 - Include numeric relationship attributes in relationship_properties when present
   (for example value, unit, year).

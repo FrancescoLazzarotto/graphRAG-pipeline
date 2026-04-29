@@ -30,47 +30,49 @@ def add_cross_document_links(
     triples: list[KGTriple],
     registry: dict[str, CanonicalEntityRecord],
     documents: list[DocumentRecord],
+    include_mentioned_in: bool = True,
 ) -> list[KGTriple]:
     doc_map = {doc.filename: doc for doc in documents}
     linked: list[KGTriple] = list(triples)
     seen_mention_edges: set[tuple[str, str, str, str]] = set()
 
-    for triple in triples:
-        source_doc = str(triple.relationship_properties.get("source_doc", "")).strip()
-        chunk_id = str(triple.relationship_properties.get("chunk_id", "")).strip()
-        page_range = str(triple.relationship_properties.get("page_range", "")).strip()
+    if include_mentioned_in:
+        for triple in triples:
+            source_doc = str(triple.relationship_properties.get("source_doc", "")).strip()
+            chunk_id = str(triple.relationship_properties.get("chunk_id", "")).strip()
+            page_range = str(triple.relationship_properties.get("page_range", "")).strip()
 
-        if source_doc and source_doc in doc_map:
-            doc_props = _document_props(doc_map[source_doc])
+            if source_doc and source_doc in doc_map:
+                doc_props = _document_props(doc_map[source_doc])
 
-            for entity_name, entity_labels, entity_props in (
-                (triple.subject, triple.subject_labels, triple.subject_properties),
-                (triple.object, triple.object_labels, triple.object_properties),
-            ):
-                edge_key = (entity_name, source_doc, chunk_id, page_range)
-                if edge_key in seen_mention_edges:
-                    continue
-                seen_mention_edges.add(edge_key)
+                for entity_name, entity_labels, entity_props in (
+                    (triple.subject, triple.subject_labels, triple.subject_properties),
+                    (triple.object, triple.object_labels, triple.object_properties),
+                ):
+                    edge_key = (entity_name, source_doc, chunk_id, page_range)
+                    if edge_key in seen_mention_edges:
+                        continue
+                    seen_mention_edges.add(edge_key)
 
-                linked.append(
-                    KGTriple.model_validate(
-                        {
-                            "subject": entity_name,
-                            "predicate": "MENTIONED_IN",
-                            "object": source_doc,
-                            "subject_labels": entity_labels or ["Concept"],
-                            "object_labels": ["Document"],
-                            "subject_properties": dict(entity_props),
-                            "object_properties": dict(doc_props),
-                            "relationship_properties": {
-                                "source_doc": source_doc,
-                                "extraction_method": "system_linking",
-                                "chunk_id": chunk_id,
-                                "page_range": page_range,
-                            },
-                        }
+                    linked.append(
+                        KGTriple.model_validate(
+                            {
+                                "subject": entity_name,
+                                "predicate": "MENTIONED_IN",
+                                "object": source_doc,
+                                "subject_labels": entity_labels or ["Concept"],
+                                "object_labels": ["Document"],
+                                "subject_properties": dict(entity_props),
+                                "object_properties": dict(doc_props),
+                                "relationship_properties": {
+                                    "source_doc": source_doc,
+                                    "extraction_method": "system_linking",
+                                    "chunk_id": chunk_id,
+                                    "page_range": page_range,
+                                },
+                            }
+                        )
                     )
-                )
 
     for canonical_name, record in registry.items():
         docs_for_concept = set()
@@ -134,13 +136,19 @@ def _cli() -> None:
     parser.add_argument("--registry-json", required=True)
     parser.add_argument("--documents-json", required=True)
     parser.add_argument("--output-json", required=True)
+    parser.add_argument("--exclude-mentioned-in", action="store_true")
     args = parser.parse_args()
 
     triples = load_triples(Path(args.triples_json))
     registry = load_registry(Path(args.registry_json))
     documents = load_documents(Path(args.documents_json))
 
-    output = add_cross_document_links(triples, registry, documents)
+    output = add_cross_document_links(
+        triples,
+        registry,
+        documents,
+        include_mentioned_in=not args.exclude_mentioned_in,
+    )
     save_triples(Path(args.output_json), output)
 
 

@@ -1,0 +1,5 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/srv/projects/graphllm/experiments/graphRAGPipelineExp1/kg_pipeline/main.py", line 17, in <module>
+    from kg_pipeline.models.types import CanonicalEntityRecord, ChunkRecord, DocumentRecord, KGTriple, NEREntityCandidate
+ModuleNotFoundError: No module named 'kg_pipeline'
