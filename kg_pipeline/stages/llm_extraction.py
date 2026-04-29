@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,32 @@ from kg_pipeline.models.types import ChunkRecord, KGTriple, NEREntityCandidate, 
 from kg_pipeline.prompts.extraction_prompt import build_extraction_prompt
 from kg_pipeline.utils.acronym_map import update_acronym_map
 from kg_pipeline.utils.validation import parse_json_array, validate_triples, write_failed_chunk
+
+
+_GENERIC_SECTION_TITLES = {
+    "abstract",
+    "acknowledgements",
+    "acknowledgments",
+    "annex",
+    "appendix",
+    "background",
+    "bibliography",
+    "conclusion",
+    "contents",
+    "discussion",
+    "executive summary",
+    "foreword",
+    "introduction",
+    "methods",
+    "methodology",
+    "preface",
+    "references",
+    "results",
+    "summary",
+    "table of contents",
+}
+
+_SECTION_PREFIX_RE = re.compile(r"^(annex|appendix|chapter|section|part)\s+\w+", re.IGNORECASE)
 
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
@@ -33,24 +60,63 @@ def _log_new_label(new_label_path: Path, label: str) -> None:
         f.write(label.strip() + "\n")
 
 
+def _normalize_title(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _looks_like_section_title(title: str, section_title: str) -> bool:
+    title_norm = _normalize_title(title)
+    if not title_norm:
+        return False
+
+    section_norm = _normalize_title(section_title)
+    if section_norm in {"", "smalldoc", "full document"}:
+        section_norm = ""
+
+    if section_norm and title_norm == section_norm:
+        return True
+    if title_norm in _GENERIC_SECTION_TITLES:
+        return True
+    if _SECTION_PREFIX_RE.match(title_norm):
+        return True
+    return False
+
+
+def _entity_title(entity_text: str, props: dict[str, Any]) -> str:
+    value = props.get("title") or props.get("name") or entity_text
+    return str(value or "")
+
+
 def _enforce_labels(
     triple: KGTriple,
     allowed_labels: set[str],
     new_label_log_path: Path,
+    section_title: str,
 ) -> KGTriple:
-    def normalize_labels(labels: list[str]) -> list[str]:
+    def normalize_labels(labels: list[str], entity_title: str) -> list[str]:
         cleaned = [label.strip() for label in labels if label.strip()]
         if not cleaned:
-            return ["Concept"]
+            cleaned = ["Concept"]
         output: list[str] = []
         for label in cleaned:
             if label not in allowed_labels:
                 _log_new_label(new_label_log_path, label)
+                continue
             output.append(label)
-        return output
 
-    triple.subject_labels = normalize_labels(triple.subject_labels)
-    triple.object_labels = normalize_labels(triple.object_labels)
+        if "Document" in output and _looks_like_section_title(entity_title, section_title):
+            output = [label for label in output if label != "Document"]
+
+        return output or ["Concept"]
+
+    triple.subject_labels = normalize_labels(
+        triple.subject_labels,
+        _entity_title(triple.subject, triple.subject_properties),
+    )
+    triple.object_labels = normalize_labels(
+        triple.object_labels,
+        _entity_title(triple.object, triple.object_properties),
+    )
     return triple
 
 
@@ -127,7 +193,12 @@ def extract_triples(
                 cleaned_triples: list[KGTriple] = []
 
                 for triple in validated:
-                    triple = _enforce_labels(triple, allowed_label_set, new_label_log_path)
+                    triple = _enforce_labels(
+                        triple,
+                        allowed_label_set,
+                        new_label_log_path,
+                        section_title=chunk.section_title,
+                    )
                     rel = dict(triple.relationship_properties)
                     rel.setdefault("source_doc", chunk.filename)
                     rel.setdefault("extraction_method", "llm")

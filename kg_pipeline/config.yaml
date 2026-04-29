@@ -1,7 +1,7 @@
 seed: 42
 
 paths:
-  input_dir: ./data/fao_pdfs
+  input_dir: ./documents/
   output_dir: ./kg_pipeline/artifacts
 
 ontology:
@@ -44,4 +44,7 @@ resolution:
   context_jaccard_floor: 0.10
 
 neo4j:
-  database: neo4j
+  database: '588fe1bc'
+
+linking:
+  include_mentioned_in: false
