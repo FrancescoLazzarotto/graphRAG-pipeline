@@ -47,7 +47,7 @@ class PromptLibrary:
         if config.rewrite_prompt:
             return ChatPromptTemplate.from_template(config.rewrite_prompt)
         return ChatPromptTemplate.from_template(
-            "Rewrite this question to improve retrieval over a Movies and Actors knowledge base. "
+            "Rewrite this question to improve retrieval over the target knowledge base. "
             "Add relevant synonyms or domain terms.\n\n"
             "Original: {question}\nRewritten:"
         )
