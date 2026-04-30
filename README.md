@@ -5,10 +5,10 @@ A GraphRAG framework that combines Neo4j graph retrieval with an LLM-based answe
 
 ## What this project does
 
-- Connects to a Neo4j knowledge graph.
-- Retrieves nodes, triples, neighbors, subgraphs, and shortest paths.
-- Builds context from graph results.
-- Generates answers with a local Hugging Face model or a vLLM OpenAI-compatible endpoint.
+- Builds a knowledge graph from documents (chunking, NER, LLM triples, resolution, linking, Neo4j ingestion).
+- Connects to Neo4j for GraphRAG retrieval (nodes, triples, neighbors, subgraphs, shortest paths).
+- Builds context from graph results and can generate answers with a local Hugging Face model or a vLLM endpoint.
+- Runs strategy/matrix experiments for retrieval and LLM comparisons.
 
 ## Quick start
 
@@ -136,6 +136,52 @@ USE_VLLM=1 sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 ```
 
+## Knowledge Graph Pipeline (documents -> Neo4j)
+
+The KG pipeline lives in `kg_pipeline/` and uses checkpointed stage outputs inside a run directory.
+Defaults come from `kg_pipeline/config.yaml` (`paths.input_dir` and `paths.output_dir`).
+
+Run the full pipeline (logs to stdout):
+
+```bash
+conda activate graphllm
+PYTHONUNBUFFERED=1 python -m kg_pipeline.main \
+	--config kg_pipeline/config.yaml \
+	--env-file kg_pipeline/.env \
+	--log-level INFO
+```
+
+Run with an explicit run directory and a persistent log file:
+
+```bash
+RUN_DIR=kg_pipeline/artifacts/run_full_$(date +%Y%m%d_%H%M%S)
+PYTHONUNBUFFERED=1 python -m kg_pipeline.main \
+	--config kg_pipeline/config.yaml \
+	--env-file kg_pipeline/.env \
+	--run-dir "$RUN_DIR" \
+	--log-level INFO \
+	2>&1 | tee -a "$RUN_DIR/pipeline.log"
+```
+
+Checkpointing and stages:
+
+- Re-run with the same `--run-dir` to resume from existing stage outputs.
+- Run a single stage with `--stage ingestion|chunking|ner|llm|resolution|linking|neo4j`.
+- Use `--dry-run` to skip Neo4j ingestion.
+
+Required Neo4j env vars:
+
+- `NEO4J_URI` or `NEO4J_URL`
+- `NEO4J_USER` or `NEO4J_USERNAME`
+- `NEO4J_PASSWORD`
+- `NEO4J_DATABASE` (optional)
+
+Optional vLLM/OpenAI-compatible env vars for LLM extraction:
+
+- `VLLM_BASE_URL` (default `http://localhost:8000/v1`)
+- `VLLM_MODEL_NAME`
+- `VLLM_API_KEY` or `OPENAI_API_KEY`
+
 ## Standard Text RAG Pipeline (documents)
 
 The repository includes a base text-only retrieval pipeline for document RAG:
@@ -211,9 +257,10 @@ Useful flags:
 - `--resource-sample-interval 1.0` to control sampling period (seconds)
 - `--no-monitor-resources` to disable telemetry
 
-## Main entrypoint
+## Main entrypoints
 
 - CLI: `graphrag-demo`
+- KG pipeline runner: `python -m kg_pipeline.main`
 
 ## Batch experiments
 
@@ -319,92 +366,4 @@ python scripts/analyze_matrix.py artifacts/experiments \
 	--save-json artifacts/experiments/matrix_summary.json \
 	--save-csv artifacts/experiments/matrix_summary.csv
 ```
-
-# GraphRAG Pipeline
-
-A simple GraphRAG project that combines Neo4j graph retrieval with an LLM-based answer pipeline.
-
-## What this project does
-
-- Connects to a Neo4j knowledge graph.
-- Retrieves nodes, triples, neighbors, subgraphs, and shortest paths.
-- Builds context from graph results.
-- Optionally generates answers with a local Hugging Face model.
-
-## Quick start
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-pip install -e .
-```
-
-Create a local `.env` file manually (not committed) with:
-
-```env
-NEO4J_URL=neo4j+s://<your-instance>
-NEO4J_USERNAME=<your-username>
-NEO4J_PASSWORD=<your-password>
-NEO4J_DATABASE=<your-database>
-```
-
-For cluster jobs, you can export the same variables from the scheduler/job script.
-
-Then run:
-
-```powershell
-graphrag-demo --question "Quali sono le relazioni tra Entita A e Entita B?" --entity "Entita A"
-```
-
-Enable local LLM generation:
-
-```powershell
-graphrag-demo --llm --model-id Qwen/Qwen2.5-7B-Instruct
-```
-
-## Cluster setup
-
-- CPU nodes: install [requirements-cpu.txt](requirements-cpu.txt)
-- GPU nodes: install [requirements-gpu.txt](requirements-gpu.txt)
-- GPU job template: [scripts/run_graphrag.sbatch](scripts/run_graphrag.sbatch)
-- CPU job template: [scripts/run_graphrag_cpu.sbatch](scripts/run_graphrag_cpu.sbatch)
-- Cluster guide: [docs/cluster.md](docs/cluster.md)
-
-Quick smoke check after installation:
-
-```bash
-python scripts/smoke_check.py
-```
-
-Local preflight (no cluster access yet):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1
-```
-
-With Neo4j connectivity check:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1 -CheckNeo4j
-```
-
-Immediate cluster run examples:
-
-```bash
-export NEO4J_URL="neo4j+s://<your-instance>"
-export NEO4J_USERNAME="<your-username>"
-export NEO4J_PASSWORD="<your-password>"
-export NEO4J_DATABASE="<your-database>"
-
-# GPU
-sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
-
-# CPU
-sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
-```
-
-## Main entrypoint
-
-- CLI: `graphrag-demo`
 
