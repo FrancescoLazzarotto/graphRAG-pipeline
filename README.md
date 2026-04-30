@@ -1,7 +1,7 @@
 
 # GraphRAG Pipeline
 
-A simple GraphRAG framework that combines Neo4j graph retrieval with an LLM-based answer pipeline.
+A GraphRAG framework that combines Neo4j graph retrieval with an LLM-based answer pipeline.
 
 ## What this project does
 
