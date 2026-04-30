@@ -14,16 +14,14 @@ from graphrag.config import AgentConfig, DEFAULT_MODEL_ID, build_kg_config_from_
 from graphrag.experiments import ExperimentRunner
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
-from graphrag.kg.seed import inject_movie_dataset
 from graphrag.llm.manager import LLMManager
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run GraphRAG demo pipeline")
-    parser.add_argument("--question", default="Chi ha diretto e recitato nel film The Matrix?")
-    parser.add_argument("--entity", default="The Matrix")
+    parser.add_argument("--question", default="Quali sono le relazioni tra Entita A e Entita B?")
+    parser.add_argument("--entity", default="Entita A")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
-    parser.add_argument("--seed-movie-dataset", action="store_true")
     parser.add_argument("--llm", action="store_true", help="Enable LLM generation")
     parser.add_argument(
         "--vllm",
@@ -266,9 +264,6 @@ def main() -> None:
 
     kg_config = build_kg_config_from_env()
     kg_manager = KnowledgeGraphManager(kg_config)
-
-    if args.seed_movie_dataset:
-        inject_movie_dataset(kg_manager)
 
     print("Graph Schema:", kg_manager.refresh_schema())
 
