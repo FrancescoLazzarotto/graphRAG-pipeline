@@ -129,6 +129,7 @@ def _load_or_run_raw_triples(
         use_structured_output=bool(config["llm"]["use_structured_output"]),
         failed_chunks_path=paths["failed_chunks"],
         new_label_log_path=paths["new_labels_log"],
+        checkpoint_every=int(config.get("llm", {}).get("checkpoint_every", 50)),
     )
 
     llm_extraction.save_triples(paths["triples_raw"], triples)
@@ -200,18 +201,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
-
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), logging.INFO),
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-
     config = _load_yaml(Path(args.config))
     load_dotenv(args.env_file, override=True)
-
-    seed = int(config.get("seed", 42))
-    _set_seed(seed)
-    _log_versions(config)
 
     if args.run_dir.strip():
         run_dir = Path(args.run_dir)
@@ -220,6 +211,31 @@ def main() -> None:
         run_dir = Path(config["paths"]["output_dir"]) / f"run_{timestamp}"
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_dir / "pipeline.log"
+
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, mode="a", encoding="utf-8"),
+        ],
+        force=True,
+    )
+
+    LOGGER.info("Logging to %s", log_path)
+
+    
+    if os.getenv("KG_PIPELINE_DEBUG_OPENAI", "") == "1":
+        logging.getLogger("openai").setLevel(logging.DEBUG)
+        logging.getLogger("openai._base_client").setLevel(logging.DEBUG)
+        logging.getLogger("httpx").setLevel(logging.DEBUG)
+        logging.getLogger("urllib3").setLevel(logging.DEBUG)
+        LOGGER.info("Enabled DEBUG logging for openai/httpx/urllib3 (KG_PIPELINE_DEBUG_OPENAI=1)")
+
+    seed = int(config.get("seed", 42))
+    _set_seed(seed)
+    _log_versions(config)
     paths = _stage_output_paths(run_dir)
 
     documents = _load_or_run_documents(paths, config, args.single_doc)
