@@ -42,7 +42,19 @@ _SECTION_PREFIX_RE = re.compile(r"^(annex|appendix|chapter|section|part)\s+\w+",
 
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
-    return OpenAI(base_url=base_url.rstrip("/"), api_key=api_key or "EMPTY")
+    """Build OpenAI client with optimized timeout and retry configuration."""
+    import os
+    
+    # Timeout più lungo per richieste LLM (default è 600s, usiamo 900s = 15min)
+    http_client_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
+    
+    # Retry configuration: il client OpenAI fa automaticamente retry su 429/5xx
+    # ma con timeout più lungo diamo al server più tempo per completare
+    return OpenAI(
+        base_url=base_url.rstrip("/"),
+        api_key=api_key or "EMPTY",
+        timeout=http_client_timeout,
+    )
 
 
 def _load_json(path: Path) -> Any:
@@ -161,14 +173,50 @@ def extract_triples(
     use_structured_output: bool,
     failed_chunks_path: Path,
     new_label_log_path: Path,
+    checkpoint_every: int = 50,
 ) -> tuple[list[KGTriple], dict[str, str]]:
+    """
+    Extract triples from chunks with periodic checkpointing.
+    
+    Args:
+        checkpoint_every: Save checkpoint every N chunks (default 50). Set to 0 to disable.
+    """
+    import os
+    
     client = _build_client(base_url=base_url, api_key=api_key)
     allowed_label_set = set(allowed_labels)
 
     all_triples: list[KGTriple] = []
     acronym_map: dict[str, str] = {}
+    
+    # Determine checkpoint path (same directory as failed_chunks_path)
+    checkpoint_path = failed_chunks_path.parent / "stage3_checkpoint.json"
+    checkpoint_info_path = failed_chunks_path.parent / "stage3_checkpoint_info.json"
+    
+    # Try to resume from checkpoint
+    start_chunk_idx = 0
+    if checkpoint_path.exists() and checkpoint_info_path.exists():
+        try:
+            all_triples = load_triples(checkpoint_path)
+            checkpoint_info = _load_json(checkpoint_info_path)
+            start_chunk_idx = checkpoint_info.get("last_completed_chunk_idx", 0) + 1
+            acronym_map = checkpoint_info.get("acronym_map", {})
+            import logging
+            logging.getLogger("kg_pipeline").info(
+                f"Resuming from checkpoint: chunk {start_chunk_idx}/{len(chunks)}, "
+                f"triples so far: {len(all_triples)}"
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger("kg_pipeline").warning(f"Could not load checkpoint: {e}")
+            all_triples = []
+            acronym_map = {}
+            start_chunk_idx = 0
 
-    for chunk in tqdm(chunks, desc="Stage 3 LLM Extraction", unit="chunk"):
+    for chunk_idx, chunk in enumerate(tqdm(chunks, desc="Stage 3 LLM Extraction", unit="chunk", initial=start_chunk_idx, total=len(chunks))):
+        if chunk_idx < start_chunk_idx:
+            continue
+
         candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
         prompt = build_extraction_prompt(chunk, candidates, allowed_labels)
 
@@ -222,6 +270,27 @@ def extract_triples(
 
         if not success:
             continue
+        
+        # Save checkpoint periodically
+        if checkpoint_every > 0 and (chunk_idx + 1) % checkpoint_every == 0:
+            try:
+                save_triples(checkpoint_path, all_triples)
+                checkpoint_info = {
+                    "last_completed_chunk_idx": chunk_idx,
+                    "total_chunks": len(chunks),
+                    "triples_count": len(all_triples),
+                    "acronym_map": acronym_map,
+                    "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                _save_json(checkpoint_info_path, checkpoint_info)
+                import logging
+                logging.getLogger("kg_pipeline").info(
+                    f"Checkpoint saved at chunk {chunk_idx + 1}/{len(chunks)}: "
+                    f"{len(all_triples)} triples"
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger("kg_pipeline").warning(f"Failed to save checkpoint: {e}")
 
     return all_triples, acronym_map
 
