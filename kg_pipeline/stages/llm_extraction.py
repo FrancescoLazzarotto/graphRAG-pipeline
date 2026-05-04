@@ -45,11 +45,7 @@ def _build_client(base_url: str, api_key: str) -> OpenAI:
     """Build OpenAI client with optimized timeout and retry configuration."""
     import os
     
-    # Timeout più lungo per richieste LLM (default è 600s, usiamo 900s = 15min)
     http_client_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
-    
-    # Retry configuration: il client OpenAI fa automaticamente retry su 429/5xx
-    # ma con timeout più lungo diamo al server più tempo per completare
     return OpenAI(
         base_url=base_url.rstrip("/"),
         api_key=api_key or "EMPTY",
@@ -160,6 +156,32 @@ def _llm_call(
     return response.choices[0].message.content or ""
 
 
+def _validate_raw_triples(
+    raw_items: list[dict[str, Any]],
+    chunk: ChunkRecord,
+    failed_chunks_path: Path,
+    raw_response: str,
+) -> list[KGTriple]:
+    valid_triples: list[KGTriple] = []
+
+    for item in raw_items:
+        try:
+            valid_triples.extend(validate_triples([item]))
+        except Exception as exc:
+            write_failed_chunk(
+                failed_path=failed_chunks_path,
+                chunk_metadata=chunk.model_dump(),
+                attempt=0,
+                error=str(exc),
+                raw_response=json.dumps(item, ensure_ascii=False),
+            )
+
+    if not valid_triples:
+        raise ValueError("No valid triples were produced for the chunk")
+
+    return valid_triples
+
+
 def extract_triples(
     chunks: list[ChunkRecord],
     ner_map: dict[str, list[NEREntityCandidate]],
@@ -213,9 +235,8 @@ def extract_triples(
             acronym_map = {}
             start_chunk_idx = 0
 
-    for chunk_idx, chunk in enumerate(tqdm(chunks, desc="Stage 3 LLM Extraction", unit="chunk", initial=start_chunk_idx, total=len(chunks))):
-        if chunk_idx < start_chunk_idx:
-            continue
+    for chunk_idx in tqdm(range(start_chunk_idx, len(chunks)), desc="Stage 3 LLM Extraction", unit="chunk", initial=start_chunk_idx, total=len(chunks)):
+        chunk = chunks[chunk_idx]
 
         candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
         prompt = build_extraction_prompt(chunk, candidates, allowed_labels)
@@ -237,7 +258,12 @@ def extract_triples(
                 )
 
                 parsed = parse_json_array(raw)
-                validated = validate_triples(parsed)
+                validated = _validate_raw_triples(
+                    raw_items=parsed,
+                    chunk=chunk,
+                    failed_chunks_path=failed_chunks_path,
+                    raw_response=raw,
+                )
                 cleaned_triples: list[KGTriple] = []
 
                 for triple in validated:
