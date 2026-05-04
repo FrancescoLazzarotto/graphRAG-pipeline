@@ -151,6 +151,14 @@ PYTHONUNBUFFERED=1 python -m kg_pipeline.main \
 	--log-level INFO
 ```
 
+If you want the run to keep going submit it as a batch job on the server instead of running it in an interactive terminal:
+
+```bash
+sbatch -p <partition> scripts/run_kg_pipeline.sbatch
+```
+
+That script creates a run directory under `kg_pipeline/artifacts/`, writes a persistent `pipeline.log` there, and is detached from your local terminal session.
+
 Run with an explicit run directory and a persistent log file:
 
 ```bash
