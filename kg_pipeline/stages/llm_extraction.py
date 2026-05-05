@@ -162,6 +162,7 @@ def _validate_raw_triples(
     failed_chunks_path: Path,
     raw_response: str,
 ) -> list[KGTriple]:
+    """ to understand if is this method that stops the pipeline"""
     valid_triples: list[KGTriple] = []
 
     for item in raw_items:
