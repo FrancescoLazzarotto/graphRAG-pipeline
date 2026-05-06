@@ -104,13 +104,8 @@ def _pick_ground_truth(gold_row: dict[str, str]) -> str:
             return value
     return ""
 
-def _check_ground_truth(gold_row: dict[str, str]) -> bool:
-    for row in gold_row:
-        if isinstance(row, str):
-            pass
-        else:
-            return false
-    return true
+def _check_ground_truth(gold_row: dict) -> bool:
+    return all(isinstance(k, str) and isinstance(v, str) for k, v in gold_row.items())
 
 
 
