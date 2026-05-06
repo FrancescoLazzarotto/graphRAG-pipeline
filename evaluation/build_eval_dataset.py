@@ -104,6 +104,16 @@ def _pick_ground_truth(gold_row: dict[str, str]) -> str:
             return value
     return ""
 
+def _check_ground_truth(gold_row: dict[str, str]) -> bool:
+    for row in gold_row:
+        if isinstance(row, str):
+            pass
+        else:
+            return false
+    return true
+
+
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Join experiment results with gold labels for evaluation")
