@@ -39,7 +39,7 @@ def test_schema_validation_rejects_bad_predicate():
     payload = [
         {
             "subject": "Europe",
-            "predicate": "has_value",
+            "predicate": "1_BAD",
             "object": "2.7 C",
             "subject_labels": ["Region"],
             "object_labels": ["DataValue"],
@@ -50,6 +50,23 @@ def test_schema_validation_rejects_bad_predicate():
     ]
     with pytest.raises(Exception):
         validate_triples(payload)
+
+
+def test_schema_validation_normalizes_predicate():
+    payload = [
+        {
+            "subject": "Europe",
+            "predicate": "has_value",
+            "object": "2.7 C",
+            "subject_labels": ["Region"],
+            "object_labels": ["DataValue"],
+            "subject_properties": {"name": "Europe"},
+            "object_properties": {"name": "2.7 C"},
+            "relationship_properties": {"source_doc": "demo.pdf", "extraction_method": "llm"},
+        }
+    ]
+    triples = validate_triples(payload)
+    assert triples[0].predicate == "HAS_VALUE"
 
 
 def test_chunking_metadata_fields_present():
