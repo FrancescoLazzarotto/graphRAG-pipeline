@@ -13,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 from kg_pipeline.models.types import CanonicalEntityRecord, KGTriple
+from datetime import datetime
 from kg_pipeline.utils.acronym_map import expand_acronym
 
 
@@ -249,6 +250,7 @@ def resolve_entities(
     base_url: str | None,
     api_key: str | None,
     model_name: str | None,
+    crosslabel_log_path: Path | None = None,
 ) -> tuple[list[KGTriple], dict[str, CanonicalEntityRecord]]:
     mentions = _build_mentions(triples)
     groups = _initial_groups(mentions, acronym_map, context_jaccard_floor=context_jaccard_floor)
@@ -279,7 +281,7 @@ def resolve_entities(
     for idx in range(len(groups)):
         merged_group_map[uf.find(idx)].append(idx)
 
-    alias_to_canonical: dict[str, str] = {}
+    # Build initial registry (do not finalize alias -> canonical mapping yet)
     registry: dict[str, CanonicalEntityRecord] = {}
 
     for group_idxs in merged_group_map.values():
@@ -295,8 +297,6 @@ def resolve_entities(
 
         for midx in mention_indices:
             alias = mentions[midx]["name"]
-            if alias not in alias_to_canonical:
-                alias_to_canonical[alias] = canonical_name
             source_doc = mentions[midx]["doc"]
             if source_doc and source_doc not in alias_sources[alias]:
                 alias_sources[alias].append(source_doc)
@@ -311,6 +311,104 @@ def resolve_entities(
             alias_sources=dict(alias_sources),
         )
 
+    def _cross_label_merge_registry(
+        registry: dict[str, CanonicalEntityRecord],
+        log_path: Path | None = None,
+    ) -> tuple[dict[str, CanonicalEntityRecord], dict[str, str]]:
+        """Merge registry entries that have same normalized name but different labels.
+
+        Returns (updated_registry, alias_to_canonical_map)
+        """
+        precedence = ["Method", "Concept", "Indicator", "Policy", "Commodity", "Region", "Organization"]
+        norm_map: dict[str, list[str]] = defaultdict(list)
+        for cname in list(registry.keys()):
+            norm = cname.strip().lower()
+            norm_map[norm].append(cname)
+
+        log_lines: list[str] = []
+        for norm, cnames in norm_map.items():
+            if len(cnames) < 2:
+                continue
+            # gather labels
+            label_sets = {lbl for cname in cnames for lbl in registry[cname].labels}
+            if len(label_sets) <= 1:
+                continue
+
+            # choose canonical label by precedence
+            chosen_label = None
+            for p in precedence:
+                if p in label_sets:
+                    chosen_label = p
+                    break
+            if not chosen_label:
+                chosen_label = sorted(label_sets)[0]
+
+            # choose keeper record (prefer record that already contains chosen_label)
+            keeper: str | None = None
+            candidates = [c for c in cnames if chosen_label in registry[c].labels]
+            if candidates:
+                keeper = sorted(candidates, key=lambda x: (-len(x), x.lower()))[0]
+            else:
+                keeper = sorted(cnames, key=lambda x: (-len(x), x.lower()))[0]
+
+            removed = []
+            for other in cnames:
+                if other == keeper:
+                    continue
+                # merge aliases and alias_sources
+                for a in registry[other].aliases:
+                    if a not in registry[keeper].aliases:
+                        registry[keeper].aliases.append(a)
+                for a, srcs in registry[other].alias_sources.items():
+                    registry[keeper].alias_sources.setdefault(a, [])
+                    for s in srcs:
+                        if s not in registry[keeper].alias_sources[a]:
+                            registry[keeper].alias_sources[a].append(s)
+                # merge properties (keep existing keys on keeper)
+                for k, v in registry[other].merged_properties.items():
+                    registry[keeper].merged_properties.setdefault(k, v)
+                removed.append({"canonical": other, "labels": registry[other].labels})
+                # delete other
+                try:
+                    del registry[other]
+                except KeyError:
+                    pass
+
+            # set canonical label on keeper to chosen_label
+            registry[keeper].labels = [chosen_label]
+
+            # log
+            ts = datetime.utcnow().isoformat()
+            entry = {
+                "timestamp": ts,
+                "normalized_name": norm,
+                "keeper": keeper,
+                "removed": removed,
+                "chosen_label": chosen_label,
+            }
+            log_lines.append(json.dumps(entry, ensure_ascii=False))
+
+        # write log if requested
+        if log_path:
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with log_path.open("a", encoding="utf-8") as fh:
+                    for l in log_lines:
+                        fh.write(l + "\n")
+            except Exception:
+                pass
+
+        # build alias_to_canonical map from final registry
+        alias_to_canonical: dict[str, str] = {}
+        for cname, rec in registry.items():
+            for a in rec.aliases:
+                alias_to_canonical[a] = cname
+
+        return registry, alias_to_canonical
+
+    # perform cross-label merging and build alias mapping
+    registry, alias_to_canonical = _cross_label_merge_registry(registry, log_path=Path(crosslabel_log_path) if crosslabel_log_path else None)
+
     resolved_triples: list[KGTriple] = []
     for triple in triples:
         triple.subject = alias_to_canonical.get(triple.subject, triple.subject)
@@ -320,11 +418,16 @@ def resolve_entities(
             triple.subject_properties = dict(registry[triple.subject].merged_properties)
             if not triple.subject_labels:
                 triple.subject_labels = list(registry[triple.subject].labels) or ["Concept"]
+            else:
+                # prefer registry labels if they exist
+                triple.subject_labels = list(registry[triple.subject].labels)
 
         if triple.object in registry:
             triple.object_properties = dict(registry[triple.object].merged_properties)
             if not triple.object_labels:
                 triple.object_labels = list(registry[triple.object].labels) or ["Concept"]
+            else:
+                triple.object_labels = list(registry[triple.object].labels)
 
         resolved_triples.append(triple)
 
@@ -363,6 +466,7 @@ def _cli() -> None:
     parser.add_argument("--base-url", default="")
     parser.add_argument("--api-key", default="EMPTY")
     parser.add_argument("--model-name", default="")
+    parser.add_argument("--crosslabel-log", default="")
     args = parser.parse_args()
 
     triples = load_triples(Path(args.triples_json))
@@ -377,6 +481,7 @@ def _cli() -> None:
         base_url=args.base_url or None,
         api_key=args.api_key or None,
         model_name=args.model_name or None,
+        crosslabel_log_path=Path(args.crosslabel_log) if args.crosslabel_log else Path(args.output_registry_json).resolve().parent / "resolution_crosslabel.log",
     )
 
     save_triples(Path(args.output_triples_json), resolved)
