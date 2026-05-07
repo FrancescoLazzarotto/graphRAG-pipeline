@@ -74,11 +74,17 @@ def _cli() -> None:
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--labels-json", required=True)
     parser.add_argument("--threshold", type=float, default=0.45)
+    parser.add_argument("--threshold", type=float, default=0.55)
     args = parser.parse_args()
 
     chunks_payload = json.loads(Path(args.chunks_json).read_text(encoding="utf-8"))
     chunks = [ChunkRecord.model_validate(item) for item in chunks_payload]
     labels = json.loads(Path(args.labels_json).read_text(encoding="utf-8"))
+
+    # Ensure recommended labels present for improved extraction
+    for extra in ("TimePeriod", "DataValue"):
+        if extra not in labels:
+            labels.append(extra)
 
     ner_map = run_ner(chunks, args.model_name, labels, args.threshold)
     save_ner(Path(args.output_json), ner_map)
