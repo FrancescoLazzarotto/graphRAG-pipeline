@@ -68,9 +68,65 @@ Additional guidelines:
 - Avoid generic predicates like RELATED_TO and do not emit MENTIONED_IN (added later by the system).
 - Output must be pure JSON array only. No prose.
 - Include numeric relationship attributes in relationship_properties when present
-  (for example value, unit, year).
+    (for example value, unit, year).
 - relationship_properties must always include source_doc and extraction_method.
 - extraction_method must be "llm".
+
+You MUST use ONLY the following predicate types. Never invent new predicates.
+If the relationship does not fit any of these, either skip it or use the 
+closest match.
+
+ALLOWED PREDICATES (with usage guidance):
+- GOVERNS            → a policy/regulation governs a commodity/concept
+- ESTABLISHES        → an org or document establishes another org or policy
+- ESTABLISHED_BY     → inverse of ESTABLISHES
+- HAS_COMPONENT      → a concept/method is composed of sub-components
+- BASED_ON           → a method or policy is based on a concept/principle
+- AFFECTS            → an event or entity affects another entity
+- CONTRIBUTES_TO     → an entity contributes to a goal or concept
+- APPLIES_TO         → a rule/document applies to an entity
+- DEFINED_AS         → canonical definition relationship
+- INCLUDES           → a set includes members
+- IS_TYPE_OF         → instance-of or subtype relationship
+- HAS_MAXIMUM_LEVEL  → a commodity/indicator has a maximum regulatory level
+                                             Use ONLY this form. Never use HAS_MAX_LEVEL, 
+                                             HAS_MAXIMUM_LEVEL_AFLATOXIN_B1, or any variant.
+                                             Instead, add a property "contaminant" to the triple.
+- PUBLISHED          → an org published a document. Use for all publish 
+                                             variants (PUBLISHED_REPORT, PUBLISHER_OF, etc.)
+- WORKED_WITH        → collaboration between organizations
+- EXCHANGES_INFO_WITH → information exchange between organizations
+- TAKE_INTO_ACCOUNT  → a method considers a factor
+- ENSURES            → an entity ensures a quality or outcome. 
+                                             Use for ALL variants of ENSURES_HIGH_LEVEL_OF_*.
+- SHOULD_BE_MANAGED_BY → governance/management responsibility
+- AIMS_TO_ACHIEVE    → goal of a policy or process
+- NEEDED_FOR         → dependency relationship
+- CONTAINS_DATA      → a document contains a dataset
+- COMPLIES_WITH      → regulatory compliance
+- ANALYZES           → an org analyzes a concept
+
+PROPERTY RULES — the following must NEVER become relationships. 
+Encode them as properties of the subject node instead:
+- Titles, full names, acronym expansions → add property "full_name" or "title" 
+    to the subject node
+- Trade role descriptors (e.g. "major global trader") → add property "role"
+- Membership of a region → add property "region"
+
+Output schema note: each KGTriple object may include an optional top-level
+"properties" dictionary for additional key/value pairs extracted from the
+sentence context. Example triple schema:
+{{
+    "subject": "...",
+    "subject_label": "...",
+    "predicate": "...",
+    "object": "...",
+    "object_label": "...",
+    "properties": {{}},   // optional key-value pairs extracted from context
+    "subject_properties": {{...}},
+    "object_properties": {{...}},
+    "relationship_properties": {{...}}
+}}
 
 Chunk metadata:
 - filename: {chunk.filename}
