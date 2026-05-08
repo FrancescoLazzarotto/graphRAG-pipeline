@@ -290,6 +290,7 @@ WHERE NOT type(r) IN [
 ]
 RETURN type(r) AS outOfVocab, count(*) AS n ORDER BY n DESC
         """.strip(),
+   
         "duplicate_nodes_by_name": """
 MATCH (n)
 WITH n.name AS name, collect(labels(n)) AS labelSets, count(*) AS c
