@@ -270,6 +270,61 @@ def summary_counts(
     return {"nodes_by_label": node_records, "relationships_by_type": rel_records}
 
 
+def run_quality_checks(
+    uri: str,
+    user: str,
+    password: str,
+    report_path: Path,
+    database: str | None = None,
+) -> None:
+    """Run post-ingestion validation Cypher queries and write a report."""
+    queries = {
+        "predicates_out_of_vocab": """
+MATCH ()-[r]->()
+WHERE NOT type(r) IN [
+  'GOVERNS','ESTABLISHES','ESTABLISHED_BY','HAS_COMPONENT','BASED_ON',
+  'AFFECTS','CONTRIBUTES_TO','APPLIES_TO','DEFINED_AS','INCLUDES',
+  'IS_TYPE_OF','HAS_MAXIMUM_LEVEL','PUBLISHED','WORKED_WITH',
+  'EXCHANGES_INFO_WITH','TAKE_INTO_ACCOUNT','ENSURES','SHOULD_BE_MANAGED_BY',
+  'AIMS_TO_ACHIEVE','NEEDED_FOR','CONTAINS_DATA','COMPLIES_WITH','ANALYZES'
+]
+RETURN type(r) AS outOfVocab, count(*) AS n ORDER BY n DESC
+        """.strip(),
+        "duplicate_nodes_by_name": """
+MATCH (n)
+WITH n.name AS name, collect(labels(n)) AS labelSets, count(*) AS c
+WHERE c > 1
+RETURN name, labelSets, c ORDER BY c DESC
+        """.strip(),
+        "sparsely_connected_nodes": """
+MATCH (n)
+WHERE size((n)--()) <= 1
+RETURN labels(n) AS labels, n.name AS name LIMIT 20
+        """.strip(),
+    }
+
+    report: dict[str, object] = {"queries": {}}
+    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+        with driver.session(database=database) as session:
+            for key, q in queries.items():
+                try:
+                    data = session.run(q).data()
+                except Exception as e:
+                    data = {"error": str(e)}
+                report["queries"][key] = data
+
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        # best-effort: try simple write to current working dir
+        try:
+            with open("kg_quality_report.txt", "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(report, ensure_ascii=False, indent=2))
+        except Exception:
+            pass
+
+
 def load_triples(path: Path) -> list[KGTriple]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     return [KGTriple.model_validate(item) for item in payload]
@@ -287,8 +342,14 @@ def _cli() -> None:
     triples = load_triples(Path(args.triples_json))
     written = ingest_triples(triples, uri=uri, user=user, password=password, database=database)
     summary = summary_counts(uri=uri, user=user, password=password, database=database)
-
     print(json.dumps({"relationships_written": written, "summary": summary}, ensure_ascii=False, indent=2))
+
+    # Run validation queries and write kg_quality_report.txt next to triples JSON
+    try:
+        report_path = Path(args.triples_json).resolve().parent / "kg_quality_report.txt"
+        run_quality_checks(uri=uri, user=user, password=password, report_path=report_path, database=database)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
