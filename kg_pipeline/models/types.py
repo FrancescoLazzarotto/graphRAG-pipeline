@@ -80,6 +80,9 @@ class KGTriple(BaseModel):
     subject_properties: dict[str, Any]
     object_properties: dict[str, Any]
     relationship_properties: dict[str, Any]
+    # optional top-level properties dict for additional extracted context 
+    # da capire se llm lo utilizza
+    properties: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("subject", "object")
     @classmethod
@@ -127,6 +130,7 @@ class KGTriple(BaseModel):
             "subject_properties": self.subject_properties,
             "object_properties": self.object_properties,
             "relationship_properties": self.relationship_properties,
+            "properties": self.properties,
         }
 
 
@@ -164,6 +168,7 @@ def kg_triple_array_schema() -> dict[str, Any]:
                 "subject_properties": {"type": "object"},
                 "object_properties": {"type": "object"},
                 "relationship_properties": {"type": "object"},
+                "properties": {"type": "object"},
             },
         },
     }
