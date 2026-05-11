@@ -115,6 +115,12 @@ _DEFAULT_PROPERTY_SCHEMA: dict[str, dict[str, str]] = {
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _REL_CLEAN = re.compile(r"[^A-Z0-9_]+")
+_RELATED_TO_BATCH_SIZE = 50
+
+_MICRO_RELATION_REWRITES = [
+    {"from": "COMPOSED_OF", "to": "INCLUDES"},
+    {"from": "USES_METHOD", "to": "USES"},
+]
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -234,6 +240,21 @@ def _relation_mapping_prompt(canonical: list[str], items: list[dict[str, Any]]) 
     )
 
 
+def _related_to_refinement_prompt(canonical: list[str], items: list[dict[str, Any]]) -> str:
+    return (
+        "You refine RELATED_TO relationships to a more specific predicate.\n"
+        "Rules:\n"
+        "- Use only the canonical list.\n"
+        "- Keep direction and semantics.\n"
+        "- Prefer the most specific relation; use RELATED_TO only if nothing fits.\n"
+        "Return JSON array of objects: {\"id\": int, \"type\": str}.\n\n"
+        "Canonical list:\n"
+        f"{json.dumps(canonical, indent=2)}\n\n"
+        "Items:\n"
+        f"{json.dumps(items, indent=2)}"
+    )
+
+
 def _classify_concepts_prompt(labels: list[str], nodes: list[dict[str, Any]]) -> str:
     return (
         "You assign a single label to each Concept node.\n"
@@ -329,6 +350,38 @@ def _fetch_node_context(session, ids: list[int]) -> list[dict[str, Any]]:
         "RETURN id(n) AS id, n.name AS name, labels(n) AS labels, rels"
     )
     return session.run(query, ids=ids).data()
+
+
+def _fetch_related_to_ids(session) -> list[int]:
+    rows = session.run("MATCH ()-[r:RELATED_TO]->() RETURN id(r) AS id ORDER BY id(r)").data()
+    return [int(row["id"]) for row in rows]
+
+
+def _fetch_related_to_context(session, rel_ids: list[int]) -> list[dict[str, Any]]:
+    if not rel_ids:
+        return []
+    query = (
+        "UNWIND $ids AS rid "
+        "MATCH (s)-[r:RELATED_TO]->(t) "
+        "WHERE id(r) = rid "
+        "CALL { "
+        "  WITH s, rid "
+        "  MATCH (s)-[rs]-(sn) "
+        "  WHERE id(rs) <> rid "
+        "  RETURN collect({type: type(rs), neighbor: coalesce(sn.name, ''), labels: labels(sn)})[0..3] AS s_rels "
+        "} "
+        "CALL { "
+        "  WITH t, rid "
+        "  MATCH (t)-[rt]-(tn) "
+        "  WHERE id(rt) <> rid "
+        "  RETURN collect({type: type(rt), neighbor: coalesce(tn.name, ''), labels: labels(tn)})[0..3] AS t_rels "
+        "} "
+        "RETURN id(r) AS id, "
+        "  {labels: labels(s), name: coalesce(s.name, '')} AS source, "
+        "  {labels: labels(t), name: coalesce(t.name, '')} AS target, "
+        "  s_rels AS source_context, t_rels AS target_context"
+    )
+    return session.run(query, ids=rel_ids).data()
 
 
 def _coerce_value(value: Any) -> Any:
@@ -720,6 +773,207 @@ def _enrich_properties(
     return report
 
 
+def _refine_related_to_relationships(
+    session,
+    canonical: list[str],
+    client: OpenAI,
+    model_name: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "total_related_to": 0,
+        "updated": 0,
+        "skipped": 0,
+        "type_counts": {},
+        "batches": 0,
+        "errors": [],
+    }
+
+    rel_ids = _fetch_related_to_ids(session)
+    report["total_related_to"] = len(rel_ids)
+    if not rel_ids:
+        return report
+
+    canonical_set = {item.upper() for item in canonical}
+
+    for batch_ids in _chunked(rel_ids, _RELATED_TO_BATCH_SIZE):
+        report["batches"] += 1
+        context_rows = _fetch_related_to_context(session, batch_ids)
+        prompt = _related_to_refinement_prompt(canonical, context_rows)
+        try:
+            rows = _llm_json_array(client, model_name, prompt)
+        except Exception as exc:
+            report["errors"].append(f"RELATED_TO refinement failed: {exc}")
+            continue
+
+        updates: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                rel_id = int(row.get("id", -1))
+            except (TypeError, ValueError):
+                rel_id = -1
+            if rel_id < 0:
+                report["skipped"] += 1
+                continue
+
+            raw_type = str(row.get("type", "")).strip()
+            normalized = _normalize_rel_type(raw_type)
+            if normalized not in canonical_set:
+                normalized = "RELATED_TO"
+
+            report["type_counts"][normalized] = report["type_counts"].get(normalized, 0) + 1
+            if normalized == "RELATED_TO":
+                report["skipped"] += 1
+                continue
+
+            updates.append({"id": rel_id, "type": normalized})
+
+        if not updates or dry_run:
+            report["updated"] += 0
+            continue
+
+        try:
+            result = session.run(
+                "UNWIND $updates AS item "
+                "MATCH ()-[r]->() WHERE id(r) = item.id "
+                "CALL apoc.refactor.setType(r, item.type) YIELD output "
+                "RETURN count(output) AS updated",
+                updates=updates,
+            ).single()
+            report["updated"] += int(result["updated"])
+        except Exception as exc:
+            report["errors"].append(f"RELATED_TO update failed: {exc}")
+
+    return report
+
+
+def _find_region_artifacts(session) -> list[dict[str, Any]]:
+    query = (
+        "MATCH (n:Region) "
+        "WHERE n.name IS NOT NULL AND trim(n.name) <> '' "
+        "  AND ( "
+        "    n.name CONTAINS '/' "
+        "    OR n.name CONTAINS '*' "
+        "    OR ( "
+        "      n.name = toUpper(n.name) "
+        "      AND size([w IN split(trim(n.name), ' ') WHERE w <> '']) > 3 "
+        "    ) "
+        "  ) "
+        "CALL { "
+        "  WITH n "
+        "  MATCH (m:Region) "
+        "  WHERE id(m) <> id(n) "
+        "    AND toLower(trim(m.name)) = toLower(trim(n.name)) "
+        "  RETURN id(m) AS match_id, m.name AS match_name "
+        "  ORDER BY id(m) "
+        "  LIMIT 1 "
+        "} "
+        "RETURN id(n) AS id, n.name AS name, match_id, match_name"
+    )
+    return session.run(query).data()
+
+
+def _cleanup_region_artifacts(session, dry_run: bool) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "matched": 0,
+        "deleted_nodes": 0,
+        "rewired_relationships": 0,
+        "deleted_relationships": 0,
+        "errors": [],
+        "samples": [],
+    }
+
+    artifacts = _find_region_artifacts(session)
+    report["candidates"] = len(artifacts)
+
+    for row in artifacts:
+        bad_id = int(row["id"])
+        match_id = row.get("match_id")
+        match_id = int(match_id) if match_id is not None else None
+
+        rel_count = 0
+        try:
+            rel_count = int(
+                session.run(
+                    "MATCH (n) WHERE id(n) = $id MATCH (n)-[r]-() RETURN count(r) AS c",
+                    id=bad_id,
+                ).single()["c"]
+            )
+        except Exception as exc:
+            report["errors"].append(f"region rel count failed for {bad_id}: {exc}")
+
+        if match_id is not None:
+            report["matched"] += 1
+            report["rewired_relationships"] += rel_count
+            if len(report["samples"]) < 20:
+                report["samples"].append(
+                    {"from": row.get("name", ""), "to": row.get("match_name", "")}
+                )
+            if dry_run:
+                continue
+            try:
+                session.run(
+                    "MATCH (match:Region) WHERE id(match) = $match_id "
+                    "MATCH (bad:Region) WHERE id(bad) = $bad_id "
+                    "WITH [match, bad] AS nodes "
+                    "CALL apoc.refactor.mergeNodes(nodes, {properties: 'discard', mergeRels: true}) "
+                    "YIELD node RETURN id(node) AS id",
+                    match_id=match_id,
+                    bad_id=bad_id,
+                ).consume()
+            except Exception as exc:
+                report["errors"].append(f"region merge failed for {bad_id}: {exc}")
+            continue
+
+        report["deleted_nodes"] += 1
+        report["deleted_relationships"] += rel_count
+        if len(report["samples"]) < 20:
+            report["samples"].append({"from": row.get("name", ""), "to": None})
+        if dry_run:
+            continue
+
+        try:
+            session.run("MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id).consume()
+        except Exception as exc:
+            report["errors"].append(f"region delete failed for {bad_id}: {exc}")
+
+    return report
+
+
+def _absorb_micro_relation_types(
+    session,
+    rewrites: list[dict[str, str]],
+    dry_run: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {"pairs": [], "errors": []}
+
+    for item in rewrites:
+        source = _normalize_rel_type(str(item.get("from", "")))
+        target = _normalize_rel_type(str(item.get("to", "")))
+        if not source or not target or source == target:
+            continue
+
+        count_query = f"MATCH ()-[r:`{source}`]->() RETURN count(r) AS c"
+        try:
+            count = int(session.run(count_query).single()["c"])
+        except Exception as exc:
+            report["errors"].append(f"micro type count failed for {source}: {exc}")
+            continue
+
+        updated = 0
+        if not dry_run and count > 0:
+            try:
+                session.run("CALL apoc.refactor.rename.type($old, $new)", old=source, new=target).consume()
+                updated = count
+            except Exception as exc:
+                report["errors"].append(f"micro type rename failed for {source} -> {target}: {exc}")
+
+        report["pairs"].append({"source": source, "target": target, "count": count, "updated": updated})
+
+    return report
+
+
 def _apply_constraints(
     session,
     all_labels: list[str],
@@ -772,6 +1026,12 @@ def main() -> None:
     parser.add_argument("--enrich-batch-size", type=int, default=30)
     parser.add_argument("--reltype-patterns", type=int, default=6)
     parser.add_argument(
+        "--fix",
+        choices=["related-to", "region-artifacts", "micro-types"],
+        default="",
+        help="Run a single cleanup task and skip the default pipeline",
+    )
+    parser.add_argument(
         "--dedup-label-mode",
         choices=["overlap", "exact", "any"],
         default="overlap",
@@ -811,8 +1071,16 @@ def main() -> None:
     relation_vocab = _load_relation_vocab(args.relation_vocab)
     property_schema = _load_property_schema(args.property_schema)
 
-    base_url, model_name, api_key = _resolve_llm_env()
-    client = _build_llm_client(base_url=base_url, api_key=api_key)
+    fix_mode = args.fix.strip()
+    needs_llm = not fix_mode or fix_mode == "related-to"
+
+    base_url = ""
+    model_name = ""
+    api_key = ""
+    client: OpenAI | None = None
+    if needs_llm:
+        base_url, model_name, api_key = _resolve_llm_env()
+        client = _build_llm_client(base_url=base_url, api_key=api_key)
 
     uri, user, password, env_db = _resolve_neo4j_env()
     database = args.database.strip() or env_db
@@ -829,6 +1097,40 @@ def main() -> None:
             apoc_available = _has_apoc(session)
             report["apoc_available"] = apoc_available
             LOGGER.info("APOC available=%s", apoc_available)
+
+            if fix_mode:
+                if not apoc_available:
+                    report["error"] = "APOC unavailable, cleanup tasks require APOC"
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                    return
+
+                if fix_mode == "related-to":
+                    LOGGER.info("Fix: refine RELATED_TO relationships")
+                    if client is None:
+                        raise RuntimeError("LLM client required for RELATED_TO refinement")
+                    report["related_to_refinement"] = _refine_related_to_relationships(
+                        session=session,
+                        canonical=relation_vocab,
+                        client=client,
+                        model_name=model_name,
+                        dry_run=args.dry_run,
+                    )
+                elif fix_mode == "region-artifacts":
+                    LOGGER.info("Fix: cleanup Region header artifacts")
+                    report["region_artifact_cleanup"] = _cleanup_region_artifacts(
+                        session=session,
+                        dry_run=args.dry_run,
+                    )
+                elif fix_mode == "micro-types":
+                    LOGGER.info("Fix: absorb micro relationship types")
+                    report["micro_type_absorption"] = _absorb_micro_relation_types(
+                        session=session,
+                        rewrites=_MICRO_RELATION_REWRITES,
+                        dry_run=args.dry_run,
+                    )
+
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+                return
 
             relation_items = _fetch_relation_types(session, max_patterns=args.reltype_patterns)
             if not apoc_available:
