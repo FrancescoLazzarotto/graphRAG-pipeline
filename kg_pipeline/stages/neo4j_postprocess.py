@@ -12,6 +12,7 @@ from typing import Any, Iterable
 import yaml
 from neo4j import GraphDatabase
 from openai import OpenAI
+from dotenv import load_dotenv
 
 from kg_pipeline.stages.neo4j_ingestion import _resolve_neo4j_env
 from kg_pipeline.utils.validation import parse_json_array
@@ -79,6 +80,14 @@ _CANONICAL_RELATION_TYPES = [
     "ANALYZES",
     "ESTABLISHES",
     "ESTABLISHED_BY",
+]
+
+_INVERSE_RELATION_REWRITES = [
+    {"from": "ESTABLISHED_BY", "to": "ESTABLISHES"},
+    {"from": "USED_BY", "to": "USES"},
+    {"from": "CAUSED_BY", "to": "CAUSES"},
+    {"from": "REQUIRED_BY", "to": "REQUIRES"},
+    {"from": "REGULATES", "to": "REGULATED_BY"},
 ]
 
 _DEFAULT_PROPERTY_SCHEMA: dict[str, dict[str, str]] = {
@@ -197,10 +206,16 @@ def _has_apoc(session) -> bool:
         return False
 
 
-def _fetch_relation_types(session) -> list[dict[str, Any]]:
-    return session.run(
-        "MATCH ()-[r]->() RETURN type(r) AS type, count(*) AS count ORDER BY count DESC"
-    ).data()
+def _fetch_relation_types(session, max_patterns: int) -> list[dict[str, Any]]:
+    query = (
+        "MATCH (a)-[r]->(b) "
+        "WITH type(r) AS type, labels(a) AS source_labels, labels(b) AS target_labels, count(*) AS count "
+        "ORDER BY count DESC "
+        "WITH type, collect({source_labels: source_labels, target_labels: target_labels, count: count}) AS patterns, sum(count) AS total "
+        "RETURN type, total AS count, patterns[0..$max_patterns] AS patterns "
+        "ORDER BY count DESC"
+    )
+    return session.run(query, max_patterns=max_patterns).data()
 
 
 def _relation_mapping_prompt(canonical: list[str], items: list[dict[str, Any]]) -> str:
@@ -209,7 +224,8 @@ def _relation_mapping_prompt(canonical: list[str], items: list[dict[str, Any]]) 
         "Rules:\n"
         "- Use only the canonical list.\n"
         "- Preserve direction and semantics when possible.\n"
-        "- If no good match, use RELATED_TO.\n"
+        "- Prefer the most specific relation; avoid RELATED_TO unless nothing fits.\n"
+        "- Use endpoint label patterns if provided.\n"
         "Return JSON array of objects: {\"source\": str, \"target\": str}.\n\n"
         "Canonical list:\n"
         f"{json.dumps(canonical, indent=2)}\n\n"
@@ -259,6 +275,16 @@ def _fallback_relation_target(source: str, canonical_set: set[str]) -> str:
                 return candidate
 
     return "RELATED_TO"
+
+
+def _labels_compatible(primary: list[str], secondary: list[str], mode: str) -> bool:
+    if mode == "any":
+        return True
+    primary_set = set(primary or [])
+    secondary_set = set(secondary or [])
+    if mode == "exact":
+        return primary_set == secondary_set
+    return bool(primary_set & secondary_set)
 
 
 def _load_relation_vocab(path: str) -> list[str]:
@@ -350,8 +376,19 @@ def _apply_relation_mapping(
 
     canonical_set = {item.upper() for item in canonical}
     mapping: dict[str, str] = {}
+    pending_items: list[dict[str, Any]] = []
 
-    for batch in _chunked(relation_items, batch_size):
+    for item in relation_items:
+        source = str(item.get("type", "")).strip()
+        if not source:
+            continue
+        normalized = _normalize_rel_type(source)
+        if normalized in canonical_set:
+            mapping[source] = normalized
+        else:
+            pending_items.append(item)
+
+    for batch in _chunked(pending_items, batch_size):
         prompt = _relation_mapping_prompt(canonical, batch)
         try:
             rows = _llm_json_array(client, model_name, prompt)
@@ -401,6 +438,51 @@ def _apply_relation_mapping(
     return report
 
 
+def _rewrite_inverse_relationships(
+    session,
+    rewrites: list[dict[str, str]],
+    dry_run: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {"pairs": [], "errors": []}
+
+    for item in rewrites:
+        source = _normalize_rel_type(str(item.get("from", "")))
+        target = _normalize_rel_type(str(item.get("to", "")))
+        if not source or not target or source == target:
+            continue
+
+        count_query = f"MATCH ()-[r:`{source}`]->() RETURN count(r) AS c"
+        try:
+            count = session.run(count_query).single()["c"]
+        except Exception as exc:
+            report["errors"].append(f"inverse count failed for {source}: {exc}")
+            continue
+
+        if dry_run or int(count) == 0:
+            report["pairs"].append({"source": source, "target": target, "count": int(count), "rewritten": 0})
+            continue
+
+        query = (
+            f"MATCH (a)-[r:`{source}`]->(b) "
+            "WITH a, b, r, properties(r) AS props "
+            f"MERGE (b)-[r2:`{target}`]->(a) "
+            "SET r2 += props "
+            "DELETE r "
+            "RETURN count(r2) AS rewritten"
+        )
+        try:
+            rewritten = session.run(query).single()["rewritten"]
+        except Exception as exc:
+            report["errors"].append(f"inverse rewrite failed for {source} -> {target}: {exc}")
+            continue
+
+        report["pairs"].append(
+            {"source": source, "target": target, "count": int(count), "rewritten": int(rewritten)}
+        )
+
+    return report
+
+
 def _find_duplicate_groups(session) -> list[dict[str, Any]]:
     rows = session.run(
         "MATCH (n) "
@@ -424,14 +506,33 @@ def _find_duplicate_groups(session) -> list[dict[str, Any]]:
     ]
 
 
-def _merge_duplicate_groups(session, groups: list[dict[str, Any]], dry_run: bool) -> dict[str, Any]:
-    report: dict[str, Any] = {"groups": 0, "merged_nodes": 0, "errors": [], "samples": []}
+def _merge_duplicate_groups(
+    session,
+    groups: list[dict[str, Any]],
+    dry_run: bool,
+    label_mode: str,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "groups": 0,
+        "merged_nodes": 0,
+        "skipped_incompatible": 0,
+        "errors": [],
+        "samples": [],
+    }
 
     for group in groups:
         nodes = group["nodes"]
         nodes_sorted = sorted(nodes, key=lambda row: (-int(row.get("degree", 0)), int(row["id"])))
         primary = nodes_sorted[0]
-        secondary_ids = [int(row["id"]) for row in nodes_sorted[1:]]
+        primary_labels = primary.get("labels", []) or []
+        compatible = []
+        for row in nodes_sorted[1:]:
+            if _labels_compatible(primary_labels, row.get("labels", []), label_mode):
+                compatible.append(row)
+            else:
+                report["skipped_incompatible"] += 1
+
+        secondary_ids = [int(row["id"]) for row in compatible]
         report["groups"] += 1
         report["merged_nodes"] += len(secondary_ids)
 
@@ -440,7 +541,7 @@ def _merge_duplicate_groups(session, groups: list[dict[str, Any]], dry_run: bool
                 {
                     "normalized": group["normalized"],
                     "primary": primary["name"],
-                    "secondary": [row["name"] for row in nodes_sorted[1:]],
+                    "secondary": [row["name"] for row in compatible],
                 }
             )
 
@@ -470,6 +571,7 @@ def _classify_concepts(
     model_name: str,
     dry_run: bool,
     batch_size: int,
+    label_mode: str,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {"candidates": 0, "relabeled": 0, "label_counts": {}, "errors": []}
 
@@ -515,10 +617,16 @@ def _classify_concepts(
                 continue
 
             safe_label = _sanitize_label(label)
-            session.run(
-                f"MATCH (n) WHERE id(n) = $id SET n:`{safe_label}` REMOVE n:Concept",
-                id=node_id,
-            ).consume()
+            if label_mode == "add":
+                session.run(
+                    f"MATCH (n) WHERE id(n) = $id SET n:`{safe_label}`",
+                    id=node_id,
+                ).consume()
+            else:
+                session.run(
+                    f"MATCH (n) WHERE id(n) = $id SET n:`{safe_label}` REMOVE n:Concept",
+                    id=node_id,
+                ).consume()
 
     return report
 
@@ -652,6 +760,7 @@ def _apply_constraints(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="kg_pipeline/config.yaml")
+    parser.add_argument("--env-file", default="kg_pipeline/.env")
     parser.add_argument("--database", default="")
     parser.add_argument("--relation-vocab", default="")
     parser.add_argument("--property-schema", default="")
@@ -661,6 +770,24 @@ def main() -> None:
     parser.add_argument("--relation-batch-size", type=int, default=120)
     parser.add_argument("--concept-batch-size", type=int, default=50)
     parser.add_argument("--enrich-batch-size", type=int, default=30)
+    parser.add_argument("--reltype-patterns", type=int, default=6)
+    parser.add_argument(
+        "--dedup-label-mode",
+        choices=["overlap", "exact", "any"],
+        default="overlap",
+        help="How strict label matching must be to merge duplicates",
+    )
+    parser.add_argument(
+        "--concept-label-mode",
+        choices=["replace", "add"],
+        default="replace",
+        help="Replace Concept label or add alongside it",
+    )
+    parser.add_argument(
+        "--rewrite-inverses",
+        action="store_true",
+        help="Rewrite inverse relation pairs to a single direction",
+    )
     args = parser.parse_args()
 
     log_path = None
@@ -671,6 +798,8 @@ def main() -> None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         log_path = log_dir / f"neo4j_postprocess_{timestamp}.log"
     _setup_logging(log_path)
+
+    load_dotenv(args.env_file, override=True)
 
     config = _load_yaml(Path(args.config))
     allowed_labels = [str(label) for label in config.get("ontology", {}).get("labels", [])]
@@ -701,7 +830,7 @@ def main() -> None:
             report["apoc_available"] = apoc_available
             LOGGER.info("APOC available=%s", apoc_available)
 
-            relation_items = _fetch_relation_types(session)
+            relation_items = _fetch_relation_types(session, max_patterns=args.reltype_patterns)
             if not apoc_available:
                 report["step1_relation_mapping"] = {
                     "error": "APOC unavailable, cannot rename relationship types",
@@ -726,6 +855,20 @@ def main() -> None:
                     len(step1.get("errors", [])),
                 )
 
+            if args.rewrite_inverses:
+                LOGGER.info("Step 1b: rewrite inverse relations")
+                report["step1b_rewrite_inverses"] = _rewrite_inverse_relationships(
+                    session=session,
+                    rewrites=_INVERSE_RELATION_REWRITES,
+                    dry_run=args.dry_run,
+                )
+                step1b = report["step1b_rewrite_inverses"]
+                LOGGER.info(
+                    "Step 1b done: pairs=%d errors=%d",
+                    len(step1b.get("pairs", [])),
+                    len(step1b.get("errors", [])),
+                )
+
             duplicate_groups = _find_duplicate_groups(session)
             if not apoc_available:
                 report["step2_dedup"] = {
@@ -738,12 +881,14 @@ def main() -> None:
                     session=session,
                     groups=duplicate_groups,
                     dry_run=args.dry_run,
+                    label_mode=args.dedup_label_mode,
                 )
                 step2 = report["step2_dedup"]
                 LOGGER.info(
-                    "Step 2 done: groups=%d merged_nodes=%d errors=%d",
+                    "Step 2 done: groups=%d merged_nodes=%d skipped_incompatible=%d errors=%d",
                     int(step2.get("groups", 0)),
                     int(step2.get("merged_nodes", 0)),
+                    int(step2.get("skipped_incompatible", 0)),
                     len(step2.get("errors", [])),
                 )
 
@@ -755,6 +900,7 @@ def main() -> None:
                 model_name=model_name,
                 dry_run=args.dry_run,
                 batch_size=args.concept_batch_size,
+                label_mode=args.concept_label_mode,
             )
             step3 = report["step3_relabel_concept"]
             LOGGER.info(
