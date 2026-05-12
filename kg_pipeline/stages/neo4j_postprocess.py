@@ -116,6 +116,31 @@ _DEFAULT_PROPERTY_SCHEMA: dict[str, dict[str, str]] = {
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 _REL_CLEAN = re.compile(r"[^A-Z0-9_]+")
 _RELATED_TO_BATCH_SIZE = 50
+_RELATION_RECLASS_BATCH_SIZE = 50
+
+_AURA_RECLASS_TYPES = [
+    "AFFECTS",
+    "CONTRIBUTES_TO",
+    "INCLUDES",
+    "PART_OF",
+    "ANALYZES",
+    "RELATED_TO",
+]
+
+_AURA_REGION_GARBAGE_NAMES = [
+    "REGIONS/SUBREGIONS/COUNTRIES/TERRITORIES",
+    "ASIA*",
+]
+
+_AURA_INVERSE_REWRITES = [
+    {"from": "REGULATES", "to": "REGULATED_BY"},
+    {"from": "USED_BY", "to": "USES"},
+    {"from": "ESTABLISHED_BY", "to": "ESTABLISHES"},
+]
+
+_AURA_RENAME_REWRITES = [
+    {"from": "INFLUENCES", "to": "AFFECTS"},
+]
 
 _MICRO_RELATION_REWRITES = [
     {"from": "COMPOSED_OF", "to": "INCLUDES"},
@@ -255,6 +280,21 @@ def _related_to_refinement_prompt(canonical: list[str], items: list[dict[str, An
     )
 
 
+def _relation_reclass_prompt(allowed: list[str], items: list[dict[str, Any]]) -> str:
+    return (
+        "You reclassify Neo4j relationships to a fixed allowed list.\n"
+        "Rules:\n"
+        "- Use only the allowed list.\n"
+        "- Keep direction and semantics.\n"
+        "- Use RELATED_TO only if nothing fits.\n"
+        "Return JSON array of objects: {\"id\": int, \"type\": str}.\n\n"
+        "Allowed list:\n"
+        f"{json.dumps(allowed, indent=2)}\n\n"
+        "Items:\n"
+        f"{json.dumps(items, indent=2)}"
+    )
+
+
 def _classify_concepts_prompt(labels: list[str], nodes: list[dict[str, Any]]) -> str:
     return (
         "You assign a single label to each Concept node.\n"
@@ -382,6 +422,43 @@ def _fetch_related_to_context(session, rel_ids: list[int]) -> list[dict[str, Any
         "  s_rels AS source_context, t_rels AS target_context"
     )
     return session.run(query, ids=rel_ids).data()
+
+
+def _fetch_relation_context(session, rel_ids: list[int], rel_type: str) -> list[dict[str, Any]]:
+    if not rel_ids:
+        return []
+    safe_type = _normalize_rel_type(rel_type)
+    query = (
+        "UNWIND $ids AS rid "
+        f"MATCH (s)-[r:`{safe_type}`]->(t) "
+        "WHERE id(r) = rid "
+        "CALL { "
+        "  WITH s, rid "
+        "  MATCH (s)-[rs]-(sn) "
+        "  WHERE id(rs) <> rid "
+        "  RETURN collect({type: type(rs), neighbor: coalesce(sn.name, ''), labels: labels(sn)})[0..3] AS s_rels "
+        "} "
+        "CALL { "
+        "  WITH t, rid "
+        "  MATCH (t)-[rt]-(tn) "
+        "  WHERE id(rt) <> rid "
+        "  RETURN collect({type: type(rt), neighbor: coalesce(tn.name, ''), labels: labels(tn)})[0..3] AS t_rels "
+        "} "
+        "RETURN id(r) AS id, type(r) AS current_type, "
+        "  {labels: labels(s), name: coalesce(s.name, '')} AS source, "
+        "  {labels: labels(t), name: coalesce(t.name, '')} AS target, "
+        "  s_rels AS source_context, t_rels AS target_context"
+    )
+    return session.run(query, ids=rel_ids).data()
+
+
+def _fetch_has_component_anomaly_ids(session) -> list[int]:
+    rows = session.run(
+        "MATCH (s:Organization)-[r:HAS_COMPONENT]->(t:Concept) RETURN id(r) AS id "
+        "UNION "
+        "MATCH (s:Concept)-[r:HAS_COMPONENT]->(t:Region) RETURN id(r) AS id"
+    ).data()
+    return [int(row["id"]) for row in rows]
 
 
 def _coerce_value(value: Any) -> Any:
@@ -532,6 +609,142 @@ def _rewrite_inverse_relationships(
         report["pairs"].append(
             {"source": source, "target": target, "count": int(count), "rewritten": int(rewritten)}
         )
+
+    return report
+
+
+def _invert_published_direction(session, dry_run: bool) -> dict[str, Any]:
+    report: dict[str, Any] = {"count": 0, "rewritten": 0, "errors": []}
+    try:
+        count = session.run(
+            "MATCH (d:Document)-[r:PUBLISHED]->(o:Organization) RETURN count(r) AS c"
+        ).single()["c"]
+        report["count"] = int(count)
+    except Exception as exc:
+        report["errors"].append(f"published count failed: {exc}")
+        return report
+
+    if dry_run or report["count"] == 0:
+        return report
+
+    query = (
+        "MATCH (d:Document)-[r:PUBLISHED]->(o:Organization) "
+        "WITH d, o, r, properties(r) AS props "
+        "MERGE (o)-[r2:PUBLISHED]->(d) "
+        "SET r2 += props "
+        "DELETE r "
+        "RETURN count(r2) AS rewritten"
+    )
+    try:
+        report["rewritten"] = int(session.run(query).single()["rewritten"])
+    except Exception as exc:
+        report["errors"].append(f"published inversion failed: {exc}")
+
+    return report
+
+
+def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "matched": 0,
+        "deleted_nodes": 0,
+        "rewired_relationships": 0,
+        "deleted_relationships": 0,
+        "errors": [],
+        "samples": [],
+    }
+
+    normalized_names = [name.strip().lower() for name in names if str(name).strip()]
+    if not normalized_names:
+        return report
+
+    rows = session.run(
+        "MATCH (n:Region) "
+        "WHERE toLower(trim(n.name)) IN $names "
+        "CALL { "
+        "  WITH n "
+        "  MATCH (m:Region) "
+        "  WHERE id(m) <> id(n) "
+        "    AND toLower(trim(m.name)) = toLower(trim(n.name)) "
+        "  RETURN id(m) AS match_id, m.name AS match_name "
+        "  ORDER BY id(m) "
+        "  LIMIT 1 "
+        "} "
+        "RETURN id(n) AS id, n.name AS name, match_id, match_name",
+        names=normalized_names,
+    ).data()
+
+    report["candidates"] = len(rows)
+
+    for row in rows:
+        bad_id = int(row["id"])
+        match_id = row.get("match_id")
+        match_id = int(match_id) if match_id is not None else None
+
+        rel_count = 0
+        try:
+            rel_count = int(
+                session.run(
+                    "MATCH (n) WHERE id(n) = $id MATCH (n)-[r]-() RETURN count(r) AS c",
+                    id=bad_id,
+                ).single()["c"]
+            )
+        except Exception as exc:
+            report["errors"].append(f"region rel count failed for {bad_id}: {exc}")
+
+        if match_id is not None:
+            report["matched"] += 1
+            report["deleted_nodes"] += 1
+            if len(report["samples"]) < 20:
+                report["samples"].append({"from": row.get("name", ""), "to": row.get("match_name", "")})
+
+            if dry_run:
+                report["rewired_relationships"] += rel_count
+                continue
+
+            query = (
+                "MATCH (bad:Region) WHERE id(bad) = $bad_id "
+                "MATCH (match:Region) WHERE id(match) = $match_id "
+                "CALL { "
+                "  WITH bad, match "
+                "  MATCH (bad)-[r]->(n) "
+                "  WHERE id(n) <> id(match) "
+                "  WITH match, n, r, type(r) AS rel_type, properties(r) AS props "
+                "  CALL apoc.create.relationship(match, rel_type, props, n) YIELD rel "
+                "  DELETE r "
+                "  RETURN count(rel) AS out_count "
+                "} "
+                "CALL { "
+                "  WITH bad, match "
+                "  MATCH (n)-[r]->(bad) "
+                "  WHERE id(n) <> id(match) "
+                "  WITH match, n, r, type(r) AS rel_type, properties(r) AS props "
+                "  CALL apoc.create.relationship(n, rel_type, props, match) YIELD rel "
+                "  DELETE r "
+                "  RETURN count(rel) AS in_count "
+                "} "
+                "DETACH DELETE bad "
+                "RETURN out_count + in_count AS rewired"
+            )
+            try:
+                rewired = int(session.run(query, bad_id=bad_id, match_id=match_id).single()["rewired"])
+                report["rewired_relationships"] += rewired
+                report["deleted_relationships"] += max(0, rel_count - rewired)
+            except Exception as exc:
+                report["errors"].append(f"region rewire failed for {bad_id}: {exc}")
+            continue
+
+        report["deleted_nodes"] += 1
+        report["deleted_relationships"] += rel_count
+        if len(report["samples"]) < 20:
+            report["samples"].append({"from": row.get("name", ""), "to": None})
+        if dry_run:
+            continue
+
+        try:
+            session.run("MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id).consume()
+        except Exception as exc:
+            report["errors"].append(f"region delete failed for {bad_id}: {exc}")
 
     return report
 
@@ -845,6 +1058,131 @@ def _refine_related_to_relationships(
             report["errors"].append(f"RELATED_TO update failed: {exc}")
 
     return report
+
+
+def _reclassify_relationships(
+    session,
+    rel_ids: list[int],
+    rel_type: str,
+    allowed: list[str],
+    client: OpenAI,
+    model_name: str,
+    dry_run: bool,
+    batch_size: int,
+    skip_when_type: str | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "total_candidates": len(rel_ids),
+        "updated": 0,
+        "skipped": 0,
+        "type_counts": {},
+        "batches": 0,
+        "errors": [],
+    }
+
+    if not rel_ids:
+        return report
+
+    allowed_set = {item.upper() for item in allowed}
+    normalized_skip = _normalize_rel_type(skip_when_type) if skip_when_type else None
+
+    for batch_ids in _chunked(rel_ids, batch_size):
+        report["batches"] += 1
+        batch_set = {int(item) for item in batch_ids}
+        context_rows = _fetch_relation_context(session, batch_ids, rel_type)
+        prompt = _relation_reclass_prompt(allowed, context_rows)
+        try:
+            rows = _llm_json_array(client, model_name, prompt)
+        except Exception as exc:
+            report["errors"].append(f"relation reclass failed: {exc}")
+            continue
+
+        updates: list[dict[str, Any]] = []
+        seen_ids: set[int] = set()
+
+        for row in rows:
+            try:
+                rel_id = int(row.get("id", -1))
+            except (TypeError, ValueError):
+                rel_id = -1
+            if rel_id < 0 or rel_id not in batch_set:
+                continue
+
+            seen_ids.add(rel_id)
+            raw_type = str(row.get("type", "")).strip()
+            normalized = _normalize_rel_type(raw_type)
+            if normalized not in allowed_set:
+                normalized = "RELATED_TO"
+
+            report["type_counts"][normalized] = report["type_counts"].get(normalized, 0) + 1
+            if normalized_skip and normalized == normalized_skip:
+                report["skipped"] += 1
+                continue
+
+            updates.append({"id": rel_id, "type": normalized})
+
+        missing = len(batch_set - seen_ids)
+        if missing:
+            report["skipped"] += missing
+
+        if not updates or dry_run:
+            continue
+
+        try:
+            result = session.run(
+                "UNWIND $updates AS item "
+                "MATCH ()-[r]->() WHERE id(r) = item.id "
+                "CALL apoc.refactor.setType(r, item.type) YIELD output "
+                "RETURN count(output) AS updated",
+                updates=updates,
+            ).single()
+            report["updated"] += int(result["updated"])
+        except Exception as exc:
+            report["errors"].append(f"relation reclass update failed: {exc}")
+
+    return report
+
+
+def _reclassify_has_component_anomalies(
+    session,
+    client: OpenAI,
+    model_name: str,
+    dry_run: bool,
+    batch_size: int,
+) -> dict[str, Any]:
+    rel_ids = _fetch_has_component_anomaly_ids(session)
+    return _reclassify_relationships(
+        session=session,
+        rel_ids=rel_ids,
+        rel_type="HAS_COMPONENT",
+        allowed=_AURA_RECLASS_TYPES,
+        client=client,
+        model_name=model_name,
+        dry_run=dry_run,
+        batch_size=batch_size,
+        skip_when_type=None,
+    )
+
+
+def _reclassify_related_to_second_pass(
+    session,
+    client: OpenAI,
+    model_name: str,
+    dry_run: bool,
+    batch_size: int,
+) -> dict[str, Any]:
+    rel_ids = _fetch_related_to_ids(session)
+    return _reclassify_relationships(
+        session=session,
+        rel_ids=rel_ids,
+        rel_type="RELATED_TO",
+        allowed=_AURA_RECLASS_TYPES,
+        client=client,
+        model_name=model_name,
+        dry_run=dry_run,
+        batch_size=batch_size,
+        skip_when_type="RELATED_TO",
+    )
 
 
 def _find_region_artifacts(session) -> list[dict[str, Any]]:
@@ -1170,6 +1508,120 @@ def main() -> None:
                     len(step1b.get("pairs", [])),
                     len(step1b.get("errors", [])),
                 )
+
+            aura_report: dict[str, Any] = {}
+
+            LOGGER.info("Aura cleanup step 1: invert PUBLISHED direction for Organization -> Document")
+            aura_report["step1_published_direction_fix"] = _invert_published_direction(
+                session=session,
+                dry_run=args.dry_run,
+            )
+            step_a1 = aura_report["step1_published_direction_fix"]
+            LOGGER.info(
+                "Aura step 1 done: count=%d rewritten=%d errors=%d",
+                int(step_a1.get("count", 0)),
+                int(step_a1.get("rewritten", 0)),
+                len(step_a1.get("errors", [])),
+            )
+
+            if not apoc_available:
+                aura_report["step2_region_garbage_cleanup"] = {
+                    "error": "APOC unavailable, cannot rewire/delete Region garbage nodes"
+                }
+            else:
+                LOGGER.info("Aura cleanup step 2: redirect/delete named Region garbage nodes")
+                aura_report["step2_region_garbage_cleanup"] = _cleanup_named_region_nodes(
+                    session=session,
+                    names=_AURA_REGION_GARBAGE_NAMES,
+                    dry_run=args.dry_run,
+                )
+                step_a2 = aura_report["step2_region_garbage_cleanup"]
+                LOGGER.info(
+                    "Aura step 2 done: candidates=%d matched=%d deleted_nodes=%d rewired=%d deleted_rels=%d errors=%d",
+                    int(step_a2.get("candidates", 0)),
+                    int(step_a2.get("matched", 0)),
+                    int(step_a2.get("deleted_nodes", 0)),
+                    int(step_a2.get("rewired_relationships", 0)),
+                    int(step_a2.get("deleted_relationships", 0)),
+                    len(step_a2.get("errors", [])),
+                )
+
+            if not apoc_available:
+                aura_report["step3_inverse_pairs"] = {
+                    "error": "APOC unavailable, cannot rewrite inverse relationships"
+                }
+            else:
+                LOGGER.info("Aura cleanup step 3: rewrite inverse pairs and rename INFLUENCES")
+                inverse_report = _rewrite_inverse_relationships(
+                    session=session,
+                    rewrites=_AURA_INVERSE_REWRITES,
+                    dry_run=args.dry_run,
+                )
+                rename_report = _absorb_micro_relation_types(
+                    session=session,
+                    rewrites=_AURA_RENAME_REWRITES,
+                    dry_run=args.dry_run,
+                )
+                aura_report["step3_inverse_pairs"] = {
+                    "inverse": inverse_report,
+                    "rename": rename_report,
+                }
+                LOGGER.info(
+                    "Aura step 3 done: inverse_pairs=%d inverse_errors=%d rename_pairs=%d rename_errors=%d",
+                    len(inverse_report.get("pairs", [])),
+                    len(inverse_report.get("errors", [])),
+                    len(rename_report.get("pairs", [])),
+                    len(rename_report.get("errors", [])),
+                )
+
+            if client is None:
+                raise RuntimeError("LLM client required for Aura relationship reclassification")
+
+            if not apoc_available:
+                aura_report["step4_has_component_reclass"] = {
+                    "error": "APOC unavailable, cannot reclassify HAS_COMPONENT relationships"
+                }
+            else:
+                LOGGER.info("Aura cleanup step 4: reclassify anomalous HAS_COMPONENT relationships")
+                aura_report["step4_has_component_reclass"] = _reclassify_has_component_anomalies(
+                    session=session,
+                    client=client,
+                    model_name=model_name,
+                    dry_run=args.dry_run,
+                    batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                )
+                step_a4 = aura_report["step4_has_component_reclass"]
+                LOGGER.info(
+                    "Aura step 4 done: candidates=%d updated=%d skipped=%d errors=%d",
+                    int(step_a4.get("total_candidates", 0)),
+                    int(step_a4.get("updated", 0)),
+                    int(step_a4.get("skipped", 0)),
+                    len(step_a4.get("errors", [])),
+                )
+
+            if not apoc_available:
+                aura_report["step5_related_to_reclass"] = {
+                    "error": "APOC unavailable, cannot reclassify RELATED_TO relationships"
+                }
+            else:
+                LOGGER.info("Aura cleanup step 5: second-pass reclassify RELATED_TO relationships")
+                aura_report["step5_related_to_reclass"] = _reclassify_related_to_second_pass(
+                    session=session,
+                    client=client,
+                    model_name=model_name,
+                    dry_run=args.dry_run,
+                    batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                )
+                step_a5 = aura_report["step5_related_to_reclass"]
+                LOGGER.info(
+                    "Aura step 5 done: candidates=%d updated=%d skipped=%d errors=%d",
+                    int(step_a5.get("total_candidates", 0)),
+                    int(step_a5.get("updated", 0)),
+                    int(step_a5.get("skipped", 0)),
+                    len(step_a5.get("errors", [])),
+                )
+
+            report["aura_cleanup"] = aura_report
 
             duplicate_groups = _find_duplicate_groups(session)
             if not apoc_available:
