@@ -48,7 +48,7 @@ class PromptLibrary:
             "Question:\n{{question}}\n\n"
             "Context:\n{{context}}\n\n"
             "If context has at least some factual evidence, provide the best grounded answer possible. "
-            "If context is sparse, include a short section titled 'Limiti e fiducia'. "
+            "If context is sparse, include a short section titled 'Limits and confidence'. "
             "State that context is insufficient only when context is empty or lacks factual evidence."
         )
 
