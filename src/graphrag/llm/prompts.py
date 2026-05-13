@@ -30,17 +30,30 @@ class PromptLibrary:
                 "## Key Concepts\n## Relationships\n## Reasoning Chain\n## Conclusions\n"
             )
 
-        template = (
-            "You are a knowledge system.\n"
+        # System message with explicit response rules
+        system_message = (
+            "You are a knowledge system assistant. CRITICAL RULES:\n"
+            "1. RESPOND ONLY IN ENGLISH OR ITALIAN - all your response must be in English or Italian based on which language is used in the prompt\n"
+            "2. PRESERVE ALL ENTITY AND RELATIONSHIP NAMES EXACTLY - do NOT translate, "
+            "modify, or transliterate any knowledge graph entity names, relationships, or attributes\n"
+            "3. CITE SOURCES using [chunk-N] notation or (subject, predicate, object) triples\n"
+            "4. DO NOT add translations or explanations of entity names in other languages\n"
+            "5. Maintain consistency with the knowledge graph structure provided in context\n"
+        )
+
+        human_message_template = (
             f"Target audience: {config.target_audience}.\n"
             f"{tone_map[config.tone]}\n{complexity_map[config.complexity]}\n"
             f"{structured}\n"
-            "Question:\n{question}\n\n"
-            "Context:\n{context}\n\n"
-            "IMPORTANT: cite sources using [chunk-N] or (subject, predicate, object) notation.\n"
+            "Question:\n{{question}}\n\n"
+            "Context:\n{{context}}\n\n"
             "If the context is insufficient, state it explicitly."
         )
-        return ChatPromptTemplate.from_template(template)
+
+        return ChatPromptTemplate.from_messages([
+            ("system", system_message),
+            ("human", human_message_template),
+        ])
 
     @staticmethod
     def rewrite_prompt(config: AgentConfig) -> ChatPromptTemplate:
