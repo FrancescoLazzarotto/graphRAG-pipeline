@@ -62,6 +62,7 @@ _CANONICAL_RELATION_TYPES = [
     "REGULATES",
     "REGULATED_BY",
     "GOVERNS",
+    "GOVERNED_BY",
     "COMPLIES_WITH",
     "SHOULD_BE_MANAGED_BY",
     "ENSURES",
@@ -155,6 +156,17 @@ _MICRO_RELATION_REWRITES = [
     {"from": "IMPACTS", "to": "AFFECTS"},
 ]
 
+_VERBOSE_RELATION_RENAMES = [
+    {"from": "SHOULD_BE_MANAGED_BY", "to": "GOVERNED_BY"},
+    {"from": "TAKE_INTO_ACCOUNT", "to": "BASED_ON"},
+    {"from": "INDICATES", "to": "MEASURES"},
+    {"from": "USED_BY", "to": "USES"},
+]
+
+_VERBOSE_RELATION_INVERSES = [
+    {"from": "DRIVEN_BY", "to": "AFFECTS"},
+]
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -173,6 +185,13 @@ def _normalize_name(value: str) -> str:
     cleaned = re.sub(r"^(the|a|an)\s+", "", cleaned)
     cleaned = _NON_ALNUM.sub(" ", cleaned)
     return " ".join(cleaned.split())
+
+
+def _to_title_case(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    return cleaned.title()
 
 
 def _normalize_rel_type(value: str) -> str:
@@ -625,6 +644,51 @@ def _rewrite_inverse_relationships(
     return report
 
 
+def _rename_relation_types(
+    session,
+    rewrites: list[dict[str, str]],
+    dry_run: bool,
+    apoc_available: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {"pairs": [], "errors": []}
+
+    for item in rewrites:
+        source = _normalize_rel_type(str(item.get("from", "")))
+        target = _normalize_rel_type(str(item.get("to", "")))
+        if not source or not target or source == target:
+            continue
+
+        try:
+            count = _count_relationships(session, source)
+        except Exception as exc:
+            report["errors"].append(f"rename count failed for {source}: {exc}")
+            continue
+
+        updated = 0
+        if not dry_run and count > 0:
+            try:
+                if apoc_available:
+                    session.run("CALL apoc.refactor.rename.type($old, $new)", old=source, new=target).consume()
+                    updated = count
+                else:
+                    query = (
+                        f"MATCH (a)-[r:`{source}`]->(b) "
+                        "WITH a, b, r, properties(r) AS props "
+                        f"MERGE (a)-[r2:`{target}`]->(b) "
+                        "SET r2 += props "
+                        "DELETE r "
+                        "RETURN count(r2) AS updated"
+                    )
+                    updated = int(session.run(query).single()["updated"])
+            except Exception as exc:
+                report["errors"].append(f"rename failed for {source} -> {target}: {exc}")
+                continue
+
+        report["pairs"].append({"source": source, "target": target, "count": count, "updated": updated})
+
+    return report
+
+
 def _invert_published_direction(session, dry_run: bool) -> dict[str, Any]:
     report: dict[str, Any] = {"count": 0, "rewritten": 0, "errors": []}
     try:
@@ -799,6 +863,84 @@ def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dic
     return report
 
 
+def _cleanup_isolated_nodes(
+    session,
+    dry_run: bool,
+    apoc_available: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "matched": 0,
+        "deleted_nodes": 0,
+        "edges_modified": 0,
+        "skipped": 0,
+        "errors": [],
+        "samples": [],
+    }
+
+    rows = session.run(
+        "MATCH (n) WHERE NOT (n)--() RETURN id(n) AS id, n.name AS name"
+    ).data()
+    report["candidates"] = len(rows)
+
+    for row in rows:
+        node_id = int(row["id"])
+        name = str(row.get("name") or "")
+        normalized = name.strip().lower()
+
+        match_row = None
+        if normalized:
+            match_row = session.run(
+                "MATCH (m) "
+                "WHERE id(m) <> $id "
+                "  AND m.name IS NOT NULL AND trim(m.name) <> '' "
+                "  AND toLower(trim(m.name)) = $norm "
+                "MATCH (m)-[r]-() "
+                "WITH m, count(r) AS degree "
+                "ORDER BY degree DESC, id(m) "
+                "LIMIT 1 "
+                "RETURN id(m) AS id, m.name AS name, degree",
+                id=node_id,
+                norm=normalized,
+            ).single()
+
+        if match_row:
+            report["matched"] += 1
+            if len(report["samples"]) < 20:
+                report["samples"].append({"from": name, "to": match_row.get("name", "")})
+            if dry_run:
+                continue
+            if not apoc_available:
+                report["skipped"] += 1
+                report["errors"].append("APOC unavailable, cannot merge isolated nodes")
+                continue
+            try:
+                session.run(
+                    "MATCH (n) WHERE id(n) IN $ids "
+                    "WITH n ORDER BY CASE id(n) WHEN $primary THEN 0 ELSE 1 END, id(n) "
+                    "WITH collect(n) AS nodes "
+                    "CALL apoc.refactor.mergeNodes(nodes, {properties: 'discard', mergeRels: true}) "
+                    "YIELD node RETURN id(node) AS id",
+                    ids=[int(match_row["id"]), node_id],
+                    primary=int(match_row["id"]),
+                ).consume()
+            except Exception as exc:
+                report["errors"].append(f"isolated node merge failed for {node_id}: {exc}")
+            continue
+
+        report["deleted_nodes"] += 1
+        if len(report["samples"]) < 20:
+            report["samples"].append({"from": name, "to": None})
+        if dry_run:
+            continue
+        try:
+            session.run("MATCH (n) WHERE id(n) = $id DETACH DELETE n", id=node_id).consume()
+        except Exception as exc:
+            report["errors"].append(f"isolated node delete failed for {node_id}: {exc}")
+
+    return report
+
+
 def _find_duplicate_groups(session) -> list[dict[str, Any]]:
     rows = session.run(
         "MATCH (n) "
@@ -876,6 +1018,99 @@ def _merge_duplicate_groups(
             ).consume()
         except Exception as exc:
             report["errors"].append(f"merge failed for {group['normalized']}: {exc}")
+
+    return report
+
+
+def _normalize_all_caps_concepts(
+    session,
+    dry_run: bool,
+    apoc_available: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "merged_nodes": 0,
+        "renamed_nodes": 0,
+        "edges_modified": 0,
+        "skipped": 0,
+        "errors": [],
+        "samples": [],
+    }
+
+    rows = session.run(
+        "MATCH (n:Concept) "
+        "WHERE n.name IS NOT NULL AND trim(n.name) <> '' "
+        "  AND n.name = toUpper(n.name) "
+        "RETURN id(n) AS id, n.name AS name"
+    ).data()
+    report["candidates"] = len(rows)
+
+    for row in rows:
+        node_id = int(row["id"])
+        name = str(row.get("name") or "")
+        normalized = _to_title_case(name)
+        if not normalized or normalized == name:
+            continue
+
+        match_row = session.run(
+            "MATCH (m:Concept) "
+            "WHERE id(m) <> $id AND m.name = $name "
+            "OPTIONAL MATCH (m)-[r]-() "
+            "WITH m, count(r) AS degree "
+            "ORDER BY degree DESC, id(m) "
+            "LIMIT 1 "
+            "RETURN id(m) AS id, m.name AS name, degree",
+            id=node_id,
+            name=normalized,
+        ).single()
+
+        if match_row:
+            report["merged_nodes"] += 1
+            try:
+                rel_count = int(
+                    session.run(
+                        "MATCH (n) WHERE id(n) = $id MATCH (n)-[r]-() RETURN count(r) AS c",
+                        id=node_id,
+                    ).single()["c"]
+                )
+            except Exception:
+                rel_count = 0
+            report["edges_modified"] += rel_count
+            if len(report["samples"]) < 20:
+                report["samples"].append({"from": name, "to": normalized})
+            if dry_run:
+                continue
+            if not apoc_available:
+                report["skipped"] += 1
+                report["errors"].append("APOC unavailable, cannot merge Concept nodes")
+                continue
+            try:
+                session.run(
+                    "MATCH (n) WHERE id(n) IN $ids "
+                    "WITH n ORDER BY CASE id(n) WHEN $primary THEN 0 ELSE 1 END, id(n) "
+                    "WITH collect(n) AS nodes "
+                    "CALL apoc.refactor.mergeNodes(nodes, {properties: 'discard', mergeRels: true}) "
+                    "YIELD node RETURN id(node) AS id",
+                    ids=[int(match_row["id"]), node_id],
+                    primary=int(match_row["id"]),
+                ).consume()
+            except Exception as exc:
+                report["errors"].append(f"concept merge failed for {node_id}: {exc}")
+            continue
+
+        report["renamed_nodes"] += 1
+        if len(report["samples"]) < 20:
+            report["samples"].append({"from": name, "to": normalized})
+        if dry_run:
+            continue
+        try:
+            session.run(
+                "MATCH (n:Concept) WHERE id(n) = $id SET n.name = $name",
+                id=node_id,
+                name=normalized,
+            ).consume()
+        except Exception as exc:
+            report["errors"].append(f"concept rename failed for {node_id}: {exc}")
 
     return report
 
@@ -1120,6 +1355,7 @@ def _reclassify_relationships(
     dry_run: bool,
     batch_size: int,
     skip_when_type: str | None = None,
+    batch_label: str = "Reclass",
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "total_candidates": len(rel_ids),
@@ -1140,7 +1376,7 @@ def _reclassify_relationships(
 
     for batch_index, batch_ids in enumerate(_chunked(rel_ids, batch_size), start=1):
         report["batches"] += 1
-        LOGGER.info("Reclass batch %d/%d: ids=%d", batch_index, total_batches, len(batch_ids))
+        LOGGER.info("%s batch %d/%d: ids=%d", batch_label, batch_index, total_batches, len(batch_ids))
         batch_set = {int(item) for item in batch_ids}
         context_rows = _fetch_relation_context(session, batch_ids, rel_type)
         prompt = _relation_reclass_prompt(allowed, context_rows)
@@ -1148,7 +1384,7 @@ def _reclassify_relationships(
             rows = _llm_json_array(client, model_name, prompt)
         except Exception as exc:
             report["errors"].append(f"relation reclass failed: {exc}")
-            LOGGER.warning("Reclass batch %d/%d failed: %s", batch_index, total_batches, exc)
+            LOGGER.warning("%s batch %d/%d failed: %s", batch_label, batch_index, total_batches, exc)
             continue
 
         updates: list[dict[str, Any]] = []
@@ -1184,7 +1420,8 @@ def _reclassify_relationships(
 
         if not updates:
             LOGGER.info(
-                "Reclass batch %d/%d: updates=0 skipped=%d",
+                "%s batch %d/%d: updates=0 skipped=%d",
+                batch_label,
                 batch_index,
                 total_batches,
                 batch_skipped,
@@ -1193,7 +1430,8 @@ def _reclassify_relationships(
 
         if dry_run:
             LOGGER.info(
-                "Reclass batch %d/%d: dry_run updates=%d skipped=%d",
+                "%s batch %d/%d: dry_run updates=%d skipped=%d",
+                batch_label,
                 batch_index,
                 total_batches,
                 len(updates),
@@ -1212,7 +1450,8 @@ def _reclassify_relationships(
             updated_count = int(result["updated"])
             report["updated"] += updated_count
             LOGGER.info(
-                "Reclass batch %d/%d: updated=%d skipped=%d",
+                "%s batch %d/%d: updated=%d skipped=%d",
+                batch_label,
                 batch_index,
                 total_batches,
                 updated_count,
@@ -1220,7 +1459,7 @@ def _reclassify_relationships(
             )
         except Exception as exc:
             report["errors"].append(f"relation reclass update failed: {exc}")
-            LOGGER.warning("Reclass batch %d/%d update failed: %s", batch_index, total_batches, exc)
+            LOGGER.warning("%s batch %d/%d update failed: %s", batch_label, batch_index, total_batches, exc)
 
     return report
 
@@ -1534,6 +1773,140 @@ def _run_aura_issues(
     return report
 
 
+def _run_verbose_relation_cleanup(
+    session,
+    dry_run: bool,
+    apoc_available: bool,
+) -> dict[str, Any]:
+    rename_report = _rename_relation_types(
+        session=session,
+        rewrites=_VERBOSE_RELATION_RENAMES,
+        dry_run=dry_run,
+        apoc_available=apoc_available,
+    )
+    invert_report = _rewrite_inverse_relationships(
+        session=session,
+        rewrites=_VERBOSE_RELATION_INVERSES,
+        dry_run=dry_run,
+    )
+    return {"rename": rename_report, "invert": invert_report}
+
+
+def _run_cleanup_pass3(
+    session,
+    relation_vocab: list[str],
+    client: OpenAI,
+    model_name: str,
+    dry_run: bool,
+    apoc_available: bool,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {}
+
+    isolated_report = _cleanup_isolated_nodes(
+        session=session,
+        dry_run=dry_run,
+        apoc_available=apoc_available,
+    )
+    isolated_found = int(isolated_report.get("candidates", 0)) > 0
+    isolated_nodes = int(isolated_report.get("matched", 0)) + int(isolated_report.get("deleted_nodes", 0))
+    isolated_edges = int(isolated_report.get("edges_modified", 0))
+    report["isolated_nodes"] = {
+        "found": isolated_found,
+        "nodes_modified": isolated_nodes,
+        "edges_modified": isolated_edges,
+        "details": isolated_report,
+    }
+    LOGGER.info(
+        "Step 1 isolated nodes: %s (nodes_modified=%d edges_modified=%d)",
+        "TROVATO" if isolated_found else "NON TROVATO",
+        isolated_nodes,
+        isolated_edges,
+    )
+
+    verbose_report = _run_verbose_relation_cleanup(
+        session=session,
+        dry_run=dry_run,
+        apoc_available=apoc_available,
+    )
+    rename_pairs = verbose_report.get("rename", {}).get("pairs", [])
+    invert_pairs = verbose_report.get("invert", {}).get("pairs", [])
+    verbose_found = any(int(pair.get("count", 0)) > 0 for pair in rename_pairs + invert_pairs)
+    verbose_edges = sum(int(pair.get("updated", 0)) for pair in rename_pairs) + sum(
+        int(pair.get("rewritten", 0)) for pair in invert_pairs
+    )
+    report["verbose_relation_cleanup"] = {
+        "found": verbose_found,
+        "edges_modified": verbose_edges,
+        "details": verbose_report,
+    }
+    LOGGER.info(
+        "Step 2 verbose relation cleanup: %s (edges_modified=%d)",
+        "TROVATO" if verbose_found else "NON TROVATO",
+        verbose_edges,
+    )
+
+    related_total = _count_relationships(session, "RELATED_TO")
+    if related_total > 0:
+        related_report = _reclassify_relationships(
+            session=session,
+            rel_ids=_fetch_related_to_ids(session),
+            rel_type="RELATED_TO",
+            allowed=relation_vocab,
+            client=client,
+            model_name=model_name,
+            dry_run=dry_run,
+            batch_size=_RELATION_RECLASS_BATCH_SIZE,
+            skip_when_type="RELATED_TO",
+            batch_label="RELATED_TO pass3",
+        )
+        related_edges = int(related_report.get("updated", 0))
+        report["related_to_pass3"] = {
+            "found": True,
+            "total_related_to": related_total,
+            "edges_modified": related_edges,
+            "details": related_report,
+        }
+        LOGGER.info(
+            "Step 3 RELATED_TO pass3: TROVATO (total=%d updated=%d)",
+            related_total,
+            related_edges,
+        )
+    else:
+        report["related_to_pass3"] = {
+            "found": False,
+            "total_related_to": related_total,
+            "edges_modified": 0,
+            "details": {"total_candidates": related_total, "updated": 0, "skipped": related_total},
+        }
+        LOGGER.info(
+            "Step 3 RELATED_TO pass3: NON TROVATO (total=%d)",
+            related_total,
+        )
+
+    caps_report = _normalize_all_caps_concepts(
+        session=session,
+        dry_run=dry_run,
+        apoc_available=apoc_available,
+    )
+    caps_found = int(caps_report.get("candidates", 0)) > 0
+    caps_nodes = int(caps_report.get("merged_nodes", 0)) + int(caps_report.get("renamed_nodes", 0))
+    caps_edges = int(caps_report.get("edges_modified", 0))
+    report["concept_caps_normalization"] = {
+        "found": caps_found,
+        "nodes_modified": caps_nodes,
+        "edges_modified": caps_edges,
+        "details": caps_report,
+    }
+    LOGGER.info(
+        "Step 4 Concept all-caps normalization: %s (nodes_modified=%d edges_modified=%d)",
+        "TROVATO" if caps_found else "NON TROVATO",
+        caps_nodes,
+        caps_edges,
+    )
+
+    return report
+
+
 def _apply_constraints(
     session,
     all_labels: list[str],
@@ -1587,7 +1960,7 @@ def main() -> None:
     parser.add_argument("--reltype-patterns", type=int, default=6)
     parser.add_argument(
         "--fix",
-        choices=["related-to", "region-artifacts", "micro-types", "aura-issues"],
+        choices=["related-to", "region-artifacts", "micro-types", "aura-issues", "cleanup-pass3"],
         default="",
         help="Run a single cleanup task and skip the default pipeline",
     )
@@ -1632,7 +2005,7 @@ def main() -> None:
     property_schema = _load_property_schema(args.property_schema)
 
     fix_mode = args.fix.strip()
-    needs_llm = not fix_mode or fix_mode in {"related-to", "aura-issues"}
+    needs_llm = not fix_mode or fix_mode in {"related-to", "aura-issues", "cleanup-pass3"}
 
     base_url = ""
     model_name = ""
@@ -1675,7 +2048,19 @@ def main() -> None:
                     print(json.dumps(report, ensure_ascii=False, indent=2))
                     return
 
-                if fix_mode == "related-to":
+                if fix_mode == "cleanup-pass3":
+                    LOGGER.info("Fix: cleanup pass3 tasks")
+                    if client is None:
+                        raise RuntimeError("LLM client required for cleanup pass3")
+                    report["cleanup_pass3"] = _run_cleanup_pass3(
+                        session=session,
+                        relation_vocab=relation_vocab,
+                        client=client,
+                        model_name=model_name,
+                        dry_run=args.dry_run,
+                        apoc_available=apoc_available,
+                    )
+                elif fix_mode == "related-to":
                     LOGGER.info("Fix: refine RELATED_TO relationships")
                     if client is None:
                         raise RuntimeError("LLM client required for RELATED_TO refinement")
