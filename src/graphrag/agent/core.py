@@ -152,6 +152,7 @@ class KGRAGAgent:
 
         compressed_context = self.compressor.compress(context)
         triples = retrieved_data.get("triples", []) if isinstance(retrieved_data, dict) else []
+        nodes = retrieved_data.get("nodes", []) if isinstance(retrieved_data, dict) else []
         neighbors = retrieved_data.get("neighbors", []) if isinstance(retrieved_data, dict) else []
         subgraph = retrieved_data.get("subgraph", []) if isinstance(retrieved_data, dict) else []
         shortest_path = retrieved_data.get("shortest_path", []) if isinstance(retrieved_data, dict) else []
@@ -159,6 +160,7 @@ class KGRAGAgent:
         result = {
             "text_context": compressed_context,
             "kg_triples": triples if isinstance(triples, list) else [],
+            "retrieved_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
             "retrieved_neighbors_count": len(neighbors) if isinstance(neighbors, list) else 0,
             "retrieved_subgraph_count": len(subgraph) if isinstance(subgraph, list) else 0,
             "retrieved_shortest_path_count": len(shortest_path) if isinstance(shortest_path, list) else 0,
@@ -170,14 +172,43 @@ class KGRAGAgent:
         return result
 
     def _grade(self, state: RAGState) -> dict:
-        return {"relevance": "relevant"}
+        nodes_count = int(state.get("retrieved_nodes_count", 0) or 0)
+        triples_count = len(state.get("kg_triples", []) or [])
+        subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
+        shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
+
+        has_any_kg_evidence = (nodes_count + triples_count + subgraph_count + shortest_path_count) > 0
+        return {"relevance": "relevant" if has_any_kg_evidence else "not_relevant"}
 
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
         context = state.get("text_context", "")
+        nodes_count = int(state.get("retrieved_nodes_count", 0) or 0)
+        triples_count = len(state.get("kg_triples", []) or [])
+        subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
+        shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
+
+        evidence_units = nodes_count + triples_count + subgraph_count + shortest_path_count
+
+        if evidence_units == 0:
+            return {
+                "answer": (
+                    "The provided context is insufficient to generate a grounded response. "
+                    "Please provide additional context or a more specific question."
+                )
+            }
+
+        sparse_context = evidence_units <= 2
+        effective_query = query
+        if sparse_context:
+            effective_query = (
+                query
+                + "\n\nInstruction: provide the best grounded answer possible using only the available context. "
+                "Then add a short section titled 'Limiti e fiducia' explaining that context is limited."
+            )
 
         if self.llm:
-            result = self.llm.generate(query=query, context=context, config=self.config)
+            result = self.llm.generate(query=effective_query, context=context, config=self.config)
             return {"answer": result.get("answer", "")}
 
         return {"answer": "LLM not available."}
