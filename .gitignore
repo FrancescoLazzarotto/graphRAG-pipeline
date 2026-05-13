@@ -35,3 +35,5 @@ logs/
 
 # Local experiment outputs
 artifacts/
+questions.txt
+questions_matrix_long.txt
