@@ -47,7 +47,9 @@ class PromptLibrary:
             f"{structured}\n"
             "Question:\n{{question}}\n\n"
             "Context:\n{{context}}\n\n"
-            "If the context is insufficient, state it explicitly."
+            "If context has at least some factual evidence, provide the best grounded answer possible. "
+            "If context is sparse, include a short section titled 'Limiti e fiducia'. "
+            "State that context is insufficient only when context is empty or lacks factual evidence."
         )
 
         return ChatPromptTemplate.from_messages([
