@@ -370,14 +370,84 @@ class LLMManager:
         self.load_llm()
 
     def generate(self, query: str, context: str, config: AgentConfig) -> dict[str, str]:
-        prompt = PromptLibrary.answer_prompt(config)
-        rendered = prompt.invoke({
-            "question": query,
-            "context": context,
-        })
+        # Build prompt directly to avoid templating issues
+        system_prompt = (
+            "You are a knowledge graph assistant. Answer using ONLY the provided context. "
+            "If context does not answer the question, state this plainly. "
+            "Do not invent or generate content outside the context. "
+            "Preserve all entity names exactly as given. "
+            "Respond in the same language as the question (English or Italian)."
+        )
+        
+        user_prompt = (
+            f"Question:\n{query}\n\n"
+            f"Context:\n{context}\n\n"
+            f"Answer:"
+        )
+        
+        logger.info("System prompt: %s", system_prompt[:300])
+        logger.info("User prompt (first 500 chars): %s", user_prompt[:500])
+        logger.info("Context length (chars): %d", len(context))
+        
         model = self.load_llm()
-        output = model.invoke(rendered)
+        
+        # For vLLM (ChatOpenAI), use the Langchain-style invocation with messages
+        if self.use_vllm:
+            from langchain_core.messages import HumanMessage, SystemMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+            output = model.invoke(messages)
+        else:
+            # For local HF models, use the PromptLibrary template
+            prompt = PromptLibrary.answer_prompt(config)
+            rendered = prompt.invoke({
+                "question": query,
+                "context": context,
+            })
+            output = model.invoke(rendered)
+        
         answer = str(output.content if hasattr(output, "content") else output).strip()
+        logger.info("LLM raw output (first 800 chars): %s", answer[:800])
+
+        # If model returned empty or a generic refusal, try a stricter fallback prompt once.
+        def _looks_like_refusal(text: str) -> bool:
+            if not text or not str(text).strip():
+                return True
+            lowered = str(text).lower()
+            markers = (
+                "context is insufficient",
+                "provide additional context",
+                "non ho abbastanza contesto",
+                "contesto insufficiente",
+                "provide additional context",
+            )
+            return any(m in lowered for m in markers)
+
+        if _looks_like_refusal(answer) and context and str(context).strip():
+            try:
+                logger.info("LLM refusal detected; attempting fallback retry...")
+                fallback_prompt = (
+                    "Usa solo il contesto fornito per rispondere brevemente alla domanda in italiano. "
+                    "Contesto:\n" + str(context) + "\n\nDomanda:\n" + str(query) + "\n\nRisposta:"
+                )
+                if self.use_vllm:
+                    from langchain_core.messages import HumanMessage
+                    output2 = model.invoke([HumanMessage(content=fallback_prompt)])
+                else:
+                    output2 = model.invoke(fallback_prompt)
+                answer2 = str(output2.content if hasattr(output2, "content") else output2).strip()
+                if answer2:
+                    logger.info("Fallback retry succeeded: %s", answer2[:500])
+                    answer = answer2
+                else:
+                    logger.info("Fallback retry returned empty answer")
+            except Exception as exc:
+                # best-effort retry — ignore errors and keep original answer
+                logger.warning("Fallback retry failed: %s", exc)
+                pass
+
         return {"answer": answer}
     
         
