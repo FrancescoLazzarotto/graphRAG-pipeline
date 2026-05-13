@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -13,6 +14,11 @@ import yaml
 from neo4j import GraphDatabase
 from openai import OpenAI
 from dotenv import load_dotenv
+
+# Allow direct execution from the repo root without `python -m`.
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from kg_pipeline.stages.neo4j_ingestion import _resolve_neo4j_env
 from kg_pipeline.utils.validation import parse_json_array
