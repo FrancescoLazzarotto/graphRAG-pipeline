@@ -1632,7 +1632,7 @@ def main() -> None:
     property_schema = _load_property_schema(args.property_schema)
 
     fix_mode = args.fix.strip()
-    needs_llm = not fix_mode or fix_mode == "related-to"
+    needs_llm = not fix_mode or fix_mode in {"related-to", "aura-issues"}
 
     base_url = ""
     model_name = ""
