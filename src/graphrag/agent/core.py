@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import uuid
@@ -14,6 +15,8 @@ from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.llm.prompts import PromptLibrary
 from graphrag.types import RAGState
+
+logger = logging.getLogger("graphrag")
 
 
 class KGRAGAgent:
@@ -211,6 +214,12 @@ class KGRAGAgent:
         if self.llm:
             result = self.llm.generate(query=effective_query, context=context, config=self.config)
             answer = result.get("answer", "")
+            logger.info(
+                "LLM returned (first 500 chars): %s | sparse_context=%s | evidence_units=%d",
+                answer[:500],
+                sparse_context,
+                evidence_units,
+            )
             if evidence_units > 0 and self._should_replace_with_fallback(
                 answer=answer,
                 query=query,
@@ -218,6 +227,7 @@ class KGRAGAgent:
                 triples=state.get("kg_triples", []) or [],
                 sparse_context=sparse_context,
             ):
+                logger.info("FALLBACK TRIGGERED: replacing LLM answer with evidence-based fallback")
                 answer = self._build_sparse_fallback_answer(
                     query=query,
                     context=context,
@@ -296,7 +306,10 @@ class KGRAGAgent:
             "factual basis",
         )
         meta_hits = sum(1 for marker in meta_markers if marker in answer_lower)
-        return meta_hits >= 2
+
+        # Balanced fallback: intercept meta-discussions but allow short answers.
+        # Trigger when sparse context AND high meta-marker signal (3+).
+        return meta_hits >= 3
 
     @staticmethod
     def _build_sparse_fallback_answer(query: str, context: str, triples: list[dict[str, object]]) -> str:
@@ -306,8 +319,8 @@ class KGRAGAgent:
         if triple_summaries or highlights:
             evidence_block = "\n".join(f"- {line}" for line in (triple_summaries or highlights))
             return (
-                "Dal contesto disponibile emerge che FAO e WHO risultano collegate da relazioni di collaborazione e co-pubblicazione. "
-                "La risposta e quindi parziale, ma non vuota.\n\n"
+                "Dal contesto disponibile emergono i seguenti elementi rilevanti. "
+                "La risposta e quindi parziale, ma contiene le evidenze trovate nel grafo.\n\n"
                 "Limiti e fiducia:\n"
                 "Il contesto e limitato, quindi non posso inferire l'intero perimetro tematico con alta fiducia.\n\n"
                 "Evidenze rilevanti:\n"
@@ -321,12 +334,7 @@ class KGRAGAgent:
 
     @staticmethod
     def _extract_context_highlights(query: str, context: str, limit: int = 4) -> list[str]:
-        tokens = {
-            token.lower()
-            for token in re.findall(r"\b[\w/.-]{3,}\b", query)
-            if token.lower() not in {"parlami", "quali", "sono", "sue", "sui", "suo", "della", "delle", "degli", "dei", "con", "e", "le", "il", "lo", "la", "i", "gli", "un", "una"}
-        }
-
+        tokens = set(KGRAGAgent._extract_salient_terms(query=query, context=context))
         if not tokens:
             tokens = {"fao", "who"}
 
@@ -435,18 +443,56 @@ class KGRAGAgent:
         terms: list[str] = []
         seen: set[str] = set()
 
+        STOPWORDS = {
+            "parlami",
+            "quali",
+            "sono",
+            "sue",
+            "sui",
+            "suo",
+            "della",
+            "delle",
+            "degli",
+            "dei",
+            "con",
+            "e",
+            "le",
+            "il",
+            "lo",
+            "la",
+            "i",
+            "gli",
+            "un",
+            "una",
+            "in",
+            "per",
+            "di",
+            "che",
+            "da",
+            "su",
+            "al",
+            "alla",
+        }
+
         def add_term(value: str) -> None:
             normalized = value.strip().lower()
             if len(normalized) < 3:
                 return
             if normalized in seen:
                 return
+            if normalized in STOPWORDS:
+                return
             seen.add(normalized)
             terms.append(normalized)
 
+        # capture capitalized tokens (acronyms, proper nouns)
         for token in re.findall(r"\b[A-Z][A-Z0-9/&.-]{1,}\b", query):
             add_term(token)
         for token in re.findall(r"\b[A-Z][A-Za-z0-9/&.-]{2,}\b", query):
+            add_term(token)
+
+        # also capture common words (lowercase) of length >=3, excluding stopwords
+        for token in re.findall(r"\b[\wÀ-ÖØ-öø-ÿ'/-]{3,}\b", query, flags=re.UNICODE):
             add_term(token)
 
         for line in context.splitlines():
@@ -456,6 +502,8 @@ class KGRAGAgent:
             for token in re.findall(r"\b[A-Z][A-Z0-9/&.-]{1,}\b", stripped):
                 add_term(token)
             for token in re.findall(r"\b[A-Z][A-Za-z0-9/&.-]{2,}\b", stripped):
+                add_term(token)
+            for token in re.findall(r"\b[\wÀ-ÖØ-öø-ÿ'/-]{3,}\b", stripped, flags=re.UNICODE):
                 add_term(token)
 
         return terms[:12]
