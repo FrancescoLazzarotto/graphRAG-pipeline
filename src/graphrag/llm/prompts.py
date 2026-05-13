@@ -32,13 +32,11 @@ class PromptLibrary:
 
         # System message with explicit response rules
         system_message = (
-            "You are a knowledge system assistant. CRITICAL RULES:\n"
-            "1. RESPOND ONLY IN ENGLISH OR ITALIAN - all your response must be in English or Italian based on which language is used in the prompt\n"
-            "2. PRESERVE ALL ENTITY AND RELATIONSHIP NAMES EXACTLY - do NOT translate, "
-            "modify, or transliterate any knowledge graph entity names, relationships, or attributes\n"
-            "3. CITE SOURCES using [chunk-N] notation or (subject, predicate, object) triples\n"
-            "4. DO NOT add translations or explanations of entity names in other languages\n"
-            "5. Maintain consistency with the knowledge graph structure provided in context\n"
+            "You are a knowledge graph assistant. Answer using ONLY the provided context. "
+            "If context does not answer the question, state this plainly. "
+            "Do not invent or generate content outside the context. "
+            "Preserve all entity names exactly as given. "
+            "Respond in the same language as the question (English or Italian)."
         )
 
         human_message_template = (
