@@ -448,6 +448,48 @@ class LLMManager:
                 logger.warning("Fallback retry failed: %s", exc)
                 pass
 
+        # Do not apply aggressive rule-based extraction when the model refuses
+        # to answer. Preserve the model's refusal so failures remain transparent
+        # to the caller instead of being converted into questionable lists.
+
         return {"answer": answer}
+
+    @staticmethod
+    def _extract_programs_from_context(context: str) -> list[str]:
+        if not context:
+            return []
+        keywords = ("program", "programma", "programmi", "programme", "resilience", "resilienza", "shock", "climate", "clima")
+        # Skip obvious metadata/artifacts
+        skip_terms = {
+            "query", "context", "includes", "analyzes", "contains", "located", "region", "based",
+            "type", "component", "value", "data", "source_doc", "page_range"
+        }
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        # Look for lines containing any keyword and extract title-like phrases
+        for raw_line in context.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            # Skip lines that look like query metadata or very short fragments
+            if line.lower().startswith("query:"):
+                continue
+            if len(line) < 5:
+                continue
+            
+            lowered = line.lower()
+            if not any(k in lowered for k in keywords):
+                continue
+            
+            # find capitalized sequences (simple heuristic for program names)
+            for match in re.findall(r"\b[A-Z][A-Za-z0-9/&.\- ]{2,}(?:\s+[A-Z][A-Za-z0-9/&.\-]{2,})*\b", line):
+                norm = match.strip()
+                # Filter: skip if it's a stopword, too short, or already seen
+                if norm and norm not in seen and norm.lower() not in skip_terms and len(norm) > 4:
+                    seen.add(norm)
+                    candidates.append(norm)
+
+        return candidates[:12]
     
         
