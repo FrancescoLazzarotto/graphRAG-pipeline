@@ -50,7 +50,8 @@ class AgentConfig:
     enable_adaptive_routing_step: bool = False
     enable_cache: bool = True
     cache_maxsize: int = 128
-    max_content_tokens: int = 200
+    recursion_limit: int = 50
+    max_content_tokens: int = 1000
     token_estimator_ratio: float = 0.75
     tone: OUTPUT_TONE = OUTPUT_TONE.TECHNICAL
     complexity: OUTPUT_COMPLEXITY = OUTPUT_COMPLEXITY.MEDIUM
