@@ -173,11 +173,25 @@ class KGRetriever:
             terms.append(configured_entity)
 
         if query_text:
-            terms.extend(self._extract_entity_candidates(query_text))
+            candidates = self._extract_entity_candidates(query_text)
+            terms.extend(candidates)
 
-            # Only use full question text when short, otherwise entity candidates are more precise.
-            if len(_TOKEN_RE.findall(query_text)) <= 8:
-                terms.append(query_text)
+            # If no clear entity-like candidates were found, extract keyword tokens
+            # from the question instead of using the entire question text as a single
+            # search term (which later is used as an exact entity and therefore
+            # typically yields no matches).
+            if not candidates:
+                tokens = [t for t in _TOKEN_RE.findall(query_text) if len(t) >= 3]
+                # filter common stopwords and short tokens, preserve order
+                filtered = [t for t in tokens if t.lower() not in _QUESTION_STOPWORDS]
+                # prefer multi-word title-like candidates first
+                if len(filtered) <= 1 and len(tokens) <= 8:
+                    # for short questions, keep full question as a term
+                    terms.append(query_text)
+                else:
+                    # include up to 6 token candidates to improve retrieval
+                    for tok in filtered[:6]:
+                        terms.append(tok)
 
         if not terms and query_text:
             terms.append(query_text)
