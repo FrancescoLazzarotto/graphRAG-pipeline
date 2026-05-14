@@ -46,6 +46,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-new-tokens", type=int, default=256, help="Maximum generated tokens per response")
     parser.add_argument(
+        "--max-context-tokens",
+        type=int,
+        default=1000,
+        help="Maximum tokens for compressed context before generation",
+    )
+    parser.add_argument(
+        "--recursion-limit",
+        type=int,
+        default=50,
+        help="Maximum LangGraph recursion steps before aborting",
+    )
+    parser.add_argument(
         "--gpu-memory-fraction",
         type=float,
         default=0.92,
@@ -92,6 +104,8 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         llm_warmup=args.llm_warmup,
         enable_decomposition_step=args.enable_decomposition_step,
         enable_adaptive_routing_step=args.enable_adaptive_routing_step,
+        recursion_limit=args.recursion_limit,
+        max_content_tokens=args.max_context_tokens,
     )
 
 
@@ -257,6 +271,10 @@ def main() -> None:
         parser.error("--vllm requires --llm")
     if args.max_new_tokens < 1:
         parser.error("--max-new-tokens must be >= 1")
+    if args.max_context_tokens < 1:
+        parser.error("--max-context-tokens must be >= 1")
+    if args.recursion_limit < 1:
+        parser.error("--recursion-limit must be >= 1")
     if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
         parser.error("--gpu-memory-fraction must be in (0, 1]")
 
