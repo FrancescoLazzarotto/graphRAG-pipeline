@@ -6,6 +6,7 @@ import re
 import time
 import uuid
 
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
 from graphrag.agent.cache import LRUCache
@@ -58,6 +59,8 @@ class KGRAGAgent:
         builder.add_edge("retrieve", "grade")
 
         def grade_condition(state: RAGState):
+            if int(state.get("rewrite_count", 0) or 0) >= 3:
+                return "generate"
             if state.get("relevance") == "relevant":
                 return "generate"
             return "rewrite"
@@ -147,12 +150,49 @@ class KGRAGAgent:
             if hit is not None:
                 return hit
 
+        # Choose retrieval strategy based on adaptive routing mode
+        retrieved_data: dict = {}
+        context = ""
         if self.kg_retriever:
-            retrieved_data = self.kg_retriever.retrieve(query)
-            context = str(retrieved_data.get("context_text", ""))
-        else:
-            retrieved_data = {}
-            context = ""
+            mm = str(mode).upper() if mode is not None else "HYBRID"
+            if mm == "TEXT":
+                # Text-only: return only the textual context (no KG evidence)
+                context = str(self.kg_retriever.retrieve_context(query))
+                retrieved_data = {
+                    "query": query,
+                    "context_text": context,
+                    "nodes": [],
+                    "triples": [],
+                    "neighbors": [],
+                    "subgraph": [],
+                    "shortest_path": [],
+                }
+            elif mm == "KG":
+                # KG-only: prioritize structural KG outputs and suppress free-text context
+                raw = self.kg_retriever.retrieve(query)
+                raw["context_text"] = ""
+                retrieved_data = raw
+                context = ""
+            elif mm == "MULTIHOP":
+                # Multi-hop: use the multi_hop API to extract a broader subgraph
+                subgraph = self.kg_retriever.multi_hop(entity=query, hops=self.config.hops, limit=self.config.subgraph_limit)
+                try:
+                    context = str(self.kg_retriever.kg_store.triples_to_text(subgraph))
+                except Exception:
+                    context = ""
+                retrieved_data = {
+                    "query": query,
+                    "context_text": context,
+                    "nodes": [],
+                    "triples": [],
+                    "neighbors": [],
+                    "subgraph": subgraph,
+                    "shortest_path": [],
+                }
+            else:
+                # HYBRID and default: use the full retrieve implementation
+                retrieved_data = self.kg_retriever.retrieve(query)
+                context = str(retrieved_data.get("context_text", ""))
 
         compressed_context = self.compressor.compress(context)
         triples = retrieved_data.get("triples", []) if isinstance(retrieved_data, dict) else []
@@ -164,9 +204,13 @@ class KGRAGAgent:
         result = {
             "text_context": compressed_context,
             "kg_triples": triples if isinstance(triples, list) else [],
+            "retrieved_nodes": nodes if isinstance(nodes, list) else [],
             "retrieved_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
+            "retrieved_neighbors": neighbors if isinstance(neighbors, list) else [],
             "retrieved_neighbors_count": len(neighbors) if isinstance(neighbors, list) else 0,
+            "retrieved_subgraph": subgraph if isinstance(subgraph, list) else [],
             "retrieved_subgraph_count": len(subgraph) if isinstance(subgraph, list) else 0,
+            "retrieved_shortest_path": shortest_path if isinstance(shortest_path, list) else [],
             "retrieved_shortest_path_count": len(shortest_path) if isinstance(shortest_path, list) else 0,
         }
 
@@ -181,8 +225,56 @@ class KGRAGAgent:
         subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
         shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
 
-        has_any_kg_evidence = (nodes_count + triples_count + subgraph_count + shortest_path_count) > 0
-        return {"relevance": "relevant" if has_any_kg_evidence else "not_relevant"}
+        # Stronger semantic gating: ensure retrieved KG items actually match the
+        # salient terms in the query/context instead of accepting any hit.
+        evidence_units = nodes_count + triples_count + subgraph_count + shortest_path_count
+        if evidence_units == 0:
+            return {"relevance": "not_relevant"}
+
+        query = state.get("rewritten_question") or state.get("question", "")
+        salient = set(self._extract_salient_terms_from_text(query))
+        if not salient:
+            salient = set(self._extract_salient_terms(query=query, context=""))
+
+        matched = 0
+
+        # examine triples for semantic overlap
+        for triple in state.get("kg_triples", []) or []:
+            hay = f"{triple.get('subject','')} {triple.get('predicate','')} {triple.get('object','')}".lower()
+            if any(term in hay for term in salient):
+                matched += 1
+
+        # examine nodes
+        for node in (state.get("retrieved_nodes", []) or state.get("nodes", []) or []):
+            text = str(node.get("text", "")).lower()
+            if any(term in text for term in salient):
+                matched += 1
+
+        # examine subgraph and shortest path textualizations
+        for item in (state.get("retrieved_subgraph", []) or state.get("subgraph", []) or []):
+            hay = f"{item.get('subject','')} {item.get('predicate','')} {item.get('object','')}".lower()
+            if any(term in hay for term in salient):
+                matched += 1
+
+        for item in (state.get("retrieved_shortest_path", []) or state.get("shortest_path", []) or []):
+            hay = f"{item.get('subject','')} {item.get('predicate','')} {item.get('object','')}".lower()
+            if any(term in hay for term in salient):
+                matched += 1
+
+        # Determine relevance: require at least one semantic match, and either
+        # multiple matches or a reasonable match ratio to accept as relevant.
+        match_ratio = matched / max(1, evidence_units)
+        is_relevant = matched >= 1 and (matched >= 2 or match_ratio >= 0.30)
+
+        logger.debug(
+            "Grading retrieval: evidence_units=%d matched=%d match_ratio=%.2f salient=%s",
+            evidence_units,
+            matched,
+            match_ratio,
+            list(salient)[:8],
+        )
+
+        return {"relevance": "relevant" if is_relevant else "not_relevant"}
 
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
@@ -515,7 +607,20 @@ class KGRAGAgent:
             "run_id": str(uuid.uuid4()),
             "rewrite_count": 0,
         }
-        output = self.graph.invoke(initial_state)
+        try:
+            output = self.graph.invoke(initial_state, config={"recursion_limit": self.config.recursion_limit})
+        except GraphRecursionError:
+            logger.warning(
+                "Graph recursion limit reached (limit=%d) for question: %s",
+                self.config.recursion_limit,
+                question,
+            )
+            output = {
+                "answer": (
+                    "Il processo ha raggiunto il limite di ricorsione dell'agente prima di convergere. "
+                    "Prova con una domanda piu specifica o aumenta --recursion-limit."
+                )
+            }
         latency_ms = (time.perf_counter() - start) * 1000.0
         output["latency_ms"] = latency_ms
         return output
