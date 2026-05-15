@@ -2,10 +2,10 @@
 """
 KG Evaluator for Neo4j Aura
 ============================
-Esegui con:  python kg_evaluator.py
-Richiede:    pip install neo4j rich python-dotenv
+Run with:   python kg_evaluator.py
+Requires:   pip install neo4j rich python-dotenv
 
-Output: kg_report.json  (incollalo su Claude per la valutazione)
+Output: kg_report.json  (upload to Claude for evaluation)
 """
 
 from __future__ import annotations
@@ -22,14 +22,14 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from dotenv import load_dotenv
 
 
-# ── Carica .env del pipeline (kg_pipeline/.env) se presente
+# ── Load .env from pipeline (kg_pipeline/.env) if present
 ROOT = Path(__file__).resolve().parents[0]
 ENV_PATH = ROOT / "kg_pipeline" / ".env"
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH)
 
 
-# ── Configurazione (prese da env dopo load_dotenv)
+# ── Configuration (loaded from environment after load_dotenv)
 NEO4J_URI = os.getenv("NEO4J_URI", os.getenv("NEO4J_URL", "neo4j+s://<id>.databases.neo4j.io"))
 NEO4J_USER = os.getenv("NEO4J_USER", os.getenv("NEO4J_USERNAME", "neo4j"))
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "<password>")
@@ -42,7 +42,7 @@ def run(session, query, **params):
     return session.run(query, **params).data()
 
 
-# ── 1. Metriche di base ──────────────────────────────────────────────────────
+# ── 1. Basic metrics ──────────────────────────────────────────────────────
 
 def basic_counts(session):
     n = run(session, "MATCH (n) RETURN count(n) AS c")[0]["c"]
@@ -59,7 +59,7 @@ def basic_counts(session):
     }
 
 
-# ── 2. Distribuzione per label ───────────────────────────────────────────────
+# ── 2. Label distribution ───────────────────────────────────────────────
 
 def label_distribution(session, labels):
     dist = {}
@@ -69,7 +69,7 @@ def label_distribution(session, labels):
     return dist
 
 
-# ── 3. Distribuzione per tipo di relazione ───────────────────────────────────
+# ── 3. Relationship type distribution ───────────────────────────────────
 
 def reltype_distribution(session, reltypes):
     dist = {}
@@ -79,19 +79,19 @@ def reltype_distribution(session, reltypes):
     return dist
 
 
-# ── 4. Densità del grafo ─────────────────────────────────────────────────────
+# ── 4. Graph density ─────────────────────────────────────────────────────
 
 def graph_density(n, e):
-    """Densità diretta: e / (n*(n-1))"""
+    """Direct density: e / (n*(n-1))"""
     if n < 2:
         return 0.0
     return round(e / (n * (n - 1)), 6)
 
 
-# ── 5. Distribuzione del grado ───────────────────────────────────────────────
+# ── 5. Degree distribution ───────────────────────────────────────────────
 
 def degree_stats(session, limit=SAMPLE_LIMIT):
-    # Aura/modern Neo4j disallow size((n)--()) inside functions; use a COUNT aggregation per node instead
+    # Aura/modern Neo4j disallow size((n)--()) inside functions; use COUNT aggregation per node instead
     rows = run(session,
         f"MATCH (n) WITH n LIMIT {limit} "
         f"OPTIONAL MATCH (n)-[r]-() "
@@ -122,14 +122,14 @@ def degree_stats(session, limit=SAMPLE_LIMIT):
     }
 
 
-# ── 6. Nodi isolati (orfani) ─────────────────────────────────────────────────
+# ── 6. Isolated (orphan) nodes ─────────────────────────────────────────────────
 
 def isolated_nodes(session):
     c = run(session, "MATCH (n) WHERE NOT (n)--() RETURN count(n) AS c")[0]["c"]
     return c
 
 
-# ── 7. Nodi hub (top-k per grado) ────────────────────────────────────────────
+# ── 7. Hub nodes (top-k by degree) ────────────────────────────────────────────
 
 def hub_nodes(session, k=10):
     # Use OPTIONAL MATCH + COUNT to compute degree per node (compatible with Aura)
@@ -154,7 +154,7 @@ def _id_hint(props):
     return None
 
 
-# ── 8. Copertura delle proprietà ─────────────────────────────────────────────
+# ── 8. Property coverage ─────────────────────────────────────────────
 
 def property_coverage(session, labels, limit=SAMPLE_LIMIT):
     coverage = {}
@@ -177,10 +177,10 @@ def property_coverage(session, labels, limit=SAMPLE_LIMIT):
     return coverage
 
 
-# ── 9. Componenti connesse ────────────────────────────────────────────────────
+# ── 9. Connected components ────────────────────────────────────────────────────
 
 def connected_components(session):
-    """Approssimazione via WCC (richiede GDS oppure fallback manuale)."""
+    """Approximation via WCC (requires GDS or manual fallback)."""
     try:
         rows = run(session,
             "CALL gds.wcc.stats({nodeQuery: 'MATCH (n) RETURN id(n) AS id', "
@@ -206,10 +206,10 @@ def connected_components(session):
             return {"method": "APOC (partial)", "largest_component_approx": rows[0]["size"]}
     except Exception:
         pass
-    return {"method": "unavailable (no GDS/APOC)", "note": "installa GDS o APOC su Aura per questa metrica"}
+    return {"method": "unavailable (no GDS/APOC)", "note": "install GDS or APOC on Aura for this metric"}
 
 
-# ── 10. Schemi di triple più frequenti ───────────────────────────────────────
+# ── 10. Most frequent triple patterns ───────────────────────────────────────
 
 def triple_patterns(session, limit=20):
     rows = run(session,
@@ -221,7 +221,7 @@ def triple_patterns(session, limit=20):
             for r in rows]
 
 
-# ── 11. Rapporto nodi:archi (graph sparsity) ──────────────────────────────────
+# ── 11. Node-to-edge ratio (graph sparsity) ──────────────────────────────────
 
 def sparsity_class(n, e):
     if n == 0:
@@ -230,14 +230,14 @@ def sparsity_class(n, e):
     if ratio < 1:
         return "very sparse (<1)"
     elif ratio < 3:
-        return "sparse (1–3)"
+        return "sparse (1-3)"
     elif ratio < 10:
-        return "moderate (3–10)"
+        return "moderate (3-10)"
     else:
         return "dense (>10)"
 
 
-# ── 12. Autoconsistenza dei tipi di relazione ─────────────────────────────────
+# ── 12. Relationship type endpoint consistency ─────────────────────────────────
 
 def reltype_endpoint_consistency(session, reltypes, limit=500):
     consistency = {}
@@ -253,7 +253,7 @@ def reltype_endpoint_consistency(session, reltypes, limit=500):
     return consistency
 
 
-# ── 13. Metriche di qualità aggregate ───────────────────────────────────────
+# ── 13. Aggregate quality metrics ───────────────────────────────────────
 
 def quality_scores(report):
     n = report["basic"]["node_count"]
@@ -278,7 +278,7 @@ def quality_scores(report):
         "connectivity": connectivity,
         "semantic_richness": richness,
         "reltype_consistency": consistency,
-        "note": "Punteggi 0–1. Valori più alti = migliore qualità.",
+        "note": "Scores 0-1. Higher values = better quality.",
     }
 
 
@@ -287,22 +287,22 @@ def evaluate(uri, user, password):
     report = {}
 
     steps = [
-        ("Conteggi di base",         "basic"),
-        ("Distribuzione label",       "label_distribution"),
-        ("Distribuzione rel. types",  "reltype_distribution"),
+        ("Basic counts",              "basic"),
+        ("Label distribution",        "label_distribution"),
+        ("Rel. type distribution",    "reltype_distribution"),
         ("Degree statistics",         "degree_stats"),
-        ("Nodi isolati",              "isolated_node_count"),
+        ("Isolated nodes",            "isolated_node_count"),
         ("Hub nodes",                 "hub_nodes"),
-        ("Copertura proprietà",       "property_coverage"),
-        ("Componenti connesse",       "connected_components"),
-        ("Pattern di triple",         "triple_patterns"),
-        ("Consistenza rel. types",    "reltype_endpoint_consistency"),
+        ("Property coverage",         "property_coverage"),
+        ("Connected components",      "connected_components"),
+        ("Triple patterns",           "triple_patterns"),
+        ("Rel. type consistency",     "reltype_endpoint_consistency"),
     ]
 
     with driver.session() as session:
         with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console) as progress:
 
-            task = progress.add_task("Avvio...", total=len(steps))
+            task = progress.add_task("Starting...", total=len(steps))
 
             progress.update(task, description=steps[0][0])
             basic = basic_counts(session)
@@ -367,17 +367,17 @@ if __name__ == "__main__":
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False, default=str)
 
-    console.rule("[green]Report salvato[/green]")
+    console.rule("[green]Report saved[/green]")
     console.print(f"File: [bold]{out_path}[/bold]")
     console.print()
-    console.print("[yellow]→ Carica kg_report.json su Claude per la valutazione completa.[/yellow]")
+    console.print("[yellow]→ Upload kg_report.json to Claude for complete evaluation.[/yellow]")
 
     b = report["basic"]
     qs = report["quality_scores"]
     console.print()
-    console.print(f"  Nodi: {b['node_count']:,}  |  Archi: {b['edge_count']:,}  |  "
-                  f"Label: {b['label_count']}  |  Tipi rel.: {b['reltype_count']}")
-    console.print(f"  Completezza strutturale : {qs['structural_completeness']}")
-    console.print(f"  Connettività            : {qs['connectivity']}")
-    console.print(f"  Ricchezza semantica     : {qs['semantic_richness']}")
-    console.print(f"  Consistenza rel. types  : {qs['reltype_consistency']}")
+    console.print(f"  Nodes: {b['node_count']:,}  |  Edges: {b['edge_count']:,}  |  "
+                  f"Labels: {b['label_count']}  |  Rel. types: {b['reltype_count']}")
+    console.print(f"  Structural completeness : {qs['structural_completeness']}")
+    console.print(f"  Connectivity            : {qs['connectivity']}")
+    console.print(f"  Semantic richness       : {qs['semantic_richness']}")
+    console.print(f"  Rel. type consistency   : {qs['reltype_consistency']}")
