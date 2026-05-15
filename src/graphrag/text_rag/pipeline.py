@@ -61,8 +61,7 @@ class StandardTextRAGPipeline:
             raise ValueError("min_chunk_chars must be >= 1")
         if chunk_overlap > 180:
             raise ValueError("chunk_overlap can't be over 180")
-        
-        
+
         self.retriever = retriever or TextRAGManager()
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
@@ -80,15 +79,21 @@ class StandardTextRAGPipeline:
         paths: Sequence[str | Path],
         discovery_patterns: Sequence[str] | None = None,
     ) -> int:
-        files_to_index = self._resolve_paths(paths, discovery_patterns=discovery_patterns)
+        files_to_index = self._resolve_paths(
+            paths, discovery_patterns=discovery_patterns
+        )
         prepared_chunks: list[TextChunk] = []
 
         for doc_index, file_path in enumerate(files_to_index, start=1):
             sections = self._load_sections_from_path(file_path)
-            for section_index, (source_tag, section_text) in enumerate(sections, start=1):
+            for section_index, (source_tag, section_text) in enumerate(
+                sections, start=1
+            ):
                 chunk_texts = self._split_into_chunks(section_text)
                 for chunk_index, chunk_text in enumerate(chunk_texts, start=1):
-                    chunk_id = f"d{doc_index:04d}-s{section_index:04d}-c{chunk_index:04d}"
+                    chunk_id = (
+                        f"d{doc_index:04d}-s{section_index:04d}-c{chunk_index:04d}"
+                    )
                     chunk_source = f"{source_tag}#chunk={chunk_index}"
                     prepared_chunks.append(
                         TextChunk(
@@ -147,7 +152,11 @@ class StandardTextRAGPipeline:
         paths: Sequence[str | Path],
         discovery_patterns: Sequence[str] | None,
     ) -> list[Path]:
-        patterns = tuple(discovery_patterns) if discovery_patterns else _DEFAULT_DISCOVERY_PATTERNS
+        patterns = (
+            tuple(discovery_patterns)
+            if discovery_patterns
+            else _DEFAULT_DISCOVERY_PATTERNS
+        )
         resolved: list[Path] = []
 
         for raw_path in paths:
@@ -173,7 +182,9 @@ class StandardTextRAGPipeline:
             return self._load_pdf_sections(file_path)
 
         if suffix in _SUPPORTED_TEXT_SUFFIXES:
-            text = _normalize_text(file_path.read_text(encoding="utf-8", errors="ignore"))
+            text = _normalize_text(
+                file_path.read_text(encoding="utf-8", errors="ignore")
+            )
             if not text:
                 return []
             return [(str(file_path), text)]

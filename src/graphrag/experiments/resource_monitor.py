@@ -117,7 +117,9 @@ class ResourceSample:
 class ResourceMonitor:
     """Background sampler for CPU, RAM and GPU utilization."""
 
-    def __init__(self, sample_interval_sec: float = 1.0, include_gpu: bool = True) -> None:
+    def __init__(
+        self, sample_interval_sec: float = 1.0, include_gpu: bool = True
+    ) -> None:
         if sample_interval_sec <= 0:
             raise ValueError("sample_interval_sec must be > 0")
 
@@ -151,7 +153,9 @@ class ResourceMonitor:
             self._process.cpu_percent(interval=None)
 
         self.capture_sample()
-        self._thread = threading.Thread(target=self._sampling_loop, name="resource-monitor", daemon=True)
+        self._thread = threading.Thread(
+            target=self._sampling_loop, name="resource-monitor", daemon=True
+        )
         self._thread.start()
 
     def _sampling_loop(self) -> None:
@@ -181,7 +185,9 @@ class ResourceMonitor:
             system_ram_percent = float(virtual_memory.percent)
         else:
             cpu_percent = None
-            system_ram_used_mb, system_ram_total_mb, system_ram_percent = _read_meminfo_mb()
+            system_ram_used_mb, system_ram_total_mb, system_ram_percent = (
+                _read_meminfo_mb()
+            )
 
         if self._process is not None:
             process_cpu_percent = self._process.cpu_percent(interval=None)
@@ -269,12 +275,24 @@ class ResourceMonitor:
     def summary(self) -> dict[str, Any]:
         samples = self.samples()
 
-        system_cpu = [s.system_cpu_percent for s in samples if s.system_cpu_percent is not None]
-        system_ram_pct = [s.system_ram_percent for s in samples if s.system_ram_percent is not None]
-        system_ram_used = [s.system_ram_used_mb for s in samples if s.system_ram_used_mb is not None]
-        process_cpu = [s.process_cpu_percent for s in samples if s.process_cpu_percent is not None]
-        process_rss = [s.process_rss_mb for s in samples if s.process_rss_mb is not None]
-        process_vms = [s.process_vms_mb for s in samples if s.process_vms_mb is not None]
+        system_cpu = [
+            s.system_cpu_percent for s in samples if s.system_cpu_percent is not None
+        ]
+        system_ram_pct = [
+            s.system_ram_percent for s in samples if s.system_ram_percent is not None
+        ]
+        system_ram_used = [
+            s.system_ram_used_mb for s in samples if s.system_ram_used_mb is not None
+        ]
+        process_cpu = [
+            s.process_cpu_percent for s in samples if s.process_cpu_percent is not None
+        ]
+        process_rss = [
+            s.process_rss_mb for s in samples if s.process_rss_mb is not None
+        ]
+        process_vms = [
+            s.process_vms_mb for s in samples if s.process_vms_mb is not None
+        ]
 
         duration_sec = samples[-1].elapsed_sec if samples else 0.0
 
@@ -298,9 +316,13 @@ class ResourceMonitor:
                     entry["memory_total_mb"] = gpu.memory_total_mb
 
                 if gpu.utilization_gpu_percent is not None:
-                    entry["utilization_gpu_percent_values"].append(gpu.utilization_gpu_percent)
+                    entry["utilization_gpu_percent_values"].append(
+                        gpu.utilization_gpu_percent
+                    )
                 if gpu.utilization_memory_percent is not None:
-                    entry["utilization_memory_percent_values"].append(gpu.utilization_memory_percent)
+                    entry["utilization_memory_percent_values"].append(
+                        gpu.utilization_memory_percent
+                    )
                 if gpu.memory_used_mb is not None:
                     entry["memory_used_mb_values"].append(gpu.memory_used_mb)
                 if gpu.temperature_c is not None:
@@ -314,10 +336,18 @@ class ResourceMonitor:
                     "index": entry["index"],
                     "name": entry["name"],
                     "memory_total_mb": entry["memory_total_mb"],
-                    "avg_utilization_gpu_percent": _mean(entry["utilization_gpu_percent_values"]),
-                    "peak_utilization_gpu_percent": _max(entry["utilization_gpu_percent_values"]),
-                    "avg_utilization_memory_percent": _mean(entry["utilization_memory_percent_values"]),
-                    "peak_utilization_memory_percent": _max(entry["utilization_memory_percent_values"]),
+                    "avg_utilization_gpu_percent": _mean(
+                        entry["utilization_gpu_percent_values"]
+                    ),
+                    "peak_utilization_gpu_percent": _max(
+                        entry["utilization_gpu_percent_values"]
+                    ),
+                    "avg_utilization_memory_percent": _mean(
+                        entry["utilization_memory_percent_values"]
+                    ),
+                    "peak_utilization_memory_percent": _max(
+                        entry["utilization_memory_percent_values"]
+                    ),
                     "avg_memory_used_mb": _mean(entry["memory_used_mb_values"]),
                     "peak_memory_used_mb": _max(entry["memory_used_mb_values"]),
                     "avg_temperature_c": _mean(entry["temperature_c_values"]),
@@ -354,7 +384,9 @@ class ResourceMonitor:
             for sample in self.samples():
                 output_file.write(json.dumps(asdict(sample), ensure_ascii=False) + "\n")
 
-    def export_summary_json(self, path: str, extra: dict[str, Any] | None = None) -> None:
+    def export_summary_json(
+        self, path: str, extra: dict[str, Any] | None = None
+    ) -> None:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
 
@@ -362,4 +394,6 @@ class ResourceMonitor:
         if extra:
             data.update(extra)
 
-        destination.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )

@@ -73,11 +73,14 @@ def _extract_gpu_peaks(summary: dict[str, Any]) -> tuple[float | None, float | N
 def _aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
-        key = (row["model_id"], row["tag"]) 
+        key = (row["model_id"], row["tag"])
         grouped[key].append(row)
 
     output: list[dict[str, Any]] = []
-    for (model_id, tag), items in sorted(grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+    for (model_id, tag), items in sorted(
+        grouped.items(), key=lambda kv: (kv[0][0], kv[0][1])
+    ):
+
         def values(field: str) -> list[float]:
             collected: list[float] = []
             for item in items:
@@ -100,16 +103,36 @@ def _aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "runs": len(items),
                 "avg_duration_sec": mean(duration_values) if duration_values else None,
                 "max_duration_sec": max(duration_values) if duration_values else None,
-                "avg_peak_process_rss_mb": mean(process_rss_values) if process_rss_values else None,
-                "max_peak_process_rss_mb": max(process_rss_values) if process_rss_values else None,
-                "avg_peak_system_ram_percent": mean(system_ram_pct_values) if system_ram_pct_values else None,
-                "max_peak_system_ram_percent": max(system_ram_pct_values) if system_ram_pct_values else None,
-                "avg_peak_process_cpu_percent": mean(process_cpu_values) if process_cpu_values else None,
-                "max_peak_process_cpu_percent": max(process_cpu_values) if process_cpu_values else None,
-                "avg_peak_gpu_memory_used_mb": mean(gpu_mem_values) if gpu_mem_values else None,
-                "max_peak_gpu_memory_used_mb": max(gpu_mem_values) if gpu_mem_values else None,
-                "avg_peak_gpu_util_percent": mean(gpu_util_values) if gpu_util_values else None,
-                "max_peak_gpu_util_percent": max(gpu_util_values) if gpu_util_values else None,
+                "avg_peak_process_rss_mb": mean(process_rss_values)
+                if process_rss_values
+                else None,
+                "max_peak_process_rss_mb": max(process_rss_values)
+                if process_rss_values
+                else None,
+                "avg_peak_system_ram_percent": mean(system_ram_pct_values)
+                if system_ram_pct_values
+                else None,
+                "max_peak_system_ram_percent": max(system_ram_pct_values)
+                if system_ram_pct_values
+                else None,
+                "avg_peak_process_cpu_percent": mean(process_cpu_values)
+                if process_cpu_values
+                else None,
+                "max_peak_process_cpu_percent": max(process_cpu_values)
+                if process_cpu_values
+                else None,
+                "avg_peak_gpu_memory_used_mb": mean(gpu_mem_values)
+                if gpu_mem_values
+                else None,
+                "max_peak_gpu_memory_used_mb": max(gpu_mem_values)
+                if gpu_mem_values
+                else None,
+                "avg_peak_gpu_util_percent": mean(gpu_util_values)
+                if gpu_util_values
+                else None,
+                "max_peak_gpu_util_percent": max(gpu_util_values)
+                if gpu_util_values
+                else None,
             }
         )
 
@@ -146,11 +169,19 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Aggregate resource telemetry from experiment runs")
+    parser = argparse.ArgumentParser(
+        description="Aggregate resource telemetry from experiment runs"
+    )
     parser.add_argument("root", help="Root directory containing experiment run folders")
-    parser.add_argument("--tag-contains", default="", help="Filter run folder names by substring")
-    parser.add_argument("--save-json", default="", help="Path to save aggregated JSON output")
-    parser.add_argument("--save-csv", default="", help="Path to save aggregated CSV output")
+    parser.add_argument(
+        "--tag-contains", default="", help="Filter run folder names by substring"
+    )
+    parser.add_argument(
+        "--save-json", default="", help="Path to save aggregated JSON output"
+    )
+    parser.add_argument(
+        "--save-csv", default="", help="Path to save aggregated CSV output"
+    )
     return parser
 
 
@@ -180,11 +211,17 @@ def main() -> int:
                 "model_id": model_id,
                 "tag": tag,
                 "status": str(summary.get("status", "unknown")),
-                "monitoring_duration_sec": _safe_float(summary.get("monitoring_duration_sec")),
+                "monitoring_duration_sec": _safe_float(
+                    summary.get("monitoring_duration_sec")
+                ),
                 "sample_count": summary.get("sample_count", 0),
                 "peak_process_rss_mb": _safe_float(summary.get("peak_process_rss_mb")),
-                "peak_system_ram_percent": _safe_float(summary.get("peak_system_ram_percent")),
-                "peak_process_cpu_percent": _safe_float(summary.get("peak_process_cpu_percent")),
+                "peak_system_ram_percent": _safe_float(
+                    summary.get("peak_system_ram_percent")
+                ),
+                "peak_process_cpu_percent": _safe_float(
+                    summary.get("peak_process_cpu_percent")
+                ),
                 "peak_gpu_memory_used_mb": peak_gpu_mem,
                 "peak_gpu_util_percent": peak_gpu_util,
             }
@@ -196,7 +233,10 @@ def main() -> int:
     if args.save_json:
         destination = Path(args.save_json).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(aggregated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        destination.write_text(
+            json.dumps(aggregated, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         print(f"Saved JSON: {destination}")
 
     if args.save_csv:

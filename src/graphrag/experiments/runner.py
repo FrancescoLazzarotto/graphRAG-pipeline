@@ -8,8 +8,7 @@ from typing import Any, Protocol
 
 
 class SupportsInvoke(Protocol):
-    def invoke(self, question: str) -> dict[str, Any]:
-        ...
+    def invoke(self, question: str) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -52,11 +51,19 @@ class ExperimentRunner:
                 latency_ms=float(state.get("latency_ms", 0.0)),
                 confidence=float(state.get("confidence", 0.0)),
                 reflection_passed=bool(state.get("reflection_passed", True)),
-                kg_triples_used=len(state.get("kg_triples", [])) if isinstance(state.get("kg_triples", []), list) else 0,
+                kg_triples_used=len(state.get("kg_triples", []))
+                if isinstance(state.get("kg_triples", []), list)
+                else 0,
                 kg_neighbors_used=int(state.get("retrieved_neighbors_count", 0) or 0),
-                kg_subgraph_triples_used=int(state.get("retrieved_subgraph_count", 0) or 0),
-                kg_shortest_path_triples_used=int(state.get("retrieved_shortest_path_count", 0) or 0),
-                sub_questions=len(state.get("sub_questions", [])) if isinstance(state.get("sub_questions", []), list) else 0,
+                kg_subgraph_triples_used=int(
+                    state.get("retrieved_subgraph_count", 0) or 0
+                ),
+                kg_shortest_path_triples_used=int(
+                    state.get("retrieved_shortest_path_count", 0) or 0
+                ),
+                sub_questions=len(state.get("sub_questions", []))
+                if isinstance(state.get("sub_questions", []), list)
+                else 0,
                 metadata=metadata,
             )
             batch.append(result)
@@ -73,7 +80,9 @@ class ExperimentRunner:
     def export_jsonl(self, path: str) -> None:
         with open(path, "w", encoding="utf-8") as output_file:
             for result in self.results:
-                output_file.write(json.dumps(dataclasses.asdict(result), ensure_ascii=False) + "\n")
+                output_file.write(
+                    json.dumps(dataclasses.asdict(result), ensure_ascii=False) + "\n"
+                )
 
     def export_csv(self, path: str) -> None:
         with open(path, "w", encoding="utf-8", newline="") as output_file:
@@ -123,12 +132,24 @@ class ExperimentRunner:
                 "runs": count,
                 "avg_latency_ms": sum(item.latency_ms for item in results) / count,
                 "avg_confidence": sum(item.confidence for item in results) / count,
-                "reflection_pass_rate": sum(1 for item in results if item.reflection_passed) / count,
-                "avg_kg_triples_used": sum(item.kg_triples_used for item in results) / count,
-                "avg_kg_neighbors_used": sum(item.kg_neighbors_used for item in results) / count,
-                "avg_kg_subgraph_triples_used": sum(item.kg_subgraph_triples_used for item in results) / count,
-                "avg_kg_shortest_path_triples_used": sum(item.kg_shortest_path_triples_used for item in results) / count,
-                "avg_sub_questions": sum(item.sub_questions for item in results) / count,
+                "reflection_pass_rate": sum(
+                    1 for item in results if item.reflection_passed
+                )
+                / count,
+                "avg_kg_triples_used": sum(item.kg_triples_used for item in results)
+                / count,
+                "avg_kg_neighbors_used": sum(item.kg_neighbors_used for item in results)
+                / count,
+                "avg_kg_subgraph_triples_used": sum(
+                    item.kg_subgraph_triples_used for item in results
+                )
+                / count,
+                "avg_kg_shortest_path_triples_used": sum(
+                    item.kg_shortest_path_triples_used for item in results
+                )
+                / count,
+                "avg_sub_questions": sum(item.sub_questions for item in results)
+                / count,
             }
         return summary
 

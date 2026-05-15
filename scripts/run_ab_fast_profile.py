@@ -58,7 +58,11 @@ def _load_questions(path: Path, limit: int) -> list[str]:
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"Questions file not found: {path}")
 
-    questions = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    questions = [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if not questions:
         raise ValueError(f"Questions file is empty: {path}")
 
@@ -76,7 +80,9 @@ def _extract_output_dir(stdout_text: str) -> str:
 
 
 def _resolve_output_dir_fallback(output_root: Path, tag: str) -> Path:
-    candidates = sorted(output_root.glob(f"*_{tag}"), key=lambda item: item.stat().st_mtime)
+    candidates = sorted(
+        output_root.glob(f"*_{tag}"), key=lambda item: item.stat().st_mtime
+    )
     if not candidates:
         raise FileNotFoundError(f"Cannot resolve run output directory for tag: {tag}")
     return candidates[-1]
@@ -177,7 +183,10 @@ def _run_matrix(
                     if normalized.strip():
                         print(f"[{tag}] {normalized}", flush=True)
 
-            if matrix_timeout_sec > 0 and (time.monotonic() - started_at) > matrix_timeout_sec:
+            if (
+                matrix_timeout_sec > 0
+                and (time.monotonic() - started_at) > matrix_timeout_sec
+            ):
                 process.terminate()
                 raise TimeoutError(
                     f"Matrix execution timed out after {matrix_timeout_sec}s for tag '{tag}'. "
@@ -223,7 +232,9 @@ def _run_matrix(
         output_dir = _resolve_output_dir_fallback(output_root=output_root, tag=tag)
 
     if not output_dir.exists():
-        raise FileNotFoundError(f"Reported output directory does not exist: {output_dir}")
+        raise FileNotFoundError(
+            f"Reported output directory does not exist: {output_dir}"
+        )
 
     return {
         "command": cmd,
@@ -240,7 +251,9 @@ def _load_summary_stats(path: Path) -> dict[str, Any]:
     return stats if isinstance(stats, dict) else {}
 
 
-def _aggregate_stats(stats_by_strategy: dict[str, Any], target_strategies: list[str]) -> dict[str, float]:
+def _aggregate_stats(
+    stats_by_strategy: dict[str, Any], target_strategies: list[str]
+) -> dict[str, float]:
     weighted_latency = 0.0
     weighted_pass_rate = 0.0
     weighted_confidence = 0.0
@@ -258,9 +271,13 @@ def _aggregate_stats(stats_by_strategy: dict[str, Any], target_strategies: list[
 
         total_runs += runs
         weighted_latency += float(payload.get("avg_latency_ms", 0.0) or 0.0) * runs
-        weighted_pass_rate += float(payload.get("reflection_pass_rate", 0.0) or 0.0) * runs
+        weighted_pass_rate += (
+            float(payload.get("reflection_pass_rate", 0.0) or 0.0) * runs
+        )
         weighted_confidence += float(payload.get("avg_confidence", 0.0) or 0.0) * runs
-        weighted_sub_questions += float(payload.get("avg_sub_questions", 0.0) or 0.0) * runs
+        weighted_sub_questions += (
+            float(payload.get("avg_sub_questions", 0.0) or 0.0) * runs
+        )
 
     if total_runs <= 0:
         return {
@@ -336,7 +353,9 @@ def _load_gold(gold_file: Path) -> dict[str, str]:
     return gold_map
 
 
-def _evaluate_against_gold(rows: list[dict[str, str]], gold_map: dict[str, str]) -> dict[str, float]:
+def _evaluate_against_gold(
+    rows: list[dict[str, str]], gold_map: dict[str, str]
+) -> dict[str, float]:
     if not gold_map:
         return {
             "rows_with_gold": 0.0,
@@ -371,13 +390,19 @@ def _evaluate_against_gold(rows: list[dict[str, str]], gold_map: dict[str, str])
     }
 
 
-def _answer_agreement(baseline_rows: list[dict[str, str]], fast_rows: list[dict[str, str]]) -> dict[str, float]:
+def _answer_agreement(
+    baseline_rows: list[dict[str, str]], fast_rows: list[dict[str, str]]
+) -> dict[str, float]:
     baseline_map = {
-        (row["strategy"], _normalize_question(row["question"]), row["run_index"]): row["answer"]
+        (row["strategy"], _normalize_question(row["question"]), row["run_index"]): row[
+            "answer"
+        ]
         for row in baseline_rows
     }
     fast_map = {
-        (row["strategy"], _normalize_question(row["question"]), row["run_index"]): row["answer"]
+        (row["strategy"], _normalize_question(row["question"]), row["run_index"]): row[
+            "answer"
+        ]
         for row in fast_rows
     }
 
@@ -475,7 +500,9 @@ def main() -> int:
     report_dir = report_root / f"{timestamp}_{args.experiment_tag_prefix}"
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    selected_questions = _load_questions(path=questions_path, limit=args.questions_count)
+    selected_questions = _load_questions(
+        path=questions_path, limit=args.questions_count
+    )
     subset_questions_path = report_dir / "questions_subset.txt"
     _write_questions(path=subset_questions_path, questions=selected_questions)
 
@@ -519,7 +546,9 @@ def main() -> int:
         keep_monitor_resources=args.keep_monitor_resources,
         tag=fast_tag,
         performance_profile="production_fast",
-        max_new_tokens=(None if args.fast_max_new_tokens <= 0 else int(args.fast_max_new_tokens)),
+        max_new_tokens=(
+            None if args.fast_max_new_tokens <= 0 else int(args.fast_max_new_tokens)
+        ),
         use_vllm=args.vllm,
         vllm_base_url=args.vllm_base_url,
         enable_decomposition_step=False,
@@ -534,7 +563,9 @@ def main() -> int:
     baseline_stats = _load_summary_stats(baseline_output_dir / "summary.json")
     fast_stats = _load_summary_stats(fast_output_dir / "summary.json")
 
-    target_strategies = [item.strip() for item in args.graph_strategies.split(",") if item.strip()]
+    target_strategies = [
+        item.strip() for item in args.graph_strategies.split(",") if item.strip()
+    ]
     if not target_strategies:
         target_strategies = ["default"]
 
@@ -558,7 +589,11 @@ def main() -> int:
     baseline_avg_latency = float(baseline_agg.get("avg_latency_ms", 0.0) or 0.0)
     fast_avg_latency = float(fast_agg.get("avg_latency_ms", 0.0) or 0.0)
     latency_delta_ms = fast_avg_latency - baseline_avg_latency
-    speedup_pct = ((baseline_avg_latency - fast_avg_latency) / baseline_avg_latency * 100.0) if baseline_avg_latency > 0 else 0.0
+    speedup_pct = (
+        ((baseline_avg_latency - fast_avg_latency) / baseline_avg_latency * 100.0)
+        if baseline_avg_latency > 0
+        else 0.0
+    )
 
     report = {
         "timestamp": timestamp,
@@ -591,7 +626,9 @@ def main() -> int:
         "delta": {
             "latency_ms": latency_delta_ms,
             "latency_speedup_pct": speedup_pct,
-            "reflection_pass_rate": float(fast_agg.get("reflection_pass_rate", 0.0) or 0.0)
+            "reflection_pass_rate": float(
+                fast_agg.get("reflection_pass_rate", 0.0) or 0.0
+            )
             - float(baseline_agg.get("reflection_pass_rate", 0.0) or 0.0),
             "avg_confidence": float(fast_agg.get("avg_confidence", 0.0) or 0.0)
             - float(baseline_agg.get("avg_confidence", 0.0) or 0.0),
@@ -599,7 +636,9 @@ def main() -> int:
             - float(baseline_agg.get("avg_sub_questions", 0.0) or 0.0),
             "gold_avg_token_f1": float(fast_gold.get("avg_token_f1", 0.0) or 0.0)
             - float(baseline_gold.get("avg_token_f1", 0.0) or 0.0),
-            "gold_exact_match_rate": float(fast_gold.get("exact_match_rate", 0.0) or 0.0)
+            "gold_exact_match_rate": float(
+                fast_gold.get("exact_match_rate", 0.0) or 0.0
+            )
             - float(baseline_gold.get("exact_match_rate", 0.0) or 0.0),
         },
         "answer_agreement_vs_baseline": agreement,
@@ -611,7 +650,9 @@ def main() -> int:
     }
 
     report_json_path = report_dir / "ab_report.json"
-    report_json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_json_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
     report_txt_path = report_dir / "ab_report.txt"
     report_txt_path.write_text(
@@ -646,10 +687,14 @@ def main() -> int:
     print(f"- production_fast_avg_latency_ms: {fast_avg_latency:.2f}")
     print(f"- latency_delta_ms: {latency_delta_ms:.2f}")
     print(f"- latency_speedup_pct: {speedup_pct:.2f}")
-    print(f"- delta_reflection_pass_rate: {report['delta']['reflection_pass_rate']:.6f}")
+    print(
+        f"- delta_reflection_pass_rate: {report['delta']['reflection_pass_rate']:.6f}"
+    )
     print(f"- delta_avg_confidence: {report['delta']['avg_confidence']:.6f}")
     print(f"- delta_gold_avg_token_f1: {report['delta']['gold_avg_token_f1']:.6f}")
-    print(f"- delta_gold_exact_match_rate: {report['delta']['gold_exact_match_rate']:.6f}")
+    print(
+        f"- delta_gold_exact_match_rate: {report['delta']['gold_exact_match_rate']:.6f}"
+    )
     print(f"- answer_agreement_avg_token_f1: {agreement['avg_token_f1']:.6f}")
     print(f"- answer_agreement_exact_match_rate: {agreement['exact_match_rate']:.6f}")
     print(f"- report_json: {report_json_path}", flush=True)

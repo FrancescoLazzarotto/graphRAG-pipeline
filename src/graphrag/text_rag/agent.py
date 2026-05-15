@@ -42,7 +42,9 @@ class StandardRAGAgent:
         retrieved = self.pipeline.retrieve(query=question, top_k=self.top_k)
 
         if self.llm is not None:
-            generated = self.llm.generate(query=question, context=context, config=self.config)
+            generated = self.llm.generate(
+                query=question, context=context, config=self.config
+            )
             answer = generated.get("answer", "")
         else:
             if context:

@@ -9,6 +9,7 @@ This script:
 - performs local quality checks equivalent to the Neo4j queries and
   writes a local `kg_quality_report_local.json` (no Neo4j ingestion)
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,7 @@ from pprint import pprint
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from kg_pipeline.models.types import ChunkRecord, KGTriple
+from kg_pipeline.models.types import ChunkRecord
 from kg_pipeline.stages import llm_extraction, resolution
 
 
@@ -34,7 +35,10 @@ def build_mock_response():
             "object_labels": ["Concept"],
             "subject_properties": {"name": "risk analysis"},
             "object_properties": {"name": "consumer safety"},
-            "relationship_properties": {"source_doc": "test.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "test.pdf",
+                "extraction_method": "llm",
+            },
         },
         {
             "subject": "Risk Analysis",
@@ -44,7 +48,10 @@ def build_mock_response():
             "object_labels": ["Indicator"],
             "subject_properties": {"name": "Risk Analysis"},
             "object_properties": {"name": "contaminant levels"},
-            "relationship_properties": {"source_doc": "test.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "test.pdf",
+                "extraction_method": "llm",
+            },
         },
         {
             "subject": "ACME Corp",
@@ -52,9 +59,15 @@ def build_mock_response():
             "object": "",
             "subject_labels": ["Organization"],
             "object_labels": [""],
-            "subject_properties": {"name": "ACME Corp", "full_name": "ACME Corporation"},
+            "subject_properties": {
+                "name": "ACME Corp",
+                "full_name": "ACME Corporation",
+            },
             "object_properties": {"name": ""},
-            "relationship_properties": {"source_doc": "test.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "test.pdf",
+                "extraction_method": "llm",
+            },
         },
         {
             "subject": "wheat",
@@ -63,8 +76,16 @@ def build_mock_response():
             "subject_labels": ["Commodity"],
             "object_labels": ["DataValue"],
             "subject_properties": {"name": "wheat"},
-            "object_properties": {"name": "5 μg/kg", "value": 5, "unit": "μg/kg", "contaminant": "Aflatoxin B1"},
-            "relationship_properties": {"source_doc": "test.pdf", "extraction_method": "llm"},
+            "object_properties": {
+                "name": "5 μg/kg",
+                "value": 5,
+                "unit": "μg/kg",
+                "contaminant": "Aflatoxin B1",
+            },
+            "relationship_properties": {
+                "source_doc": "test.pdf",
+                "extraction_method": "llm",
+            },
         },
         {
             "subject": "wheat",
@@ -74,7 +95,10 @@ def build_mock_response():
             "object_labels": ["Concept"],
             "subject_properties": {"name": "wheat"},
             "object_properties": {"name": "food security"},
-            "relationship_properties": {"source_doc": "test.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "test.pdf",
+                "extraction_method": "llm",
+            },
         },
     ]
     return json.dumps(triples, ensure_ascii=False)
@@ -88,16 +112,25 @@ def local_quality_checks(triples, allowed_preds):
         p = t.predicate
         if p not in allowed_preds:
             out[p] = out.get(p, 0) + 1
-    report["predicates_out_of_vocab"] = [{"outOfVocab": k, "n": v} for k, v in sorted(out.items(), key=lambda x: -x[1])]
+    report["predicates_out_of_vocab"] = [
+        {"outOfVocab": k, "n": v} for k, v in sorted(out.items(), key=lambda x: -x[1])
+    ]
 
     # 2. Nodes duplicated by name
     name_map = {}
     for t in triples:
-        for role, name, labels in [("subject", t.subject, t.subject_labels), ("object", t.object, t.object_labels)]:
+        for role, name, labels in [
+            ("subject", t.subject, t.subject_labels),
+            ("object", t.object, t.object_labels),
+        ]:
             if not name:
                 continue
             name_map.setdefault(name, set()).update(labels or ["Concept"])
-    dup = [{"name": n, "labels": list(ls), "count": 1} for n, ls in name_map.items() if len(ls) > 1]
+    dup = [
+        {"name": n, "labels": list(ls), "count": 1}
+        for n, ls in name_map.items()
+        if len(ls) > 1
+    ]
     report["duplicate_nodes_by_name"] = dup
 
     # 3. Sparsely connected nodes
@@ -105,7 +138,9 @@ def local_quality_checks(triples, allowed_preds):
     for t in triples:
         adj.setdefault(t.subject, set()).add(t.object)
         adj.setdefault(t.object, set()).add(t.subject)
-    sparse = [{"name": n, "degree": len(nei)} for n, nei in adj.items() if len(nei) <= 1]
+    sparse = [
+        {"name": n, "degree": len(nei)} for n, nei in adj.items() if len(nei) <= 1
+    ]
     report["sparsely_connected_nodes"] = sparse[:20]
 
     return report
@@ -115,15 +150,17 @@ def main():
     out_dir = Path("artifacts/tmp").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    chunk = ChunkRecord.model_validate({
-        "doc_id": "d-test",
-        "filename": "test.pdf",
-        "chunk_id": "c-test-1",
-        "page_range": "1-2",
-        "section_title": "Methods",
-        "chunk_index": 1,
-        "text": "Risk analysis ensures high level of protection. ACME Corp is a major global trader. Wheat has max level 5 μg/kg of Aflatoxin B1.",
-    })
+    chunk = ChunkRecord.model_validate(
+        {
+            "doc_id": "d-test",
+            "filename": "test.pdf",
+            "chunk_id": "c-test-1",
+            "page_range": "1-2",
+            "section_title": "Methods",
+            "chunk_index": 1,
+            "text": "Risk analysis ensures high level of protection. ACME Corp is a major global trader. Wheat has max level 5 μg/kg of Aflatoxin B1.",
+        }
+    )
 
     # monkeypatch llm call to return mocked response
     orig_llm_call = llm_extraction._llm_call
@@ -137,7 +174,20 @@ def main():
         triples, acr = llm_extraction.extract_triples(
             chunks=[chunk],
             ner_map={chunk.chunk_id: []},
-            allowed_labels=["Region","Commodity","Indicator","DataValue","Policy","Organization","Event","Concept","TimePeriod","Document","Dataset","Method"],
+            allowed_labels=[
+                "Region",
+                "Commodity",
+                "Indicator",
+                "DataValue",
+                "Policy",
+                "Organization",
+                "Event",
+                "Concept",
+                "TimePeriod",
+                "Document",
+                "Dataset",
+                "Method",
+            ],
             base_url="",
             model_name="mock",
             api_key="",
@@ -174,11 +224,29 @@ def main():
 
         # perform local quality checks (no Neo4j)
         allowed_preds = {
-            'GOVERNS','ESTABLISHES','ESTABLISHED_BY','HAS_COMPONENT','BASED_ON',
-            'AFFECTS','CONTRIBUTES_TO','APPLIES_TO','DEFINED_AS','INCLUDES',
-            'IS_TYPE_OF','HAS_MAXIMUM_LEVEL','PUBLISHED','WORKED_WITH',
-            'EXCHANGES_INFO_WITH','TAKE_INTO_ACCOUNT','ENSURES','SHOULD_BE_MANAGED_BY',
-            'AIMS_TO_ACHIEVE','NEEDED_FOR','CONTAINS_DATA','COMPLIES_WITH','ANALYZES'
+            "GOVERNS",
+            "ESTABLISHES",
+            "ESTABLISHED_BY",
+            "HAS_COMPONENT",
+            "BASED_ON",
+            "AFFECTS",
+            "CONTRIBUTES_TO",
+            "APPLIES_TO",
+            "DEFINED_AS",
+            "INCLUDES",
+            "IS_TYPE_OF",
+            "HAS_MAXIMUM_LEVEL",
+            "PUBLISHED",
+            "WORKED_WITH",
+            "EXCHANGES_INFO_WITH",
+            "TAKE_INTO_ACCOUNT",
+            "ENSURES",
+            "SHOULD_BE_MANAGED_BY",
+            "AIMS_TO_ACHIEVE",
+            "NEEDED_FOR",
+            "CONTAINS_DATA",
+            "COMPLIES_WITH",
+            "ANALYZES",
         }
 
         report = local_quality_checks(resolved, allowed_preds)

@@ -216,7 +216,9 @@ def _cypher_string_literal(value: str) -> str:
 
 def _build_llm_client(base_url: str, api_key: str) -> OpenAI:
     http_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
-    return OpenAI(base_url=base_url.rstrip("/"), api_key=api_key or "EMPTY", timeout=http_timeout)
+    return OpenAI(
+        base_url=base_url.rstrip("/"), api_key=api_key or "EMPTY", timeout=http_timeout
+    )
 
 
 def _setup_logging(log_file: Path | None) -> None:
@@ -235,7 +237,9 @@ def _setup_logging(log_file: Path | None) -> None:
         LOGGER.info("Logging to %s", log_file)
 
 
-def _confirm_db_changes(uri: str, database: str | None, dry_run: bool, assume_yes: bool) -> None:
+def _confirm_db_changes(
+    uri: str, database: str | None, dry_run: bool, assume_yes: bool
+) -> None:
     if dry_run or assume_yes:
         return
     db_name = database or "<default>"
@@ -256,7 +260,9 @@ def _resolve_llm_env() -> tuple[str, str, str]:
     return base_url, model_name, api_key
 
 
-def _llm_json_array(client: OpenAI, model_name: str, prompt: str) -> list[dict[str, Any]]:
+def _llm_json_array(
+    client: OpenAI, model_name: str, prompt: str
+) -> list[dict[str, Any]]:
     response = client.chat.completions.create(
         model=model_name,
         temperature=0.0,
@@ -294,7 +300,7 @@ def _relation_mapping_prompt(canonical: list[str], items: list[dict[str, Any]]) 
         "- Preserve direction and semantics when possible.\n"
         "- Prefer the most specific relation; avoid RELATED_TO unless nothing fits.\n"
         "- Use endpoint label patterns if provided.\n"
-        "Return JSON array of objects: {\"source\": str, \"target\": str}.\n\n"
+        'Return JSON array of objects: {"source": str, "target": str}.\n\n'
         "Canonical list:\n"
         f"{json.dumps(canonical, indent=2)}\n\n"
         "Items:\n"
@@ -302,14 +308,16 @@ def _relation_mapping_prompt(canonical: list[str], items: list[dict[str, Any]]) 
     )
 
 
-def _related_to_refinement_prompt(canonical: list[str], items: list[dict[str, Any]]) -> str:
+def _related_to_refinement_prompt(
+    canonical: list[str], items: list[dict[str, Any]]
+) -> str:
     return (
         "You refine RELATED_TO relationships to a more specific predicate.\n"
         "Rules:\n"
         "- Use only the canonical list.\n"
         "- Keep direction and semantics.\n"
         "- Prefer the most specific relation; use RELATED_TO only if nothing fits.\n"
-        "Return JSON array of objects: {\"id\": int, \"type\": str}.\n\n"
+        'Return JSON array of objects: {"id": int, "type": str}.\n\n'
         "Canonical list:\n"
         f"{json.dumps(canonical, indent=2)}\n\n"
         "Items:\n"
@@ -324,7 +332,7 @@ def _relation_reclass_prompt(allowed: list[str], items: list[dict[str, Any]]) ->
         "- Use only the allowed list.\n"
         "- Keep direction and semantics.\n"
         "- Use RELATED_TO only if nothing fits.\n"
-        "Return JSON array of objects: {\"id\": int, \"type\": str}.\n\n"
+        'Return JSON array of objects: {"id": int, "type": str}.\n\n'
         "Allowed list:\n"
         f"{json.dumps(allowed, indent=2)}\n\n"
         "Items:\n"
@@ -338,7 +346,7 @@ def _classify_concepts_prompt(labels: list[str], nodes: list[dict[str, Any]]) ->
         "Rules:\n"
         "- Use only the allowed labels list.\n"
         "- If unsure, return Concept.\n"
-        "Return JSON array of objects: {\"id\": int, \"label\": str}.\n\n"
+        'Return JSON array of objects: {"id": int, "label": str}.\n\n'
         "Allowed labels:\n"
         f"{json.dumps(labels, indent=2)}\n\n"
         "Nodes:\n"
@@ -346,14 +354,16 @@ def _classify_concepts_prompt(labels: list[str], nodes: list[dict[str, Any]]) ->
     )
 
 
-def _enrichment_prompt(schema: dict[str, dict[str, str]], nodes: list[dict[str, Any]]) -> str:
+def _enrichment_prompt(
+    schema: dict[str, dict[str, str]], nodes: list[dict[str, Any]]
+) -> str:
     return (
         "You enrich node properties for a knowledge graph.\n"
         "Rules:\n"
         "- Use only the properties defined in the schema per label.\n"
         "- Return only properties that are missing for the node.\n"
         "- If nothing to add, return an empty properties object.\n"
-        "Return JSON array of objects: {\"id\": int, \"properties\": {..}}.\n\n"
+        'Return JSON array of objects: {"id": int, "properties": {..}}.\n\n'
         "Schema:\n"
         f"{json.dumps(schema, indent=2)}\n\n"
         "Nodes:\n"
@@ -430,7 +440,9 @@ def _fetch_node_context(session, ids: list[int]) -> list[dict[str, Any]]:
 
 
 def _fetch_related_to_ids(session) -> list[int]:
-    rows = session.run("MATCH ()-[r:RELATED_TO]->() RETURN id(r) AS id ORDER BY id(r)").data()
+    rows = session.run(
+        "MATCH ()-[r:RELATED_TO]->() RETURN id(r) AS id ORDER BY id(r)"
+    ).data()
     return [int(row["id"]) for row in rows]
 
 
@@ -461,7 +473,9 @@ def _fetch_related_to_context(session, rel_ids: list[int]) -> list[dict[str, Any
     return session.run(query, ids=rel_ids).data()
 
 
-def _fetch_relation_context(session, rel_ids: list[int], rel_type: str) -> list[dict[str, Any]]:
+def _fetch_relation_context(
+    session, rel_ids: list[int], rel_type: str
+) -> list[dict[str, Any]]:
     if not rel_ids:
         return []
     safe_type = _normalize_rel_type(rel_type)
@@ -595,12 +609,18 @@ def _apply_relation_mapping(
 
         if not dry_run:
             try:
-                session.run("CALL apoc.refactor.rename.type($old, $new)", old=source, new=target)
+                session.run(
+                    "CALL apoc.refactor.rename.type($old, $new)", old=source, new=target
+                )
             except Exception as exc:
-                report["errors"].append(f"rename failed for {source} -> {target}: {exc}")
+                report["errors"].append(
+                    f"rename failed for {source} -> {target}: {exc}"
+                )
                 continue
 
-        report["renamed"].append({"source": source, "target": target, "count": int(count)})
+        report["renamed"].append(
+            {"source": source, "target": target, "count": int(count)}
+        )
 
     return report
 
@@ -626,7 +646,14 @@ def _rewrite_inverse_relationships(
             continue
 
         if dry_run or int(count) == 0:
-            report["pairs"].append({"source": source, "target": target, "count": int(count), "rewritten": 0})
+            report["pairs"].append(
+                {
+                    "source": source,
+                    "target": target,
+                    "count": int(count),
+                    "rewritten": 0,
+                }
+            )
             continue
 
         query = (
@@ -640,11 +667,18 @@ def _rewrite_inverse_relationships(
         try:
             rewritten = session.run(query).single()["rewritten"]
         except Exception as exc:
-            report["errors"].append(f"inverse rewrite failed for {source} -> {target}: {exc}")
+            report["errors"].append(
+                f"inverse rewrite failed for {source} -> {target}: {exc}"
+            )
             continue
 
         report["pairs"].append(
-            {"source": source, "target": target, "count": int(count), "rewritten": int(rewritten)}
+            {
+                "source": source,
+                "target": target,
+                "count": int(count),
+                "rewritten": int(rewritten),
+            }
         )
 
     return report
@@ -674,7 +708,11 @@ def _rename_relation_types(
         if not dry_run and count > 0:
             try:
                 if apoc_available:
-                    session.run("CALL apoc.refactor.rename.type($old, $new)", old=source, new=target).consume()
+                    session.run(
+                        "CALL apoc.refactor.rename.type($old, $new)",
+                        old=source,
+                        new=target,
+                    ).consume()
                     updated = count
                 else:
                     query = (
@@ -687,10 +725,14 @@ def _rename_relation_types(
                     )
                     updated = int(session.run(query).single()["updated"])
             except Exception as exc:
-                report["errors"].append(f"rename failed for {source} -> {target}: {exc}")
+                report["errors"].append(
+                    f"rename failed for {source} -> {target}: {exc}"
+                )
                 continue
 
-        report["pairs"].append({"source": source, "target": target, "count": count, "updated": updated})
+        report["pairs"].append(
+            {"source": source, "target": target, "count": count, "updated": updated}
+        )
 
     return report
 
@@ -725,7 +767,9 @@ def _invert_published_direction(session, dry_run: bool) -> dict[str, Any]:
     return report
 
 
-def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dict[str, Any]:
+def _cleanup_named_region_nodes(
+    session, names: list[str], dry_run: bool
+) -> dict[str, Any]:
     report: dict[str, Any] = {
         "candidates": 0,
         "matched": 0,
@@ -798,7 +842,9 @@ def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dic
                 name_report["matched"] += 1
                 name_report["deleted_nodes"] += 1
                 if len(report["samples"]) < 20:
-                    report["samples"].append({"from": row.get("name", ""), "to": row.get("match_name", "")})
+                    report["samples"].append(
+                        {"from": row.get("name", ""), "to": row.get("match_name", "")}
+                    )
                 if len(name_report["samples"]) < 20:
                     name_report["samples"].append(
                         {"from": row.get("name", ""), "to": row.get("match_name", "")}
@@ -834,7 +880,11 @@ def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dic
                     "RETURN out_count + in_count AS rewired"
                 )
                 try:
-                    rewired = int(session.run(query, bad_id=bad_id, match_id=match_id).single()["rewired"])
+                    rewired = int(
+                        session.run(query, bad_id=bad_id, match_id=match_id).single()[
+                            "rewired"
+                        ]
+                    )
                     report["rewired_relationships"] += rewired
                     name_report["rewired_relationships"] += rewired
                     deleted_rels = max(0, rel_count - rewired)
@@ -858,7 +908,9 @@ def _cleanup_named_region_nodes(session, names: list[str], dry_run: bool) -> dic
                 continue
 
             try:
-                session.run("MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id).consume()
+                session.run(
+                    "MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id
+                ).consume()
             except Exception as exc:
                 error_msg = f"region delete failed for {bad_id}: {exc}"
                 report["errors"].append(error_msg)
@@ -913,7 +965,9 @@ def _cleanup_isolated_nodes(
         if match_row:
             report["matched"] += 1
             if len(report["samples"]) < 20:
-                report["samples"].append({"from": name, "to": match_row.get("name", "")})
+                report["samples"].append(
+                    {"from": name, "to": match_row.get("name", "")}
+                )
             if dry_run:
                 continue
             if not apoc_available:
@@ -931,7 +985,9 @@ def _cleanup_isolated_nodes(
                     primary=int(match_row["id"]),
                 ).consume()
             except Exception as exc:
-                report["errors"].append(f"isolated node merge failed for {node_id}: {exc}")
+                report["errors"].append(
+                    f"isolated node merge failed for {node_id}: {exc}"
+                )
             continue
 
         report["deleted_nodes"] += 1
@@ -940,7 +996,9 @@ def _cleanup_isolated_nodes(
         if dry_run:
             continue
         try:
-            session.run("MATCH (n) WHERE id(n) = $id DETACH DELETE n", id=node_id).consume()
+            session.run(
+                "MATCH (n) WHERE id(n) = $id DETACH DELETE n", id=node_id
+            ).consume()
         except Exception as exc:
             report["errors"].append(f"isolated node delete failed for {node_id}: {exc}")
 
@@ -986,7 +1044,9 @@ def _merge_duplicate_groups(
 
     for group in groups:
         nodes = group["nodes"]
-        nodes_sorted = sorted(nodes, key=lambda row: (-int(row.get("degree", 0)), int(row["id"])))
+        nodes_sorted = sorted(
+            nodes, key=lambda row: (-int(row.get("degree", 0)), int(row["id"]))
+        )
         primary = nodes_sorted[0]
         primary_labels = primary.get("labels", []) or []
         compatible = []
@@ -1130,7 +1190,12 @@ def _classify_concepts(
     batch_size: int,
     label_mode: str,
 ) -> dict[str, Any]:
-    report: dict[str, Any] = {"candidates": 0, "relabeled": 0, "label_counts": {}, "errors": []}
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "relabeled": 0,
+        "label_counts": {},
+        "errors": [],
+    }
 
     rows = session.run(
         "MATCH (n) WHERE 'Concept' IN labels(n) AND size(labels(n)) = 1 "
@@ -1196,7 +1261,12 @@ def _enrich_properties(
     dry_run: bool,
     batch_size: int,
 ) -> dict[str, Any]:
-    report: dict[str, Any] = {"candidates": 0, "updated_nodes": 0, "updated_props": {}, "errors": []}
+    report: dict[str, Any] = {
+        "candidates": 0,
+        "updated_nodes": 0,
+        "updated_props": {},
+        "errors": [],
+    }
 
     candidates: list[dict[str, Any]] = []
     candidate_lookup: dict[int, dict[str, Any]] = {}
@@ -1260,7 +1330,9 @@ def _enrich_properties(
             allowed_keys = set(schema.get(candidate["label"], {}).keys())
             allowed_keys &= set(candidate.get("missing", []))
 
-            filtered_props = {key: value for key, value in props.items() if key in allowed_keys}
+            filtered_props = {
+                key: value for key, value in props.items() if key in allowed_keys
+            }
             clean_props = _sanitize_props(filtered_props)
             if not clean_props:
                 continue
@@ -1272,7 +1344,11 @@ def _enrich_properties(
             if dry_run:
                 continue
 
-            session.run("MATCH (n) WHERE id(n) = $id SET n += $props", id=node_id, props=clean_props).consume()
+            session.run(
+                "MATCH (n) WHERE id(n) = $id SET n += $props",
+                id=node_id,
+                props=clean_props,
+            ).consume()
 
     return report
 
@@ -1325,7 +1401,9 @@ def _refine_related_to_relationships(
             if normalized not in canonical_set:
                 normalized = "RELATED_TO"
 
-            report["type_counts"][normalized] = report["type_counts"].get(normalized, 0) + 1
+            report["type_counts"][normalized] = (
+                report["type_counts"].get(normalized, 0) + 1
+            )
             if normalized == "RELATED_TO":
                 report["skipped"] += 1
                 continue
@@ -1382,7 +1460,13 @@ def _reclassify_relationships(
 
     for batch_index, batch_ids in enumerate(_chunked(rel_ids, batch_size), start=1):
         report["batches"] += 1
-        LOGGER.info("%s batch %d/%d: ids=%d", batch_label, batch_index, total_batches, len(batch_ids))
+        LOGGER.info(
+            "%s batch %d/%d: ids=%d",
+            batch_label,
+            batch_index,
+            total_batches,
+            len(batch_ids),
+        )
         batch_set = {int(item) for item in batch_ids}
         context_rows = _fetch_relation_context(session, batch_ids, rel_type)
         prompt = _relation_reclass_prompt(allowed, context_rows)
@@ -1390,7 +1474,13 @@ def _reclassify_relationships(
             rows = _llm_json_array(client, model_name, prompt)
         except Exception as exc:
             report["errors"].append(f"relation reclass failed: {exc}")
-            LOGGER.warning("%s batch %d/%d failed: %s", batch_label, batch_index, total_batches, exc)
+            LOGGER.warning(
+                "%s batch %d/%d failed: %s",
+                batch_label,
+                batch_index,
+                total_batches,
+                exc,
+            )
             continue
 
         updates: list[dict[str, Any]] = []
@@ -1411,7 +1501,9 @@ def _reclassify_relationships(
             if normalized not in allowed_set:
                 normalized = "RELATED_TO"
 
-            report["type_counts"][normalized] = report["type_counts"].get(normalized, 0) + 1
+            report["type_counts"][normalized] = (
+                report["type_counts"].get(normalized, 0) + 1
+            )
             if normalized_skip and normalized == normalized_skip:
                 report["skipped"] += 1
                 batch_skipped += 1
@@ -1465,7 +1557,13 @@ def _reclassify_relationships(
             )
         except Exception as exc:
             report["errors"].append(f"relation reclass update failed: {exc}")
-            LOGGER.warning("%s batch %d/%d update failed: %s", batch_label, batch_index, total_batches, exc)
+            LOGGER.warning(
+                "%s batch %d/%d update failed: %s",
+                batch_label,
+                batch_index,
+                total_batches,
+                exc,
+            )
 
     return report
 
@@ -1600,7 +1698,9 @@ def _cleanup_region_artifacts(session, dry_run: bool) -> dict[str, Any]:
             continue
 
         try:
-            session.run("MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id).consume()
+            session.run(
+                "MATCH (n:Region) WHERE id(n) = $id DETACH DELETE n", id=bad_id
+            ).consume()
         except Exception as exc:
             report["errors"].append(f"region delete failed for {bad_id}: {exc}")
 
@@ -1630,12 +1730,18 @@ def _absorb_micro_relation_types(
         updated = 0
         if not dry_run and count > 0:
             try:
-                session.run("CALL apoc.refactor.rename.type($old, $new)", old=source, new=target).consume()
+                session.run(
+                    "CALL apoc.refactor.rename.type($old, $new)", old=source, new=target
+                ).consume()
                 updated = count
             except Exception as exc:
-                report["errors"].append(f"micro type rename failed for {source} -> {target}: {exc}")
+                report["errors"].append(
+                    f"micro type rename failed for {source} -> {target}: {exc}"
+                )
 
-        report["pairs"].append({"source": source, "target": target, "count": count, "updated": updated})
+        report["pairs"].append(
+            {"source": source, "target": target, "count": count, "updated": updated}
+        )
 
     return report
 
@@ -1666,9 +1772,7 @@ def _run_aura_issues(
         for name in _AURA_REGION_GARBAGE_NAMES:
             literal = _cypher_string_literal(str(name).strip())
             count = session.run(
-                "MATCH (n:Region) "
-                f"WHERE n.name = {literal} "
-                "RETURN count(n) AS c"
+                f"MATCH (n:Region) WHERE n.name = {literal} RETURN count(n) AS c"
             ).single()["c"]
             total_candidates += int(count)
         garbage_report = {
@@ -1735,7 +1839,11 @@ def _run_aura_issues(
             "found": False,
             "total_related_to": related_total,
             "edges_modified": 0,
-            "details": {"total_candidates": related_total, "updated": 0, "skipped": related_total},
+            "details": {
+                "total_candidates": related_total,
+                "updated": 0,
+                "skipped": related_total,
+            },
         }
         LOGGER.info(
             "Issue 2 RELATED_TO reclass: NON TROVATO (total=%d <= 50)",
@@ -1756,7 +1864,9 @@ def _run_aura_issues(
             if not source or not target or source == target:
                 continue
             count = _count_relationships(session, source)
-            pairs.append({"source": source, "target": target, "count": count, "updated": 0})
+            pairs.append(
+                {"source": source, "target": target, "count": count, "updated": 0}
+            )
         micro_report = {
             "pairs": pairs,
             "errors": ["APOC unavailable, cannot rename relationship types"],
@@ -1814,7 +1924,9 @@ def _run_cleanup_pass3(
         apoc_available=apoc_available,
     )
     isolated_found = int(isolated_report.get("candidates", 0)) > 0
-    isolated_nodes = int(isolated_report.get("matched", 0)) + int(isolated_report.get("deleted_nodes", 0))
+    isolated_nodes = int(isolated_report.get("matched", 0)) + int(
+        isolated_report.get("deleted_nodes", 0)
+    )
     isolated_edges = int(isolated_report.get("edges_modified", 0))
     report["isolated_nodes"] = {
         "found": isolated_found,
@@ -1836,7 +1948,9 @@ def _run_cleanup_pass3(
     )
     rename_pairs = verbose_report.get("rename", {}).get("pairs", [])
     invert_pairs = verbose_report.get("invert", {}).get("pairs", [])
-    verbose_found = any(int(pair.get("count", 0)) > 0 for pair in rename_pairs + invert_pairs)
+    verbose_found = any(
+        int(pair.get("count", 0)) > 0 for pair in rename_pairs + invert_pairs
+    )
     verbose_edges = sum(int(pair.get("updated", 0)) for pair in rename_pairs) + sum(
         int(pair.get("rewritten", 0)) for pair in invert_pairs
     )
@@ -1882,7 +1996,11 @@ def _run_cleanup_pass3(
             "found": False,
             "total_related_to": related_total,
             "edges_modified": 0,
-            "details": {"total_candidates": related_total, "updated": 0, "skipped": related_total},
+            "details": {
+                "total_candidates": related_total,
+                "updated": 0,
+                "skipped": related_total,
+            },
         }
         LOGGER.info(
             "Step 3 RELATED_TO pass3: NON TROVATO (total=%d)",
@@ -1895,7 +2013,9 @@ def _run_cleanup_pass3(
         apoc_available=apoc_available,
     )
     caps_found = int(caps_report.get("candidates", 0)) > 0
-    caps_nodes = int(caps_report.get("merged_nodes", 0)) + int(caps_report.get("renamed_nodes", 0))
+    caps_nodes = int(caps_report.get("merged_nodes", 0)) + int(
+        caps_report.get("renamed_nodes", 0)
+    )
     caps_edges = int(caps_report.get("edges_modified", 0))
     report["concept_caps_normalization"] = {
         "found": caps_found,
@@ -1966,7 +2086,13 @@ def main() -> None:
     parser.add_argument("--reltype-patterns", type=int, default=6)
     parser.add_argument(
         "--fix",
-        choices=["related-to", "region-artifacts", "micro-types", "aura-issues", "cleanup-pass3"],
+        choices=[
+            "related-to",
+            "region-artifacts",
+            "micro-types",
+            "aura-issues",
+            "cleanup-pass3",
+        ],
         default="",
         help="Run a single cleanup task and skip the default pipeline",
     )
@@ -2001,17 +2127,25 @@ def main() -> None:
     load_dotenv(args.env_file, override=True)
 
     config = _load_yaml(Path(args.config))
-    allowed_labels = [str(label) for label in config.get("ontology", {}).get("labels", [])]
+    allowed_labels = [
+        str(label) for label in config.get("ontology", {}).get("labels", [])
+    ]
     if "Concept" not in allowed_labels:
         allowed_labels.append("Concept")
 
-    non_concept_labels = [label for label in allowed_labels if label != "Concept"] + ["Concept"]
+    non_concept_labels = [label for label in allowed_labels if label != "Concept"] + [
+        "Concept"
+    ]
 
     relation_vocab = _load_relation_vocab(args.relation_vocab)
     property_schema = _load_property_schema(args.property_schema)
 
     fix_mode = args.fix.strip()
-    needs_llm = not fix_mode or fix_mode in {"related-to", "aura-issues", "cleanup-pass3"}
+    needs_llm = not fix_mode or fix_mode in {
+        "related-to",
+        "aura-issues",
+        "cleanup-pass3",
+    }
 
     base_url = ""
     model_name = ""
@@ -2024,7 +2158,9 @@ def main() -> None:
     uri, user, password, env_db = _resolve_neo4j_env()
     database = args.database.strip() or env_db
 
-    _confirm_db_changes(uri=uri, database=database, dry_run=args.dry_run, assume_yes=args.yes)
+    _confirm_db_changes(
+        uri=uri, database=database, dry_run=args.dry_run, assume_yes=args.yes
+    )
 
     report: dict[str, Any] = {"dry_run": bool(args.dry_run)}
 
@@ -2069,7 +2205,9 @@ def main() -> None:
                 elif fix_mode == "related-to":
                     LOGGER.info("Fix: refine RELATED_TO relationships")
                     if client is None:
-                        raise RuntimeError("LLM client required for RELATED_TO refinement")
+                        raise RuntimeError(
+                            "LLM client required for RELATED_TO refinement"
+                        )
                     report["related_to_refinement"] = _refine_related_to_relationships(
                         session=session,
                         canonical=relation_vocab,
@@ -2094,7 +2232,9 @@ def main() -> None:
                 print(json.dumps(report, ensure_ascii=False, indent=2))
                 return
 
-            relation_items = _fetch_relation_types(session, max_patterns=args.reltype_patterns)
+            relation_items = _fetch_relation_types(
+                session, max_patterns=args.reltype_patterns
+            )
             if not apoc_available:
                 report["step1_relation_mapping"] = {
                     "error": "APOC unavailable, cannot rename relationship types",
@@ -2135,7 +2275,9 @@ def main() -> None:
 
             aura_report: dict[str, Any] = {}
 
-            LOGGER.info("Aura cleanup step 1: invert PUBLISHED direction for Organization -> Document")
+            LOGGER.info(
+                "Aura cleanup step 1: invert PUBLISHED direction for Organization -> Document"
+            )
             aura_report["step1_published_direction_fix"] = _invert_published_direction(
                 session=session,
                 dry_run=args.dry_run,
@@ -2153,11 +2295,15 @@ def main() -> None:
                     "error": "APOC unavailable, cannot rewire/delete Region garbage nodes"
                 }
             else:
-                LOGGER.info("Aura cleanup step 2: redirect/delete named Region garbage nodes")
-                aura_report["step2_region_garbage_cleanup"] = _cleanup_named_region_nodes(
-                    session=session,
-                    names=_AURA_REGION_GARBAGE_NAMES,
-                    dry_run=args.dry_run,
+                LOGGER.info(
+                    "Aura cleanup step 2: redirect/delete named Region garbage nodes"
+                )
+                aura_report["step2_region_garbage_cleanup"] = (
+                    _cleanup_named_region_nodes(
+                        session=session,
+                        names=_AURA_REGION_GARBAGE_NAMES,
+                        dry_run=args.dry_run,
+                    )
                 )
                 step_a2 = aura_report["step2_region_garbage_cleanup"]
                 LOGGER.info(
@@ -2175,7 +2321,9 @@ def main() -> None:
                     "error": "APOC unavailable, cannot rewrite inverse relationships"
                 }
             else:
-                LOGGER.info("Aura cleanup step 3: rewrite inverse pairs and rename INFLUENCES")
+                LOGGER.info(
+                    "Aura cleanup step 3: rewrite inverse pairs and rename INFLUENCES"
+                )
                 inverse_report = _rewrite_inverse_relationships(
                     session=session,
                     rewrites=_AURA_INVERSE_REWRITES,
@@ -2199,20 +2347,26 @@ def main() -> None:
                 )
 
             if client is None:
-                raise RuntimeError("LLM client required for Aura relationship reclassification")
+                raise RuntimeError(
+                    "LLM client required for Aura relationship reclassification"
+                )
 
             if not apoc_available:
                 aura_report["step4_has_component_reclass"] = {
                     "error": "APOC unavailable, cannot reclassify HAS_COMPONENT relationships"
                 }
             else:
-                LOGGER.info("Aura cleanup step 4: reclassify anomalous HAS_COMPONENT relationships")
-                aura_report["step4_has_component_reclass"] = _reclassify_has_component_anomalies(
-                    session=session,
-                    client=client,
-                    model_name=model_name,
-                    dry_run=args.dry_run,
-                    batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                LOGGER.info(
+                    "Aura cleanup step 4: reclassify anomalous HAS_COMPONENT relationships"
+                )
+                aura_report["step4_has_component_reclass"] = (
+                    _reclassify_has_component_anomalies(
+                        session=session,
+                        client=client,
+                        model_name=model_name,
+                        dry_run=args.dry_run,
+                        batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                    )
                 )
                 step_a4 = aura_report["step4_has_component_reclass"]
                 LOGGER.info(
@@ -2228,14 +2382,18 @@ def main() -> None:
                     "error": "APOC unavailable, cannot reclassify RELATED_TO relationships"
                 }
             else:
-                LOGGER.info("Aura cleanup step 5: second-pass reclassify RELATED_TO relationships")
-                aura_report["step5_related_to_reclass"] = _reclassify_related_to_second_pass(
-                    session=session,
-                    client=client,
-                    model_name=model_name,
-                    allowed=relation_vocab,
-                    dry_run=args.dry_run,
-                    batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                LOGGER.info(
+                    "Aura cleanup step 5: second-pass reclassify RELATED_TO relationships"
+                )
+                aura_report["step5_related_to_reclass"] = (
+                    _reclassify_related_to_second_pass(
+                        session=session,
+                        client=client,
+                        model_name=model_name,
+                        allowed=relation_vocab,
+                        dry_run=args.dry_run,
+                        batch_size=_RELATION_RECLASS_BATCH_SIZE,
+                    )
                 )
                 step_a5 = aura_report["step5_related_to_reclass"]
                 LOGGER.info(
@@ -2255,7 +2413,9 @@ def main() -> None:
                     "candidate_groups": len(duplicate_groups),
                 }
             else:
-                LOGGER.info("Step 2: merging %d duplicate groups", len(duplicate_groups))
+                LOGGER.info(
+                    "Step 2: merging %d duplicate groups", len(duplicate_groups)
+                )
                 report["step2_dedup"] = _merge_duplicate_groups(
                     session=session,
                     groups=duplicate_groups,
@@ -2309,7 +2469,17 @@ def main() -> None:
             unique_labels = [
                 label
                 for label in allowed_labels
-                if label in {"Organization", "Region", "Event", "Indicator", "Dataset", "Method", "Policy", "Commodity"}
+                if label
+                in {
+                    "Organization",
+                    "Region",
+                    "Event",
+                    "Indicator",
+                    "Dataset",
+                    "Method",
+                    "Policy",
+                    "Commodity",
+                }
             ]
             LOGGER.info("Step 5: applying constraints")
             report["step5_constraints"] = _apply_constraints(

@@ -77,7 +77,9 @@ def _build_mentions(triples: list[KGTriple]) -> list[dict[str, Any]]:
         mentions.append(
             {
                 "name": triple.subject,
-                "label": (triple.subject_labels[0] if triple.subject_labels else "Concept"),
+                "label": (
+                    triple.subject_labels[0] if triple.subject_labels else "Concept"
+                ),
                 "doc": src_doc,
                 "properties": dict(triple.subject_properties),
                 "predicates": {predicate},
@@ -86,7 +88,9 @@ def _build_mentions(triples: list[KGTriple]) -> list[dict[str, Any]]:
         mentions.append(
             {
                 "name": triple.object,
-                "label": (triple.object_labels[0] if triple.object_labels else "Concept"),
+                "label": (
+                    triple.object_labels[0] if triple.object_labels else "Concept"
+                ),
                 "doc": src_doc,
                 "properties": dict(triple.object_properties),
                 "predicates": {predicate},
@@ -121,7 +125,10 @@ def _initial_groups(
                 c_predicates = set()
                 for cidx in cluster:
                     c_predicates |= set(mentions[cidx]["predicates"])
-                if _jaccard(set(mentions[idx]["predicates"]), c_predicates) >= context_jaccard_floor:
+                if (
+                    _jaccard(set(mentions[idx]["predicates"]), c_predicates)
+                    >= context_jaccard_floor
+                ):
                     cluster.append(idx)
                     placed = True
                     break
@@ -146,7 +153,9 @@ def _embedding_candidates(
     canonical_labels: list[str] = []
 
     for idxs in groups:
-        names = sorted({mentions[i]["name"] for i in idxs}, key=lambda x: (-len(x), x.lower()))
+        names = sorted(
+            {mentions[i]["name"] for i in idxs}, key=lambda x: (-len(x), x.lower())
+        )
         canonical_names.append(names[0] if names else "")
         canonical_labels.append(mentions[idxs[0]]["label"])
 
@@ -182,12 +191,22 @@ def _confirm_candidates_with_llm(
     by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for i, j in candidates:
-        left_docs = sorted({mentions[idx]["doc"] for idx in groups[i] if mentions[idx]["doc"]})
-        right_docs = sorted({mentions[idx]["doc"] for idx in groups[j] if mentions[idx]["doc"]})
+        left_docs = sorted(
+            {mentions[idx]["doc"] for idx in groups[i] if mentions[idx]["doc"]}
+        )
+        right_docs = sorted(
+            {mentions[idx]["doc"] for idx in groups[j] if mentions[idx]["doc"]}
+        )
         docs = sorted(set(left_docs + right_docs)) or ["global"]
 
-        left_name = sorted({mentions[idx]["name"] for idx in groups[i]}, key=lambda x: (-len(x), x.lower()))[0]
-        right_name = sorted({mentions[idx]["name"] for idx in groups[j]}, key=lambda x: (-len(x), x.lower()))[0]
+        left_name = sorted(
+            {mentions[idx]["name"] for idx in groups[i]},
+            key=lambda x: (-len(x), x.lower()),
+        )[0]
+        right_name = sorted(
+            {mentions[idx]["name"] for idx in groups[j]},
+            key=lambda x: (-len(x), x.lower()),
+        )[0]
         label = mentions[groups[i][0]]["label"]
 
         pair_payload = {
@@ -203,7 +222,9 @@ def _confirm_candidates_with_llm(
         for doc in docs:
             by_doc[doc].append(pair_payload)
 
-    for doc, pairs in tqdm(by_doc.items(), desc="Stage 4 LLM Merge Confirm", unit="doc"):
+    for doc, pairs in tqdm(
+        by_doc.items(), desc="Stage 4 LLM Merge Confirm", unit="doc"
+    ):
         prompt = f"""
 You are resolving cross-document entities for a food-domain knowledge graph.
 
@@ -253,7 +274,9 @@ def resolve_entities(
     crosslabel_log_path: Path | None = None,
 ) -> tuple[list[KGTriple], dict[str, CanonicalEntityRecord]]:
     mentions = _build_mentions(triples)
-    groups = _initial_groups(mentions, acronym_map, context_jaccard_floor=context_jaccard_floor)
+    groups = _initial_groups(
+        mentions, acronym_map, context_jaccard_floor=context_jaccard_floor
+    )
 
     candidates = _embedding_candidates(
         mentions=mentions,
@@ -289,7 +312,10 @@ def resolve_entities(
         for gidx in group_idxs:
             mention_indices.extend(groups[gidx])
 
-        aliases = sorted({mentions[midx]["name"] for midx in mention_indices}, key=lambda x: (x.lower(), len(x)))
+        aliases = sorted(
+            {mentions[midx]["name"] for midx in mention_indices},
+            key=lambda x: (x.lower(), len(x)),
+        )
         canonical_name = sorted(aliases, key=lambda x: (-len(x), x.lower()))[0]
         labels = sorted({mentions[midx]["label"] for midx in mention_indices})
         merged_props: dict[str, Any] = {"name": canonical_name}
@@ -319,7 +345,15 @@ def resolve_entities(
 
         Returns (updated_registry, alias_to_canonical_map)
         """
-        precedence = ["Method", "Concept", "Indicator", "Policy", "Commodity", "Region", "Organization"]
+        precedence = [
+            "Method",
+            "Concept",
+            "Indicator",
+            "Policy",
+            "Commodity",
+            "Region",
+            "Organization",
+        ]
         norm_map: dict[str, list[str]] = defaultdict(list)
         for cname in list(registry.keys()):
             norm = cname.strip().lower()
@@ -407,7 +441,9 @@ def resolve_entities(
         return registry, alias_to_canonical
 
     # perform cross-label merging and build alias mapping
-    registry, alias_to_canonical = _cross_label_merge_registry(registry, log_path=Path(crosslabel_log_path) if crosslabel_log_path else None)
+    registry, alias_to_canonical = _cross_label_merge_registry(
+        registry, log_path=Path(crosslabel_log_path) if crosslabel_log_path else None
+    )
 
     resolved_triples: list[KGTriple] = []
     for triple in triples:
@@ -417,7 +453,9 @@ def resolve_entities(
         if triple.subject in registry:
             triple.subject_properties = dict(registry[triple.subject].merged_properties)
             if not triple.subject_labels:
-                triple.subject_labels = list(registry[triple.subject].labels) or ["Concept"]
+                triple.subject_labels = list(registry[triple.subject].labels) or [
+                    "Concept"
+                ]
             else:
                 # prefer registry labels if they exist
                 triple.subject_labels = list(registry[triple.subject].labels)
@@ -425,7 +463,9 @@ def resolve_entities(
         if triple.object in registry:
             triple.object_properties = dict(registry[triple.object].merged_properties)
             if not triple.object_labels:
-                triple.object_labels = list(registry[triple.object].labels) or ["Concept"]
+                triple.object_labels = list(registry[triple.object].labels) or [
+                    "Concept"
+                ]
             else:
                 triple.object_labels = list(registry[triple.object].labels)
 
@@ -441,7 +481,10 @@ def save_registry(path: Path, registry: dict[str, CanonicalEntityRecord]) -> Non
 
 def load_registry(path: Path) -> dict[str, CanonicalEntityRecord]:
     payload = _load_json(path)
-    return {key: CanonicalEntityRecord.model_validate(value) for key, value in payload.items()}
+    return {
+        key: CanonicalEntityRecord.model_validate(value)
+        for key, value in payload.items()
+    }
 
 
 def save_triples(path: Path, triples: list[KGTriple]) -> None:
@@ -460,7 +503,9 @@ def _cli() -> None:
     parser.add_argument("--acronyms-json", required=True)
     parser.add_argument("--output-triples-json", required=True)
     parser.add_argument("--output-registry-json", required=True)
-    parser.add_argument("--embedding-model", default="sentence-transformers/all-MiniLM-L6-v2")
+    parser.add_argument(
+        "--embedding-model", default="sentence-transformers/all-MiniLM-L6-v2"
+    )
     parser.add_argument("--similarity-threshold", type=float, default=0.92)
     parser.add_argument("--context-jaccard-floor", type=float, default=0.10)
     parser.add_argument("--base-url", default="")
@@ -481,7 +526,10 @@ def _cli() -> None:
         base_url=args.base_url or None,
         api_key=args.api_key or None,
         model_name=args.model_name or None,
-        crosslabel_log_path=Path(args.crosslabel_log) if args.crosslabel_log else Path(args.output_registry_json).resolve().parent / "resolution_crosslabel.log",
+        crosslabel_log_path=Path(args.crosslabel_log)
+        if args.crosslabel_log
+        else Path(args.output_registry_json).resolve().parent
+        / "resolution_crosslabel.log",
     )
 
     save_triples(Path(args.output_triples_json), resolved)

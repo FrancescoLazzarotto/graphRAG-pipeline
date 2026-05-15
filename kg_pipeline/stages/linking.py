@@ -38,9 +38,13 @@ def add_cross_document_links(
 
     if include_mentioned_in:
         for triple in triples:
-            source_doc = str(triple.relationship_properties.get("source_doc", "")).strip()
+            source_doc = str(
+                triple.relationship_properties.get("source_doc", "")
+            ).strip()
             chunk_id = str(triple.relationship_properties.get("chunk_id", "")).strip()
-            page_range = str(triple.relationship_properties.get("page_range", "")).strip()
+            page_range = str(
+                triple.relationship_properties.get("page_range", "")
+            ).strip()
 
             if source_doc and source_doc in doc_map:
                 doc_props = _document_props(doc_map[source_doc])

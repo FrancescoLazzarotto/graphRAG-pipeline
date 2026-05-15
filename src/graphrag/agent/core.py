@@ -30,7 +30,9 @@ class KGRAGAgent:
         self.config = config
         self.kg_retriever = kg_retriever
         self.llm = llm
-        self.compressor = ContextCompressor(config.max_content_tokens, config.token_estimator_ratio)
+        self.compressor = ContextCompressor(
+            config.max_content_tokens, config.token_estimator_ratio
+        )
         self.cache = LRUCache(config.cache_maxsize) if config.enable_cache else None
 
         if self.llm is not None and self.config.llm_warmup:
@@ -93,11 +95,19 @@ class KGRAGAgent:
         try:
             parsed = json.loads(text)
             if isinstance(parsed, list):
-                return {"sub_questions": [str(item).strip() for item in parsed if str(item).strip()]}
+                return {
+                    "sub_questions": [
+                        str(item).strip() for item in parsed if str(item).strip()
+                    ]
+                }
         except json.JSONDecodeError:
             pass
 
-        return {"sub_questions": [line.strip("-• \t") for line in text.splitlines() if line.strip()]}
+        return {
+            "sub_questions": [
+                line.strip("-• \t") for line in text.splitlines() if line.strip()
+            ]
+        }
 
     def _rewrite(self, state: RAGState) -> dict:
         question = state.get("question", "").strip()
@@ -112,7 +122,9 @@ class KGRAGAgent:
 
         model = self.llm.load_llm()
         output = model.invoke(rendered)
-        rewritten = str(output.content if hasattr(output, "content") else output).strip()
+        rewritten = str(
+            output.content if hasattr(output, "content") else output
+        ).strip()
         rewrite_count = state.get("rewrite_count", 0) + 1
         if rewrite_count > 2:
             return {
@@ -134,7 +146,11 @@ class KGRAGAgent:
         rendered = prompt.invoke({"question": question})
         model = self.llm.load_llm()
         output = model.invoke(rendered)
-        mode = str(output.content if hasattr(output, "content") else output).strip().upper()
+        mode = (
+            str(output.content if hasattr(output, "content") else output)
+            .strip()
+            .upper()
+        )
 
         if mode not in ["TEXT", "KG", "HYBRID", "MULTIHOP"]:
             mode = "HYBRID"
@@ -175,7 +191,11 @@ class KGRAGAgent:
                 context = ""
             elif mm == "MULTIHOP":
                 # Multi-hop: use the multi_hop API to extract a broader subgraph
-                subgraph = self.kg_retriever.multi_hop(entity=query, hops=self.config.hops, limit=self.config.subgraph_limit)
+                subgraph = self.kg_retriever.multi_hop(
+                    entity=query,
+                    hops=self.config.hops,
+                    limit=self.config.subgraph_limit,
+                )
                 try:
                     context = str(self.kg_retriever.kg_store.triples_to_text(subgraph))
                 except Exception:
@@ -195,11 +215,29 @@ class KGRAGAgent:
                 context = str(retrieved_data.get("context_text", ""))
 
         compressed_context = self.compressor.compress(context)
-        triples = retrieved_data.get("triples", []) if isinstance(retrieved_data, dict) else []
-        nodes = retrieved_data.get("nodes", []) if isinstance(retrieved_data, dict) else []
-        neighbors = retrieved_data.get("neighbors", []) if isinstance(retrieved_data, dict) else []
-        subgraph = retrieved_data.get("subgraph", []) if isinstance(retrieved_data, dict) else []
-        shortest_path = retrieved_data.get("shortest_path", []) if isinstance(retrieved_data, dict) else []
+        triples = (
+            retrieved_data.get("triples", [])
+            if isinstance(retrieved_data, dict)
+            else []
+        )
+        nodes = (
+            retrieved_data.get("nodes", []) if isinstance(retrieved_data, dict) else []
+        )
+        neighbors = (
+            retrieved_data.get("neighbors", [])
+            if isinstance(retrieved_data, dict)
+            else []
+        )
+        subgraph = (
+            retrieved_data.get("subgraph", [])
+            if isinstance(retrieved_data, dict)
+            else []
+        )
+        shortest_path = (
+            retrieved_data.get("shortest_path", [])
+            if isinstance(retrieved_data, dict)
+            else []
+        )
 
         result = {
             "text_context": compressed_context,
@@ -207,11 +245,19 @@ class KGRAGAgent:
             "retrieved_nodes": nodes if isinstance(nodes, list) else [],
             "retrieved_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
             "retrieved_neighbors": neighbors if isinstance(neighbors, list) else [],
-            "retrieved_neighbors_count": len(neighbors) if isinstance(neighbors, list) else 0,
+            "retrieved_neighbors_count": len(neighbors)
+            if isinstance(neighbors, list)
+            else 0,
             "retrieved_subgraph": subgraph if isinstance(subgraph, list) else [],
-            "retrieved_subgraph_count": len(subgraph) if isinstance(subgraph, list) else 0,
-            "retrieved_shortest_path": shortest_path if isinstance(shortest_path, list) else [],
-            "retrieved_shortest_path_count": len(shortest_path) if isinstance(shortest_path, list) else 0,
+            "retrieved_subgraph_count": len(subgraph)
+            if isinstance(subgraph, list)
+            else 0,
+            "retrieved_shortest_path": shortest_path
+            if isinstance(shortest_path, list)
+            else [],
+            "retrieved_shortest_path_count": len(shortest_path)
+            if isinstance(shortest_path, list)
+            else 0,
         }
 
         if self.cache:
@@ -227,7 +273,9 @@ class KGRAGAgent:
 
         # Stronger semantic gating: ensure retrieved KG items actually match the
         # salient terms in the query/context instead of accepting any hit.
-        evidence_units = nodes_count + triples_count + subgraph_count + shortest_path_count
+        evidence_units = (
+            nodes_count + triples_count + subgraph_count + shortest_path_count
+        )
         if evidence_units == 0:
             return {"relevance": "not_relevant"}
 
@@ -240,24 +288,30 @@ class KGRAGAgent:
 
         # examine triples for semantic overlap
         for triple in state.get("kg_triples", []) or []:
-            hay = f"{triple.get('subject','')} {triple.get('predicate','')} {triple.get('object','')}".lower()
+            hay = f"{triple.get('subject', '')} {triple.get('predicate', '')} {triple.get('object', '')}".lower()
             if any(term in hay for term in salient):
                 matched += 1
 
         # examine nodes
-        for node in (state.get("retrieved_nodes", []) or state.get("nodes", []) or []):
+        for node in state.get("retrieved_nodes", []) or state.get("nodes", []) or []:
             text = str(node.get("text", "")).lower()
             if any(term in text for term in salient):
                 matched += 1
 
         # examine subgraph and shortest path textualizations
-        for item in (state.get("retrieved_subgraph", []) or state.get("subgraph", []) or []):
-            hay = f"{item.get('subject','')} {item.get('predicate','')} {item.get('object','')}".lower()
+        for item in (
+            state.get("retrieved_subgraph", []) or state.get("subgraph", []) or []
+        ):
+            hay = f"{item.get('subject', '')} {item.get('predicate', '')} {item.get('object', '')}".lower()
             if any(term in hay for term in salient):
                 matched += 1
 
-        for item in (state.get("retrieved_shortest_path", []) or state.get("shortest_path", []) or []):
-            hay = f"{item.get('subject','')} {item.get('predicate','')} {item.get('object','')}".lower()
+        for item in (
+            state.get("retrieved_shortest_path", [])
+            or state.get("shortest_path", [])
+            or []
+        ):
+            hay = f"{item.get('subject', '')} {item.get('predicate', '')} {item.get('object', '')}".lower()
             if any(term in hay for term in salient):
                 matched += 1
 
@@ -284,7 +338,9 @@ class KGRAGAgent:
         subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
         shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
 
-        evidence_units = nodes_count + triples_count + subgraph_count + shortest_path_count
+        evidence_units = (
+            nodes_count + triples_count + subgraph_count + shortest_path_count
+        )
 
         if evidence_units == 0:
             return {
@@ -304,7 +360,9 @@ class KGRAGAgent:
             )
 
         if self.llm:
-            result = self.llm.generate(query=effective_query, context=context, config=self.config)
+            result = self.llm.generate(
+                query=effective_query, context=context, config=self.config
+            )
             answer = result.get("answer", "")
             logger.info(
                 "LLM returned (first 500 chars): %s | sparse_context=%s | evidence_units=%d",
@@ -319,7 +377,9 @@ class KGRAGAgent:
                 triples=state.get("kg_triples", []) or [],
                 sparse_context=sparse_context,
             ):
-                logger.info("FALLBACK TRIGGERED: replacing LLM answer with evidence-based fallback")
+                logger.info(
+                    "FALLBACK TRIGGERED: replacing LLM answer with evidence-based fallback"
+                )
                 answer = self._build_sparse_fallback_answer(
                     query=query,
                     context=context,
@@ -411,12 +471,18 @@ class KGRAGAgent:
         return meta_hits >= 3
 
     @staticmethod
-    def _build_sparse_fallback_answer(query: str, context: str, triples: list[dict[str, object]]) -> str:
+    def _build_sparse_fallback_answer(
+        query: str, context: str, triples: list[dict[str, object]]
+    ) -> str:
         triple_summaries = KGRAGAgent._triple_summaries(triples, query=query)
-        highlights = KGRAGAgent._extract_context_highlights(query=query, context=context)
+        highlights = KGRAGAgent._extract_context_highlights(
+            query=query, context=context
+        )
 
         if triple_summaries or highlights:
-            evidence_block = "\n".join(f"- {line}" for line in (triple_summaries or highlights))
+            evidence_block = "\n".join(
+                f"- {line}" for line in (triple_summaries or highlights)
+            )
             return (
                 "Dal contesto disponibile emergono i seguenti elementi rilevanti. "
                 "La risposta e quindi parziale, ma contiene le evidenze trovate nel grafo.\n\n"
@@ -466,9 +532,7 @@ class KGRAGAgent:
             rel_props = triple.get("relationship_properties", {})
             if isinstance(rel_props, dict):
                 source_doc = str(
-                    rel_props.get("source_doc", "")
-                    or rel_props.get("source", "")
-                    or ""
+                    rel_props.get("source_doc", "") or rel_props.get("source", "") or ""
                 ).strip()
                 page_range = str(rel_props.get("page_range", "")).strip()
                 provenance_bits = [bit for bit in (source_doc, page_range) if bit]
@@ -559,7 +623,9 @@ class KGRAGAgent:
         return highlights
 
     @staticmethod
-    def _triple_summaries(triples: list[dict[str, object]], query: str, limit: int = 5) -> list[str]:
+    def _triple_summaries(
+        triples: list[dict[str, object]], query: str, limit: int = 5
+    ) -> list[str]:
         if not triples:
             return []
 
@@ -592,7 +658,9 @@ class KGRAGAgent:
         return fallback[:limit]
 
     @staticmethod
-    def _extract_salient_terms_from_triples(triples: list[dict[str, object]]) -> list[str]:
+    def _extract_salient_terms_from_triples(
+        triples: list[dict[str, object]],
+    ) -> list[str]:
         terms: list[str] = []
         seen: set[str] = set()
 
@@ -689,7 +757,9 @@ class KGRAGAgent:
                 add_term(token)
             for token in re.findall(r"\b[A-Z][A-Za-z0-9/&.-]{2,}\b", stripped):
                 add_term(token)
-            for token in re.findall(r"\b[\wÀ-ÖØ-öø-ÿ'/-]{3,}\b", stripped, flags=re.UNICODE):
+            for token in re.findall(
+                r"\b[\wÀ-ÖØ-öø-ÿ'/-]{3,}\b", stripped, flags=re.UNICODE
+            ):
                 add_term(token)
 
         return terms[:12]
@@ -702,7 +772,9 @@ class KGRAGAgent:
             "rewrite_count": 0,
         }
         try:
-            output = self.graph.invoke(initial_state, config={"recursion_limit": self.config.recursion_limit})
+            output = self.graph.invoke(
+                initial_state, config={"recursion_limit": self.config.recursion_limit}
+            )
         except GraphRecursionError:
             logger.warning(
                 "Graph recursion limit reached (limit=%d) for question: %s",

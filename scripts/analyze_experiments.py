@@ -23,11 +23,21 @@ def _load_rows(csv_path: Path) -> list[dict[str, object]]:
                     "question": row.get("question", ""),
                     "latency_ms": float(row.get("latency_ms", "0") or 0.0),
                     "confidence": float(row.get("confidence", "0") or 0.0),
-                    "reflection_passed": _parse_bool(row.get("reflection_passed", "false")),
-                    "kg_triples_used": int(float(row.get("kg_triples_used", "0") or 0.0)),
-                    "kg_neighbors_used": int(float(row.get("kg_neighbors_used", "0") or 0.0)),
-                    "kg_subgraph_triples_used": int(float(row.get("kg_subgraph_triples_used", "0") or 0.0)),
-                    "kg_shortest_path_triples_used": int(float(row.get("kg_shortest_path_triples_used", "0") or 0.0)),
+                    "reflection_passed": _parse_bool(
+                        row.get("reflection_passed", "false")
+                    ),
+                    "kg_triples_used": int(
+                        float(row.get("kg_triples_used", "0") or 0.0)
+                    ),
+                    "kg_neighbors_used": int(
+                        float(row.get("kg_neighbors_used", "0") or 0.0)
+                    ),
+                    "kg_subgraph_triples_used": int(
+                        float(row.get("kg_subgraph_triples_used", "0") or 0.0)
+                    ),
+                    "kg_shortest_path_triples_used": int(
+                        float(row.get("kg_shortest_path_triples_used", "0") or 0.0)
+                    ),
                     "sub_questions": int(float(row.get("sub_questions", "0") or 0.0)),
                 }
             )
@@ -43,11 +53,15 @@ def _aggregate(rows: list[dict[str, object]]) -> dict[str, dict[str, float | int
     for strategy, items in grouped.items():
         latencies = [float(item["latency_ms"]) for item in items]
         confidences = [float(item["confidence"]) for item in items]
-        pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(items)
+        pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(
+            items
+        )
         avg_triples = mean(int(item["kg_triples_used"]) for item in items)
         avg_neighbors = mean(int(item["kg_neighbors_used"]) for item in items)
         avg_subgraph = mean(int(item["kg_subgraph_triples_used"]) for item in items)
-        avg_shortest_path = mean(int(item["kg_shortest_path_triples_used"]) for item in items)
+        avg_shortest_path = mean(
+            int(item["kg_shortest_path_triples_used"]) for item in items
+        )
         avg_sub_questions = mean(int(item["sub_questions"]) for item in items)
 
         summary[strategy] = {
@@ -109,9 +123,13 @@ def _print_table(summary: dict[str, dict[str, float | int]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Analyze GraphRAG experiment artifacts")
+    parser = argparse.ArgumentParser(
+        description="Analyze GraphRAG experiment artifacts"
+    )
     parser.add_argument("input", help="Path to experiment directory or results.csv")
-    parser.add_argument("--save-json", default="", help="Optional output path for aggregated JSON")
+    parser.add_argument(
+        "--save-json", default="", help="Optional output path for aggregated JSON"
+    )
     args = parser.parse_args()
 
     csv_path = _resolve_csv(Path(args.input))
@@ -124,7 +142,9 @@ def main() -> None:
     if args.save_json:
         output_path = Path(args.save_json)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"\nSaved JSON summary: {output_path}")
 
 

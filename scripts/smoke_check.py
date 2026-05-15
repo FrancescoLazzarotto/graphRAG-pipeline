@@ -30,11 +30,13 @@ def _check_neo4j_connectivity() -> tuple[bool, str]:
     database = os.getenv("NEO4J_DATABASE", "neo4j")
 
     missing = [
-        key for key, value in (
+        key
+        for key, value in (
             ("NEO4J_URL", uri),
             ("NEO4J_USERNAME", username),
             ("NEO4J_PASSWORD", password),
-        ) if not value
+        )
+        if not value
     ]
     if missing:
         return False, f"missing environment variables: {', '.join(missing)}"
@@ -60,6 +62,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also validate Neo4j connectivity with current env vars",
     )
+    parser.add_argument(
+        "--check-imports-only",
+        action="store_true",
+        help="Only check imports, skip other tests",
+    )
     return parser
 
 
@@ -81,6 +88,15 @@ def main() -> int:
         ok, reason = _check_import(module_name)
         if not ok:
             failures.append(f"import {module_name}: {reason}")
+
+    if args.check_imports_only:
+        if failures:
+            print("IMPORT CHECK FAILED")
+            for item in failures:
+                print(f"- {item}")
+            return 1
+        print("IMPORT CHECK PASSED")
+        return 0
 
     src_path = str(Path(__file__).resolve().parents[1] / "src")
     env = os.environ.copy()

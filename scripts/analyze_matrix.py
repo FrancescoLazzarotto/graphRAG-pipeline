@@ -73,17 +73,31 @@ def _load_rows(csv_files: list[Path]) -> list[dict[str, Any]]:
                         "run_dir": csv_path.parent.name,
                         "model_id": str(metadata.get("model_id", "unknown")),
                         "llm_enabled": bool(metadata.get("llm_enabled", False)),
-                        "run_index": _safe_int(str(metadata.get("run_index", "0")), default=0),
+                        "run_index": _safe_int(
+                            str(metadata.get("run_index", "0")), default=0
+                        ),
                         "strategy": row.get("strategy", ""),
                         "question": row.get("question", ""),
                         "latency_ms": _safe_float(row.get("latency_ms", "0")),
                         "confidence": _safe_float(row.get("confidence", "0")),
-                        "reflection_passed": _parse_bool(row.get("reflection_passed", "false")),
-                        "kg_triples_used": _safe_int(row.get("kg_triples_used", "0"), default=0),
-                        "kg_neighbors_used": _safe_int(row.get("kg_neighbors_used", "0"), default=0),
-                        "kg_subgraph_triples_used": _safe_int(row.get("kg_subgraph_triples_used", "0"), default=0),
-                        "kg_shortest_path_triples_used": _safe_int(row.get("kg_shortest_path_triples_used", "0"), default=0),
-                        "sub_questions": _safe_int(row.get("sub_questions", "0"), default=0),
+                        "reflection_passed": _parse_bool(
+                            row.get("reflection_passed", "false")
+                        ),
+                        "kg_triples_used": _safe_int(
+                            row.get("kg_triples_used", "0"), default=0
+                        ),
+                        "kg_neighbors_used": _safe_int(
+                            row.get("kg_neighbors_used", "0"), default=0
+                        ),
+                        "kg_subgraph_triples_used": _safe_int(
+                            row.get("kg_subgraph_triples_used", "0"), default=0
+                        ),
+                        "kg_shortest_path_triples_used": _safe_int(
+                            row.get("kg_shortest_path_triples_used", "0"), default=0
+                        ),
+                        "sub_questions": _safe_int(
+                            row.get("sub_questions", "0"), default=0
+                        ),
                     }
                 )
 
@@ -107,11 +121,15 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int | 
     for (model_id, strategy), items in grouped.items():
         latencies = [float(item["latency_ms"]) for item in items]
         confidences = [float(item["confidence"]) for item in items]
-        pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(items)
+        pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(
+            items
+        )
         avg_triples = mean(int(item["kg_triples_used"]) for item in items)
         avg_neighbors = mean(int(item["kg_neighbors_used"]) for item in items)
         avg_subgraph = mean(int(item["kg_subgraph_triples_used"]) for item in items)
-        avg_shortest_path = mean(int(item["kg_shortest_path_triples_used"]) for item in items)
+        avg_shortest_path = mean(
+            int(item["kg_shortest_path_triples_used"]) for item in items
+        )
         avg_sub_questions = mean(int(item["sub_questions"]) for item in items)
 
         key = f"{model_id}::{strategy}"
@@ -170,7 +188,9 @@ def _print_table(summary: dict[str, dict[str, float | int | str]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Aggregate GraphRAG experiment runs across multiple output folders")
+    parser = argparse.ArgumentParser(
+        description="Aggregate GraphRAG experiment runs across multiple output folders"
+    )
     parser.add_argument(
         "input",
         nargs="?",
@@ -195,10 +215,14 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        csv_files = _iter_result_files(Path(args.input), tag_contains=args.tag_contains.strip())
+        csv_files = _iter_result_files(
+            Path(args.input), tag_contains=args.tag_contains.strip()
+        )
     except FileNotFoundError as exc:
         print(str(exc))
-        print("No completed run found yet. If an experiment is still running, retry after the first model finishes.")
+        print(
+            "No completed run found yet. If an experiment is still running, retry after the first model finishes."
+        )
         return
 
     rows = _load_rows(csv_files)
@@ -210,7 +234,9 @@ def main() -> None:
     if args.save_json:
         output_json = Path(args.save_json)
         output_json.parent.mkdir(parents=True, exist_ok=True)
-        output_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output_json.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         print(f"\nSaved JSON summary: {output_json}")
 
     if args.save_csv:
@@ -235,7 +261,9 @@ def main() -> None:
                     "avg_sub_questions",
                 ]
             )
-            for item in sorted(summary.values(), key=lambda x: (str(x["model_id"]), str(x["strategy"]))):
+            for item in sorted(
+                summary.values(), key=lambda x: (str(x["model_id"]), str(x["strategy"]))
+            ):
                 writer.writerow(
                     [
                         item["model_id"],

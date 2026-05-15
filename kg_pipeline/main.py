@@ -14,8 +14,22 @@ import numpy as np
 import yaml
 from dotenv import load_dotenv
 
-from kg_pipeline.models.types import CanonicalEntityRecord, ChunkRecord, DocumentRecord, KGTriple, NEREntityCandidate
-from kg_pipeline.stages import chunking, ingestion, linking, llm_extraction, neo4j_ingestion, ner, resolution
+from kg_pipeline.models.types import (
+    CanonicalEntityRecord,
+    ChunkRecord,
+    DocumentRecord,
+    KGTriple,
+    NEREntityCandidate,
+)
+from kg_pipeline.stages import (
+    chunking,
+    ingestion,
+    linking,
+    llm_extraction,
+    neo4j_ingestion,
+    ner,
+    resolution,
+)
 
 
 LOGGER = logging.getLogger("kg_pipeline")
@@ -38,7 +52,15 @@ def _save_json(path: Path, payload: Any) -> None:
 
 
 def _log_versions(config: dict[str, Any]) -> None:
-    pkg_names = ["pymupdf4llm", "gliner", "openai", "sentence-transformers", "neo4j", "pydantic", "tqdm"]
+    pkg_names = [
+        "pymupdf4llm",
+        "gliner",
+        "openai",
+        "sentence-transformers",
+        "neo4j",
+        "pydantic",
+        "tqdm",
+    ]
     versions = {}
     for pkg in pkg_names:
         try:
@@ -70,7 +92,9 @@ def _stage_output_paths(run_dir: Path) -> dict[str, Path]:
     }
 
 
-def _load_or_run_documents(paths: dict[str, Path], config: dict[str, Any], single_doc: str | None) -> list[DocumentRecord]:
+def _load_or_run_documents(
+    paths: dict[str, Path], config: dict[str, Any], single_doc: str | None
+) -> list[DocumentRecord]:
     if paths["documents"].exists():
         return ingestion.load_documents(paths["documents"])
     docs = ingestion.ingest_documents(
@@ -81,7 +105,9 @@ def _load_or_run_documents(paths: dict[str, Path], config: dict[str, Any], singl
     return docs
 
 
-def _load_or_run_chunks(paths: dict[str, Path], config: dict[str, Any], docs: list[DocumentRecord]) -> list[ChunkRecord]:
+def _load_or_run_chunks(
+    paths: dict[str, Path], config: dict[str, Any], docs: list[DocumentRecord]
+) -> list[ChunkRecord]:
     if paths["chunks"].exists():
         return chunking.load_chunks(paths["chunks"])
     chunks = chunking.chunk_documents(docs, config)
@@ -89,7 +115,9 @@ def _load_or_run_chunks(paths: dict[str, Path], config: dict[str, Any], docs: li
     return chunks
 
 
-def _load_or_run_ner(paths: dict[str, Path], config: dict[str, Any], chunks: list[ChunkRecord]) -> dict[str, list[NEREntityCandidate]]:
+def _load_or_run_ner(
+    paths: dict[str, Path], config: dict[str, Any], chunks: list[ChunkRecord]
+) -> dict[str, list[NEREntityCandidate]]:
     if paths["ner"].exists():
         return ner.load_ner(paths["ner"])
     ner_map = ner.run_ner(
@@ -110,7 +138,9 @@ def _load_or_run_raw_triples(
     seed: int,
 ) -> tuple[list[KGTriple], dict[str, str]]:
     if paths["triples_raw"].exists() and paths["acronyms"].exists():
-        return llm_extraction.load_triples(paths["triples_raw"]), llm_extraction.load_acronyms(paths["acronyms"])
+        return llm_extraction.load_triples(
+            paths["triples_raw"]
+        ), llm_extraction.load_acronyms(paths["acronyms"])
 
     base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
     model_name = os.getenv("VLLM_MODEL_NAME", "")
@@ -144,7 +174,9 @@ def _load_or_run_resolution(
     acronym_map: dict[str, str],
 ) -> tuple[list[KGTriple], dict[str, CanonicalEntityRecord]]:
     if paths["triples_resolved"].exists() and paths["registry"].exists():
-        return resolution.load_triples(paths["triples_resolved"]), resolution.load_registry(paths["registry"])
+        return resolution.load_triples(
+            paths["triples_resolved"]
+        ), resolution.load_registry(paths["registry"])
 
     base_url = os.getenv("VLLM_BASE_URL", "")
     model_name = os.getenv("VLLM_MODEL_NAME", "")
@@ -176,7 +208,9 @@ def _load_or_run_linking(
     if paths["triples_linked"].exists():
         return linking.load_triples(paths["triples_linked"])
 
-    include_mentioned_in = bool(config.get("linking", {}).get("include_mentioned_in", True))
+    include_mentioned_in = bool(
+        config.get("linking", {}).get("include_mentioned_in", True)
+    )
     linked = linking.add_cross_document_links(
         triples=resolved_triples,
         registry=registry,
@@ -196,7 +230,16 @@ def main() -> None:
     parser.add_argument(
         "--stage",
         default="all",
-        choices=["all", "ingestion", "chunking", "ner", "llm", "resolution", "linking", "neo4j"],
+        choices=[
+            "all",
+            "ingestion",
+            "chunking",
+            "ner",
+            "llm",
+            "resolution",
+            "linking",
+            "neo4j",
+        ],
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")
@@ -225,13 +268,14 @@ def main() -> None:
 
     LOGGER.info("Logging to %s", log_path)
 
-    
     if os.getenv("KG_PIPELINE_DEBUG_OPENAI", "") == "1":
         logging.getLogger("openai").setLevel(logging.DEBUG)
         logging.getLogger("openai._base_client").setLevel(logging.DEBUG)
         logging.getLogger("httpx").setLevel(logging.DEBUG)
         logging.getLogger("urllib3").setLevel(logging.DEBUG)
-        LOGGER.info("Enabled DEBUG logging for openai/httpx/urllib3 (KG_PIPELINE_DEBUG_OPENAI=1)")
+        LOGGER.info(
+            "Enabled DEBUG logging for openai/httpx/urllib3 (KG_PIPELINE_DEBUG_OPENAI=1)"
+        )
 
     seed = int(config.get("seed", 42))
     _set_seed(seed)
@@ -254,17 +298,27 @@ def main() -> None:
         LOGGER.info("Completed stage=ner entities=%d", entity_count)
         return
 
-    raw_triples, acronym_map = _load_or_run_raw_triples(paths, config, chunks, ner_map, seed=seed)
+    raw_triples, acronym_map = _load_or_run_raw_triples(
+        paths, config, chunks, ner_map, seed=seed
+    )
     if args.stage == "llm":
         LOGGER.info("Completed stage=llm triples=%d", len(raw_triples))
         return
 
-    resolved_triples, registry = _load_or_run_resolution(paths, config, raw_triples, acronym_map)
+    resolved_triples, registry = _load_or_run_resolution(
+        paths, config, raw_triples, acronym_map
+    )
     if args.stage == "resolution":
-        LOGGER.info("Completed stage=resolution triples=%d canonical_entities=%d", len(resolved_triples), len(registry))
+        LOGGER.info(
+            "Completed stage=resolution triples=%d canonical_entities=%d",
+            len(resolved_triples),
+            len(registry),
+        )
         return
 
-    linked_triples = _load_or_run_linking(paths, resolved_triples, registry, documents, config)
+    linked_triples = _load_or_run_linking(
+        paths, resolved_triples, registry, documents, config
+    )
     if args.stage == "linking":
         LOGGER.info("Completed stage=linking triples=%d", len(linked_triples))
         return
@@ -273,7 +327,9 @@ def main() -> None:
         sample = [triple.as_dict() for triple in linked_triples[:5]]
         LOGGER.info("Dry-run enabled, skipping Neo4j ingestion.")
         LOGGER.info("Total triples after linking: %d", len(linked_triples))
-        LOGGER.info("Sample triples: %s", json.dumps(sample, ensure_ascii=False, indent=2))
+        LOGGER.info(
+            "Sample triples: %s", json.dumps(sample, ensure_ascii=False, indent=2)
+        )
         return
 
     uri, user, password, env_db = neo4j_ingestion._resolve_neo4j_env()
@@ -286,9 +342,13 @@ def main() -> None:
         password=password,
         database=db,
     )
-    summary = neo4j_ingestion.summary_counts(uri=uri, user=user, password=password, database=db)
+    summary = neo4j_ingestion.summary_counts(
+        uri=uri, user=user, password=password, database=db
+    )
 
-    _save_json(paths["neo4j_summary"], {"relationships_written": written, "summary": summary})
+    _save_json(
+        paths["neo4j_summary"], {"relationships_written": written, "summary": summary}
+    )
     LOGGER.info("Neo4j ingestion complete, relationships_written=%d", written)
 
 

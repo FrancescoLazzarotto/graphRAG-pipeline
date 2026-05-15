@@ -211,7 +211,9 @@ SET r += $r_props
         try:
             logs_dir = Path(__file__).resolve().parents[1] / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
-            with (logs_dir / "problematic_triples.jsonl").open("a", encoding="utf-8") as fh:
+            with (logs_dir / "problematic_triples.jsonl").open(
+                "a", encoding="utf-8"
+            ) as fh:
                 fh.write(json.dumps(debug, ensure_ascii=False, default=str) + "\n")
         except Exception:
             logger.exception("Failed to write problematic triple to log file")
@@ -222,16 +224,25 @@ SET r += $r_props
         try:
             logs_dir = Path(__file__).resolve().parents[1] / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
-            with (logs_dir / "problematic_triples.jsonl").open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "error": str(e),
-                    "subject": triple.subject,
-                    "predicate": triple.predicate,
-                    "object": triple.object,
-                    "s_props_sanitized": s_props,
-                    "o_props_sanitized": o_props,
-                    "r_props_sanitized": r_props,
-                }, ensure_ascii=False, default=str) + "\n")
+            with (logs_dir / "problematic_triples.jsonl").open(
+                "a", encoding="utf-8"
+            ) as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "error": str(e),
+                            "subject": triple.subject,
+                            "predicate": triple.predicate,
+                            "object": triple.object,
+                            "s_props_sanitized": s_props,
+                            "o_props_sanitized": o_props,
+                            "r_props_sanitized": r_props,
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    )
+                    + "\n"
+                )
         except Exception:
             logger.exception("Failed to write unexpected error info to log file")
         return
@@ -290,7 +301,6 @@ WHERE NOT type(r) IN [
 ]
 RETURN type(r) AS outOfVocab, count(*) AS n ORDER BY n DESC
         """.strip(),
-   
         "duplicate_nodes_by_name": """
 MATCH (n)
 WITH n.name AS name, collect(labels(n)) AS labelSets, count(*) AS c
@@ -316,7 +326,9 @@ RETURN labels(n) AS labels, n.name AS name LIMIT 20
 
     try:
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     except Exception:
         # best-effort: try simple write to current working dir
         try:
@@ -341,14 +353,28 @@ def _cli() -> None:
     database = args.database.strip() or env_db
 
     triples = load_triples(Path(args.triples_json))
-    written = ingest_triples(triples, uri=uri, user=user, password=password, database=database)
+    written = ingest_triples(
+        triples, uri=uri, user=user, password=password, database=database
+    )
     summary = summary_counts(uri=uri, user=user, password=password, database=database)
-    print(json.dumps({"relationships_written": written, "summary": summary}, ensure_ascii=False, indent=2))
+    print(
+        json.dumps(
+            {"relationships_written": written, "summary": summary},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
     # Run validation queries and write kg_quality_report.txt next to triples JSON
     try:
         report_path = Path(args.triples_json).resolve().parent / "kg_quality_report.txt"
-        run_quality_checks(uri=uri, user=user, password=password, report_path=report_path, database=database)
+        run_quality_checks(
+            uri=uri,
+            user=user,
+            password=password,
+            report_path=report_path,
+            database=database,
+        )
     except Exception:
         pass
 

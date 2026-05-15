@@ -4,6 +4,7 @@ import argparse
 import copy
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +18,6 @@ from graphrag.experiments import ExperimentRunner
 from graphrag.experiments.resource_monitor import ResourceMonitor
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
-from graphrag.kg.seed import inject_movie_dataset
 from graphrag.llm.manager import LLMManager
 from graphrag.text_rag.agent import StandardRAGAgent
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
@@ -32,6 +32,11 @@ _GRAPH_STRATEGIES_DEFAULT = (
 )
 _GRAPH_STRATEGIES_SMOKE = ("default", "text_plus_triples")
 
+_DEFAULT_MAX_NEW_TOKENS = 256
+_DEFAULT_GPU_MEMORY_FRACTION = 0.92
+_PRODUCTION_FAST_LARGE_MODEL_MAX_NEW_TOKENS = 160
+_PERFORMANCE_PROFILE_CHOICES = ("auto", "default", "production_fast")
+
 
 @dataclass(frozen=True)
 class StandardStrategyPreset:
@@ -45,8 +50,12 @@ class StandardStrategyPreset:
 _STANDARD_STRATEGY_PRESETS: dict[str, StandardStrategyPreset] = {
     "std_topk3": StandardStrategyPreset(top_k=3, chunk_size=1200, chunk_overlap=180),
     "std_topk5": StandardStrategyPreset(top_k=5, chunk_size=1200, chunk_overlap=180),
-    "std_wide_context": StandardStrategyPreset(top_k=6, chunk_size=1800, chunk_overlap=240),
-    "std_fine_chunks": StandardStrategyPreset(top_k=5, chunk_size=800, chunk_overlap=140),
+    "std_wide_context": StandardStrategyPreset(
+        top_k=6, chunk_size=1800, chunk_overlap=240
+    ),
+    "std_fine_chunks": StandardStrategyPreset(
+        top_k=5, chunk_size=800, chunk_overlap=140
+    ),
 }
 _STANDARD_STRATEGIES_DEFAULT = tuple(_STANDARD_STRATEGY_PRESETS.keys())
 _STANDARD_STRATEGIES_SMOKE = ("std_topk3", "std_topk5")
@@ -57,9 +66,11 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run multi-question, multi-strategy matrix over Standard RAG and GraphRAG",
     )
 
-    parser.add_argument("--question", default="Chi ha diretto e recitato nel film The Matrix?")
+    parser.add_argument(
+        "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
+    )
     parser.add_argument("--questions-file", default="", help="One question per line")
-    parser.add_argument("--entity", default="The Matrix")
+    parser.add_argument("--entity", default="Entita A")
 
     parser.add_argument(
         "--documents",
@@ -73,8 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated file patterns for directory discovery",
     )
 
-    parser.add_argument("--standard-strategies", default=",".join(_STANDARD_STRATEGIES_DEFAULT))
-    parser.add_argument("--graph-strategies", default=",".join(_GRAPH_STRATEGIES_DEFAULT))
+    parser.add_argument(
+        "--standard-strategies", default=",".join(_STANDARD_STRATEGIES_DEFAULT)
+    )
+    parser.add_argument(
+        "--graph-strategies", default=",".join(_GRAPH_STRATEGIES_DEFAULT)
+    )
 
     parser.add_argument("--runs-per-strategy", type=int, default=1)
     parser.add_argument("--output-dir", default="artifacts/experiments")
@@ -101,24 +116,81 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--llm", action="store_true")
+    parser.add_argument(
+        "--vllm",
+        action="store_true",
+        help="Use a vLLM OpenAI-compatible endpoint instead of local Hugging Face loading",
+    )
+    parser.add_argument(
+        "--vllm-base-url",
+        default="http://localhost:8000/v1",
+        help="Base URL for the vLLM OpenAI-compatible API",
+    )
     parser.add_argument("--llm-warmup", action="store_true")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
-
-    parser.add_argument("--seed-movie-dataset", action="store_true")
+    parser.add_argument(
+        "--performance-profile",
+        default="auto",
+        choices=_PERFORMANCE_PROFILE_CHOICES,
+        help=(
+            "LLM performance profile. In auto mode, production_fast is applied by default for large models (>=30B)."
+        ),
+    )
+    parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--gpu-memory-fraction", type=float, default=None)
+    parser.add_argument("--allow-large-model-fp16-fallback", action="store_true")
+    parser.add_argument("--enable-decomposition-step", action="store_true")
+    parser.add_argument("--enable-adaptive-routing-step", action="store_true")
 
     parser.add_argument("--skip-standard", action="store_true")
     parser.add_argument("--skip-graph", action="store_true")
 
     parser.add_argument("--smoke", action="store_true", help="Run a smaller test first")
     parser.add_argument("--smoke-questions", type=int, default=2)
-    parser.add_argument("--smoke-standard-strategies", default=",".join(_STANDARD_STRATEGIES_SMOKE))
-    parser.add_argument("--smoke-graph-strategies", default=",".join(_GRAPH_STRATEGIES_SMOKE))
+    parser.add_argument(
+        "--smoke-standard-strategies", default=",".join(_STANDARD_STRATEGIES_SMOKE)
+    )
+    parser.add_argument(
+        "--smoke-graph-strategies", default=",".join(_GRAPH_STRATEGIES_SMOKE)
+    )
 
     return parser
 
 
 def _parse_csv(raw: str) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _resolve_performance_profile(args: argparse.Namespace) -> tuple[str, int, float]:
+    requested = (args.performance_profile or "auto").strip().lower()
+    if requested not in _PERFORMANCE_PROFILE_CHOICES:
+        requested = "auto"
+
+    applied = requested
+    if requested == "auto":
+        if args.llm and LLMManager._is_large_model(args.model_id):
+            applied = "production_fast"
+        else:
+            applied = "default"
+
+    max_new_tokens = (
+        int(args.max_new_tokens)
+        if args.max_new_tokens is not None
+        else _DEFAULT_MAX_NEW_TOKENS
+    )
+    gpu_memory_fraction = (
+        float(args.gpu_memory_fraction)
+        if args.gpu_memory_fraction is not None
+        else _DEFAULT_GPU_MEMORY_FRACTION
+    )
+
+    if applied == "production_fast":
+        if args.max_new_tokens is None:
+            max_new_tokens = _PRODUCTION_FAST_LARGE_MODEL_MAX_NEW_TOKENS
+        if args.gpu_memory_fraction is None:
+            gpu_memory_fraction = _DEFAULT_GPU_MEMORY_FRACTION
+
+    return applied, max_new_tokens, gpu_memory_fraction
 
 
 def _format_optional_float(value: float | None) -> str:
@@ -164,7 +236,11 @@ def _load_questions(args: argparse.Namespace) -> list[str]:
     if not questions_path.exists():
         raise FileNotFoundError(f"Questions file not found: {questions_path}")
 
-    questions = [line.strip() for line in questions_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    questions = [
+        line.strip()
+        for line in questions_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if not questions:
         raise ValueError(f"Questions file is empty: {questions_path}")
     return questions
@@ -180,6 +256,8 @@ def _base_graph_config(args: argparse.Namespace, default_question: str) -> Agent
         include_subgraph=True,
         include_shortest_path=True,
         llm_warmup=args.llm_warmup,
+        enable_decomposition_step=args.enable_decomposition_step,
+        enable_adaptive_routing_step=args.enable_adaptive_routing_step,
     )
 
 
@@ -231,7 +309,9 @@ def _resolve_standard_labels(raw_labels: list[str]) -> list[str]:
     if invalid:
         allowed = ", ".join(sorted(_STANDARD_STRATEGY_PRESETS.keys()))
         invalid_csv = ", ".join(invalid)
-        raise ValueError(f"Unknown standard strategies: {invalid_csv}. Allowed: {allowed}")
+        raise ValueError(
+            f"Unknown standard strategies: {invalid_csv}. Allowed: {allowed}"
+        )
     return raw_labels
 
 
@@ -255,7 +335,9 @@ def _run_standard_matrix(
             chunk_overlap=preset.chunk_overlap,
             min_chunk_chars=preset.min_chunk_chars,
         )
-        indexed_chunks = pipeline.index_paths(args.documents, discovery_patterns=discovery_patterns)
+        indexed_chunks = pipeline.index_paths(
+            args.documents, discovery_patterns=discovery_patterns
+        )
 
         agent_config = AgentConfig(
             query=questions[0],
@@ -263,6 +345,11 @@ def _run_standard_matrix(
         )
 
         for run_index in range(1, runs_per_strategy + 1):
+            print(
+                f"[standard_rag] strategy={label} run={run_index}/{runs_per_strategy} "
+                f"questions={len(questions)} start"
+            )
+            started_at = time.perf_counter()
             agent = StandardRAGAgent(
                 pipeline=pipeline,
                 config=agent_config,
@@ -278,12 +365,31 @@ def _run_standard_matrix(
                     "run_index": run_index,
                     "model_id": args.model_id if args.llm else "none",
                     "llm_enabled": args.llm,
+                    "vllm_enabled": args.vllm,
+                    "vllm_base_url": args.vllm_base_url
+                    if args.llm and args.vllm
+                    else "",
+                    "performance_profile": str(
+                        getattr(args, "performance_profile_applied", "default")
+                    ),
+                    "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction
+                    if args.llm
+                    else 0.0,
+                    "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
                     "indexed_chunks": indexed_chunks,
                     "top_k": preset.top_k,
                     "chunk_size": preset.chunk_size,
                     "chunk_overlap": preset.chunk_overlap,
-                    "documents": [str(Path(item).expanduser()) for item in args.documents],
+                    "documents": [
+                        str(Path(item).expanduser()) for item in args.documents
+                    ],
                 },
+            )
+            elapsed_sec = time.perf_counter() - started_at
+            print(
+                f"[standard_rag] strategy={label} run={run_index}/{runs_per_strategy} "
+                f"done elapsed_sec={elapsed_sec:.2f}"
             )
 
 
@@ -299,15 +405,17 @@ def _run_graph_matrix(
         return
 
     kg_manager = KnowledgeGraphManager(build_kg_config_from_env())
-    if args.seed_movie_dataset:
-        inject_movie_dataset(kg_manager)
-
     print("Graph Schema:", kg_manager.refresh_schema())
 
     base_config = _base_graph_config(args=args, default_question=questions[0])
 
     for label in labels:
         for run_index in range(1, runs_per_strategy + 1):
+            print(
+                f"[graph_rag] strategy={label} run={run_index}/{runs_per_strategy} "
+                f"questions={len(questions)} start"
+            )
+            started_at = time.perf_counter()
             config = _graph_strategy_config(base=base_config, label=label)
             retriever = KGRetriever(kg_store=kg_manager, config=config)
             agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
@@ -319,7 +427,26 @@ def _run_graph_matrix(
                     "run_index": run_index,
                     "model_id": args.model_id if args.llm else "none",
                     "llm_enabled": args.llm,
+                    "vllm_enabled": args.vllm,
+                    "vllm_base_url": args.vllm_base_url
+                    if args.llm and args.vllm
+                    else "",
+                    "performance_profile": str(
+                        getattr(args, "performance_profile_applied", "default")
+                    ),
+                    "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction
+                    if args.llm
+                    else 0.0,
+                    "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
+                    "enable_decomposition_step": args.enable_decomposition_step,
+                    "enable_adaptive_routing_step": args.enable_adaptive_routing_step,
                 },
+            )
+            elapsed_sec = time.perf_counter() - started_at
+            print(
+                f"[graph_rag] strategy={label} run={run_index}/{runs_per_strategy} "
+                f"done elapsed_sec={elapsed_sec:.2f}"
             )
 
 
@@ -327,17 +454,40 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
+    applied_profile, resolved_max_new_tokens, resolved_gpu_memory_fraction = (
+        _resolve_performance_profile(args)
+    )
+    args.performance_profile_applied = applied_profile
+    args.max_new_tokens = resolved_max_new_tokens
+    args.gpu_memory_fraction = resolved_gpu_memory_fraction
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
+    logging.getLogger("graphrag").info(
+        "Performance profile requested=%s applied=%s (max_new_tokens=%s, gpu_memory_fraction=%.2f)",
+        args.performance_profile,
+        args.performance_profile_applied,
+        args.max_new_tokens,
+        args.gpu_memory_fraction,
+    )
+
     if args.llm_warmup and not args.llm:
         parser.error("--llm-warmup requires --llm")
+    if args.vllm and not args.llm:
+        parser.error("--vllm requires --llm")
     if args.runs_per_strategy < 1:
         parser.error("--runs-per-strategy must be >= 1")
     if args.resource_sample_interval <= 0:
         parser.error("--resource-sample-interval must be > 0")
+    if args.max_new_tokens < 1:
+        parser.error("--max-new-tokens must be >= 1")
+    if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
+        parser.error("--gpu-memory-fraction must be in (0, 1]")
     if args.skip_standard and args.skip_graph:
         parser.error("Cannot skip both standard and graph matrices")
 
     load_dotenv(override=False)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
     questions = _load_questions(args)
     if args.smoke:
@@ -346,14 +496,38 @@ def main() -> None:
     if not questions:
         parser.error("No questions available after filtering")
 
-    standard_labels = [] if args.skip_standard else _resolve_standard_labels(
-        _parse_csv(args.smoke_standard_strategies if args.smoke else args.standard_strategies)
+    standard_labels = (
+        []
+        if args.skip_standard
+        else _resolve_standard_labels(
+            _parse_csv(
+                args.smoke_standard_strategies
+                if args.smoke
+                else args.standard_strategies
+            )
+        )
     )
-    graph_labels = [] if args.skip_graph else _parse_csv(
-        args.smoke_graph_strategies if args.smoke else args.graph_strategies
+    graph_labels = (
+        []
+        if args.skip_graph
+        else _parse_csv(
+            args.smoke_graph_strategies if args.smoke else args.graph_strategies
+        )
     )
 
-    llm_manager = LLMManager(model_id=args.model_id, warmup=args.llm_warmup) if args.llm else None
+    llm_manager = (
+        LLMManager(
+            model_id=args.model_id,
+            warmup=args.llm_warmup,
+            max_new_tokens=args.max_new_tokens,
+            gpu_memory_fraction=args.gpu_memory_fraction,
+            allow_large_model_fp16_fallback=args.allow_large_model_fp16_fallback,
+            use_vllm=args.vllm,
+            vllm_base_url=args.vllm_base_url,
+        )
+        if args.llm
+        else None
+    )
     runner = ExperimentRunner(questions=questions)
 
     resource_monitor: ResourceMonitor | None = None
@@ -361,7 +535,9 @@ def main() -> None:
     run_error: Exception | None = None
 
     if args.monitor_resources:
-        resource_monitor = ResourceMonitor(sample_interval_sec=args.resource_sample_interval, include_gpu=True)
+        resource_monitor = ResourceMonitor(
+            sample_interval_sec=args.resource_sample_interval, include_gpu=True
+        )
         resource_monitor.start()
 
     try:
@@ -383,7 +559,9 @@ def main() -> None:
         )
     except Exception as exc:
         run_error = exc
-        logging.exception("Matrix execution failed. Partial outputs will still be exported.")
+        logging.exception(
+            "Matrix execution failed. Partial outputs will still be exported."
+        )
     finally:
         if resource_monitor is not None:
             resource_summary = resource_monitor.stop()
@@ -408,7 +586,9 @@ def main() -> None:
     summary_text = runner.summary()
     resource_lines = _resource_summary_lines(resource_summary)
     if resource_lines:
-        summary_text = summary_text + ("\n\n" if summary_text else "") + "\n".join(resource_lines)
+        summary_text = (
+            summary_text + ("\n\n" if summary_text else "") + "\n".join(resource_lines)
+        )
 
     summary_txt_path.write_text(summary_text + "\n", encoding="utf-8")
 
@@ -425,6 +605,15 @@ def main() -> None:
                 "documents": [str(Path(item).expanduser()) for item in args.documents],
                 "llm_enabled": args.llm,
                 "model_id": args.model_id if args.llm else "none",
+                "vllm_enabled": args.vllm,
+                "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
+                "performance_profile_requested": args.performance_profile,
+                "performance_profile_applied": args.performance_profile_applied,
+                "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
+                "enable_decomposition_step": args.enable_decomposition_step,
+                "enable_adaptive_routing_step": args.enable_adaptive_routing_step,
                 "stats": runner.summary_stats(),
                 "status": "failed" if run_error else "completed",
                 "error": str(run_error) if run_error else "",
@@ -451,6 +640,13 @@ def main() -> None:
                 "status": "failed" if run_error else "completed",
                 "model_id": args.model_id if args.llm else "none",
                 "llm_enabled": args.llm,
+                "vllm_enabled": args.vllm,
+                "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
+                "performance_profile_requested": args.performance_profile,
+                "performance_profile_applied": args.performance_profile_applied,
+                "max_new_tokens": args.max_new_tokens if args.llm else 0,
+                "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
             },
         )
 
