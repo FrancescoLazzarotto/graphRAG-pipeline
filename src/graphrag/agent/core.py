@@ -325,6 +325,13 @@ class KGRAGAgent:
                     context=context,
                     triples=state.get("kg_triples", []) or [],
                 )
+            verification_section = self._build_verification_section(
+                triples=state.get("kg_triples", []) or [],
+                nodes=state.get("retrieved_nodes", []) or [],
+            )
+            if verification_section:
+                answer = answer.rstrip() + "\n\n" + verification_section
+
             return {"answer": answer}
 
         return {"answer": "LLM not available."}
@@ -423,6 +430,79 @@ class KGRAGAgent:
             "Il contesto disponibile e troppo scarno per costruire una risposta affidabile. "
             "Serve un recupero piu specifico o piu evidenza dal grafo."
         )
+
+    @staticmethod
+    def _build_verification_section(
+        triples: list[dict[str, object]],
+        nodes: list[dict[str, object]],
+        limit: int = 4,
+    ) -> str:
+        lines: list[str] = []
+        seen: set[str] = set()
+
+        for triple in triples:
+            subject = str(triple.get("subject", "")).strip()
+            predicate = str(triple.get("predicate", "")).strip()
+            obj = str(triple.get("object", "")).strip()
+            if not (subject or predicate or obj):
+                continue
+
+            parts = [f"({subject}, {predicate}, {obj})"]
+
+            subject_id = str(triple.get("subject_id", "")).strip()
+            object_id = str(triple.get("object_id", "")).strip()
+            if subject_id or object_id:
+                id_bits = ", ".join(
+                    bit
+                    for bit in (
+                        f"s={subject_id}" if subject_id else "",
+                        f"o={object_id}" if object_id else "",
+                    )
+                    if bit
+                )
+                if id_bits:
+                    parts.append(f"[{id_bits}]")
+
+            rel_props = triple.get("relationship_properties", {})
+            if isinstance(rel_props, dict):
+                source_doc = str(rel_props.get("source_doc", "") or rel_props.get("source", "") or "").strip()
+                page_range = str(rel_props.get("page_range", "")).strip()
+                provenance_bits = [bit for bit in (source_doc, page_range) if bit]
+                if provenance_bits:
+                    parts.append(f"<{' | '.join(provenance_bits)}>")
+
+            line = " ".join(parts)
+            if line in seen:
+                continue
+            seen.add(line)
+            lines.append(f"- {line}")
+            if len(lines) >= limit:
+                break
+
+        if not lines:
+            for node in nodes:
+                text = str(node.get("text", "")).strip()
+                node_id = str(node.get("node_id", "")).strip()
+                labels = node.get("labels", [])
+                label_text = ", ".join(str(label) for label in labels) if isinstance(labels, list) else ""
+                if not text:
+                    continue
+                detail = f"({text})"
+                if label_text:
+                    detail += f" [{label_text}]"
+                if node_id:
+                    detail += f" [id={node_id}]"
+                if detail in seen:
+                    continue
+                seen.add(detail)
+                lines.append(f"- {detail}")
+                if len(lines) >= limit:
+                    break
+
+        if not lines:
+            return "Verifica nel grafo:\n- Nessuna evidenza strutturata recuperata da mostrare in modo affidabile."
+
+        return "Verifica nel grafo:\n" + "\n".join(lines)
 
     @staticmethod
     def _extract_context_highlights(query: str, context: str, limit: int = 4) -> list[str]:
