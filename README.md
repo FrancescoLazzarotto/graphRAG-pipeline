@@ -2,11 +2,10 @@
 
 #  GraphRAG Pipeline
 
-**An experiment-oriented Retrieval-Augmented Generation pipeline combining Knowledge Graph retrieval (Neo4j) with LLM-based answer generation.**
+**An experiment-oriented Retrieval-Augmented Generation pipeline combining Knowledge Graph retrieval with LLM-based answer generation.**
 
 [![CI](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Conda env: graphllm](https://img.shields.io/badge/conda-graphllm-44A833.svg?logo=anaconda)](https://docs.conda.io/)
 [![Status](https://img.shields.io/badge/status-active%20development-brightgreen)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline)
 [![Neo4j](https://img.shields.io/badge/Neo4j-Knowledge%20Graph-008CC1?logo=neo4j)](https://neo4j.com/)
 
@@ -39,11 +38,11 @@
 
 This repository implements a full GraphRAG pipeline that:
 
-- 📄 **Ingests** documents (PDF, Markdown, plain text), chunks them, and extracts entities and triples via NER + LLM-based extraction.
-- 🕸️ **Builds a Knowledge Graph** by resolving and linking entities/triples, then ingesting into Neo4j.
-- 🔍 **Retrieves** using a GraphRAG retriever supporting nodes, triples, local neighborhoods, 2-hop subgraphs, and shortest paths.
-- 🤖 **Generates answers** by constructing LLM prompt context from retrieved graph/text evidence, using either local HuggingFace models or an OpenAI-compatible vLLM server.
-- 🧪 **Runs reproducible experiment matrices** to compare retrieval strategies and LLMs, with full resource telemetry for sizing studies.
+-  **Ingests** documents (PDF, Markdown, plain text), chunks them, and extracts entities and triples via NER + LLM-based extraction.
+-  **Builds a Knowledge Graph** by resolving and linking entities/triples, then ingesting into Neo4j.
+-  **Retrieves** using a GraphRAG retriever supporting nodes, triples, local neighborhoods, 2-hop subgraphs, and shortest paths.
+-  **Generates answers** by constructing LLM prompt context from retrieved graph/text evidence, using either local HuggingFace models or an OpenAI-compatible vLLM server.
+-  **Runs reproducible experiment matrices** to compare retrieval strategies and LLMs, with full resource telemetry for sizing studies.
 
 Primary entry points:
 - CLI: `graphrag-demo`
@@ -386,6 +385,5 @@ sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 
 <div align="center">
 
-Made with ❤️ for the Knowledge Graph & LLM research community.
 
 </div>
