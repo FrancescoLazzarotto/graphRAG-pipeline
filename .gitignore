@@ -16,6 +16,8 @@ env/
 
 # IDE and OS
 .vscode/
+!.vscode/
+!.vscode/settings.json
 .idea/
 .DS_Store
 Thumbs.db
@@ -23,6 +25,7 @@ Thumbs.db
 # Secrets and local env files
 .env
 .env.*
+!.env.example
 
 # Test and coverage
 .pytest_cache/
