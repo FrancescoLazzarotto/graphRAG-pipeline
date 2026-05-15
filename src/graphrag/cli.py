@@ -19,7 +19,9 @@ from graphrag.llm.manager import LLMManager
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run GraphRAG demo pipeline")
-    parser.add_argument("--question", default="Quali sono le relazioni tra Entita A e Entita B?")
+    parser.add_argument(
+        "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
+    )
     parser.add_argument("--entity", default="Entita A")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--llm", action="store_true", help="Enable LLM generation")
@@ -33,7 +35,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="http://localhost:8000/v1",
         help="Base URL for the vLLM OpenAI-compatible API",
     )
-    parser.add_argument("--llm-warmup", action="store_true", help="Preload model at startup")
+    parser.add_argument(
+        "--llm-warmup", action="store_true", help="Preload model at startup"
+    )
     parser.add_argument(
         "--enable-decomposition-step",
         action="store_true",
@@ -44,7 +48,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable LLM adaptive routing step before retrieval",
     )
-    parser.add_argument("--max-new-tokens", type=int, default=256, help="Maximum generated tokens per response")
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=256,
+        help="Maximum generated tokens per response",
+    )
     parser.add_argument(
         "--max-context-tokens",
         type=int,
@@ -68,9 +77,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow fp16 fallback for large models when 4-bit quantized loading fails",
     )
-    parser.add_argument("--experiment", action="store_true", help="Run batch experiments and persist outputs")
-    parser.add_argument("--questions-file", help="Path to a UTF-8 text file with one question per line")
-    parser.add_argument("--strategies", default="default", help="Comma-separated strategy presets")
+    parser.add_argument(
+        "--experiment",
+        action="store_true",
+        help="Run batch experiments and persist outputs",
+    )
+    parser.add_argument(
+        "--questions-file", help="Path to a UTF-8 text file with one question per line"
+    )
+    parser.add_argument(
+        "--strategies", default="default", help="Comma-separated strategy presets"
+    )
     parser.add_argument("--runs-per-strategy", type=int, default=1)
     parser.add_argument("--output-dir", default="artifacts/experiments")
     parser.add_argument("--experiment-tag", default="")
@@ -163,13 +180,19 @@ def _load_questions(args: argparse.Namespace) -> list[str]:
     if not questions_path.exists():
         raise FileNotFoundError(f"Questions file not found: {questions_path}")
 
-    questions = [line.strip() for line in questions_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    questions = [
+        line.strip()
+        for line in questions_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     if not questions:
         raise ValueError(f"Questions file is empty: {questions_path}")
     return questions
 
 
-def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager) -> None:
+def _run_experiments(
+    args: argparse.Namespace, kg_manager: KnowledgeGraphManager
+) -> None:
     if args.runs_per_strategy < 1:
         raise ValueError("--runs-per-strategy must be >= 1")
 
@@ -195,9 +218,13 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "model_id": args.model_id if args.llm else "none",
                     "llm_enabled": args.llm,
                     "vllm_enabled": args.vllm,
-                    "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
+                    "vllm_base_url": args.vllm_base_url
+                    if args.llm and args.vllm
+                    else "",
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
-                    "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction
+                    if args.llm
+                    else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
                     "enable_decomposition_step": args.enable_decomposition_step,
                     "enable_adaptive_routing_step": args.enable_adaptive_routing_step,
@@ -230,9 +257,13 @@ def _run_experiments(args: argparse.Namespace, kg_manager: KnowledgeGraphManager
                     "enabled": args.llm,
                     "model_id": args.model_id if args.llm else "none",
                     "vllm_enabled": args.vllm,
-                    "vllm_base_url": args.vllm_base_url if args.llm and args.vllm else "",
+                    "vllm_base_url": args.vllm_base_url
+                    if args.llm and args.vllm
+                    else "",
                     "max_new_tokens": args.max_new_tokens if args.llm else 0,
-                    "gpu_memory_fraction": args.gpu_memory_fraction if args.llm else 0.0,
+                    "gpu_memory_fraction": args.gpu_memory_fraction
+                    if args.llm
+                    else 0.0,
                     "allow_large_model_fp16_fallback": args.allow_large_model_fp16_fallback,
                 },
                 "agent_pipeline": {
@@ -278,7 +309,9 @@ def main() -> None:
     if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
         parser.error("--gpu-memory-fraction must be in (0, 1]")
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
+    )
 
     kg_config = build_kg_config_from_env()
     kg_manager = KnowledgeGraphManager(kg_config)

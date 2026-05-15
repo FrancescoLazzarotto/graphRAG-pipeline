@@ -52,7 +52,9 @@ class TextRAGManager:
 
         return added
 
-    def add_documents(self, documents: Iterable[str], source_prefix: str = "doc") -> int:
+    def add_documents(
+        self, documents: Iterable[str], source_prefix: str = "doc"
+    ) -> int:
         prepared_chunks: list[TextChunk] = []
         for index, content in enumerate(documents, start=1):
             text = content.strip()
@@ -67,7 +69,9 @@ class TextRAGManager:
             )
         return self.add_chunks(prepared_chunks)
 
-    def retrieve_with_scores(self, query: str, top_k: int = 5) -> list[tuple[TextChunk, float]]:
+    def retrieve_with_scores(
+        self, query: str, top_k: int = 5
+    ) -> list[tuple[TextChunk, float]]:
         if top_k <= 0:
             return []
 
@@ -87,9 +91,13 @@ class TextRAGManager:
         return scored_chunks[:top_k]
 
     def retrieve(self, query: str, top_k: int = 5) -> list[TextChunk]:
-        return [chunk for chunk, _ in self.retrieve_with_scores(query=query, top_k=top_k)]
+        return [
+            chunk for chunk, _ in self.retrieve_with_scores(query=query, top_k=top_k)
+        ]
 
-    def build_context(self, query: str, top_k: int = 4, separator: str = "\n\n---\n\n") -> str:
+    def build_context(
+        self, query: str, top_k: int = 4, separator: str = "\n\n---\n\n"
+    ) -> str:
         chunks = self.retrieve(query=query, top_k=top_k)
         return separator.join(chunk.content for chunk in chunks)
 
@@ -116,7 +124,8 @@ class TextRAGManager:
                 continue
 
             idf = self._idf.get(token, 1.0)
-            score += query_frequency * (1.0 + math.log(document_frequency)) * (idf * idf)
+            score += (
+                query_frequency * (1.0 + math.log(document_frequency)) * (idf * idf)
+            )
 
         return score / norm
-

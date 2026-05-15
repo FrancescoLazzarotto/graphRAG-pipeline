@@ -19,7 +19,9 @@ try:  # pragma: no cover - depends on runtime dependency details
         ServiceUnavailable,
         TransientError,
     )
-except Exception:  # pragma: no cover - fallback if neo4j exception classes are unavailable
+except (
+    Exception
+):  # pragma: no cover - fallback if neo4j exception classes are unavailable
     _RETRYABLE_NEO4J_EXCEPTIONS = ()
 
 from graphrag.config import KGConfig
@@ -36,7 +38,9 @@ class KnowledgeGraphManager:
         self.graph = graph or self._build_graph()
 
         retry_attempts_raw = os.getenv("GRAPHRAG_NEO4J_QUERY_RETRIES", "3").strip()
-        retry_backoff_raw = os.getenv("GRAPHRAG_NEO4J_QUERY_RETRY_BACKOFF_SEC", "1.0").strip()
+        retry_backoff_raw = os.getenv(
+            "GRAPHRAG_NEO4J_QUERY_RETRY_BACKOFF_SEC", "1.0"
+        ).strip()
 
         try:
             self.query_retry_attempts = max(1, int(retry_attempts_raw))
@@ -105,7 +109,9 @@ class KnowledgeGraphManager:
         self.graph.refresh_schema()
         return self.schema
 
-    def run_query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def run_query(
+        self, cypher: str, params: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         payload = params or {}
         max_attempts = max(1, self.query_retry_attempts)
 
@@ -191,7 +197,7 @@ class KnowledgeGraphManager:
             elementId(n) AS node_id,
             labels(n) AS labels,
             properties(n) AS properties,
-            {self._coalesce_name_expr('n')} AS text
+            {self._coalesce_name_expr("n")} AS text
         LIMIT $limit
         """
         return [self._row_to_node(row) for row in self.run_query(cypher, params)]
@@ -229,10 +235,10 @@ class KnowledgeGraphManager:
         {where_sql}
         RETURN DISTINCT
             elementId(s) AS subject_id,
-            {self._coalesce_name_expr('s')} AS subject,
+            {self._coalesce_name_expr("s")} AS subject,
             coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(o) AS object_id,
-            {self._coalesce_name_expr('o')} AS object,
+            {self._coalesce_name_expr("o")} AS object,
             labels(s) AS subject_labels,
             labels(o) AS object_labels,
             properties(s) AS subject_properties,
@@ -259,17 +265,17 @@ class KnowledgeGraphManager:
 
         cypher = f"""
         MATCH (seed)
-        WHERE {self._node_text_match_clause('seed', 'entity', exact=True)}
+        WHERE {self._node_text_match_clause("seed", "entity", exact=True)}
         MATCH p = (seed)-[*1..{hops}]-(other)
         UNWIND relationships(p) AS r
         WITH DISTINCT r
         WHERE {rel_filter}
         RETURN DISTINCT
             elementId(startNode(r)) AS subject_id,
-            {self._coalesce_name_expr('startNode(r)')} AS subject,
+            {self._coalesce_name_expr("startNode(r)")} AS subject,
             coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(endNode(r)) AS object_id,
-            {self._coalesce_name_expr('endNode(r)')} AS object,
+            {self._coalesce_name_expr("endNode(r)")} AS object,
             labels(startNode(r)) AS subject_labels,
             labels(endNode(r)) AS object_labels,
             properties(startNode(r)) AS subject_properties,
@@ -293,13 +299,13 @@ class KnowledgeGraphManager:
 
         cypher = f"""
         MATCH (seed)-[r]-(neighbor)
-        WHERE {self._node_text_match_clause('seed', 'entity', exact=True)}
+        WHERE {self._node_text_match_clause("seed", "entity", exact=True)}
         {rel_clause}
         RETURN DISTINCT
             elementId(neighbor) AS node_id,
             labels(neighbor) AS labels,
             properties(neighbor) AS properties,
-            {self._coalesce_name_expr('neighbor')} AS text
+            {self._coalesce_name_expr("neighbor")} AS text
         LIMIT $limit
         """
         return [self._row_to_node(row) for row in self.run_query(cypher, params)]
@@ -307,7 +313,7 @@ class KnowledgeGraphManager:
     def get_entity_types(self, entity: str) -> list[str]:
         cypher = f"""
         MATCH (n)
-        WHERE {self._node_text_match_clause('n', 'entity', exact=True)}
+        WHERE {self._node_text_match_clause("n", "entity", exact=True)}
         RETURN DISTINCT labels(n) AS labels
         LIMIT 1
         """
@@ -324,19 +330,19 @@ class KnowledgeGraphManager:
     ) -> list[KGTriple]:
         cypher = f"""
         MATCH (a)
-        WHERE {self._node_text_match_clause('a', 'entity_a', exact=True)}
+        WHERE {self._node_text_match_clause("a", "entity_a", exact=True)}
         WITH DISTINCT a
         MATCH (b)
-        WHERE {self._node_text_match_clause('b', 'entity_b', exact=True)}
+        WHERE {self._node_text_match_clause("b", "entity_b", exact=True)}
         WITH DISTINCT a, b
         MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
         UNWIND relationships(p) AS r
         RETURN DISTINCT
             elementId(startNode(r)) AS subject_id,
-            {self._coalesce_name_expr('startNode(r)')} AS subject,
+            {self._coalesce_name_expr("startNode(r)")} AS subject,
                         coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
             elementId(endNode(r)) AS object_id,
-            {self._coalesce_name_expr('endNode(r)')} AS object,
+            {self._coalesce_name_expr("endNode(r)")} AS object,
             labels(startNode(r)) AS subject_labels,
             labels(endNode(r)) AS object_labels,
             properties(startNode(r)) AS subject_properties,
@@ -356,7 +362,9 @@ class KnowledgeGraphManager:
         return "\n".join(node.get("text", "") for node in nodes if node.get("text"))
 
     def get_subgraph_context(self, entity: str, hops: int = 1, limit: int = 200) -> str:
-        return self.triples_to_text(self.extract_subgraph(entity=entity, hops=hops, limit=limit))
+        return self.triples_to_text(
+            self.extract_subgraph(entity=entity, hops=hops, limit=limit)
+        )
 
     @staticmethod
     def _safe_identifier(value: str) -> str:
@@ -368,7 +376,9 @@ class KnowledgeGraphManager:
             cleaned = f"_{cleaned}"
         return cleaned.upper()
 
-    def _node_text_match_clause(self, alias: str, param_name: str, exact: bool = False) -> str:
+    def _node_text_match_clause(
+        self, alias: str, param_name: str, exact: bool = False
+    ) -> str:
         operator = "=" if exact else "CONTAINS"
         properties_expr = f"properties({alias})"
         comparisons = [

@@ -90,11 +90,15 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
     return sections
 
 
-def _extract_title_and_year(page_chunks: list[PageChunkRecord], fallback_title: str) -> tuple[str, int | None]:
+def _extract_title_and_year(
+    page_chunks: list[PageChunkRecord], fallback_title: str
+) -> tuple[str, int | None]:
     title = fallback_title
     publication_year: int | None = None
 
-    head_text = "\n".join(chunk.text for chunk in page_chunks[: min(3, len(page_chunks))])
+    head_text = "\n".join(
+        chunk.text for chunk in page_chunks[: min(3, len(page_chunks))]
+    )
 
     for line in head_text.splitlines():
         line = line.strip()
@@ -115,7 +119,9 @@ def _extract_title_and_year(page_chunks: list[PageChunkRecord], fallback_title: 
     return title, publication_year
 
 
-def ingest_documents(input_dir: Path, single_doc: str | None = None) -> list[DocumentRecord]:
+def ingest_documents(
+    input_dir: Path, single_doc: str | None = None
+) -> list[DocumentRecord]:
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
@@ -139,7 +145,9 @@ def ingest_documents(input_dir: Path, single_doc: str | None = None) -> list[Doc
         page_chunks = _read_page_chunks(pdf_path)
         markdown_text = "\n\n".join(chunk.text for chunk in page_chunks)
         sections = _extract_sections(page_chunks)
-        title, publication_year = _extract_title_and_year(page_chunks, fallback_title=pdf_path.stem)
+        title, publication_year = _extract_title_and_year(
+            page_chunks, fallback_title=pdf_path.stem
+        )
 
         docs.append(
             DocumentRecord(

@@ -45,7 +45,10 @@ def test_schema_validation_rejects_bad_predicate():
             "object_labels": ["DataValue"],
             "subject_properties": {"name": "Europe"},
             "object_properties": {"name": "2.7 C"},
-            "relationship_properties": {"source_doc": "demo.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "demo.pdf",
+                "extraction_method": "llm",
+            },
         }
     ]
     with pytest.raises(Exception):
@@ -62,7 +65,10 @@ def test_schema_validation_normalizes_predicate():
             "object_labels": ["DataValue"],
             "subject_properties": {"name": "Europe"},
             "object_properties": {"name": "2.7 C"},
-            "relationship_properties": {"source_doc": "demo.pdf", "extraction_method": "llm"},
+            "relationship_properties": {
+                "source_doc": "demo.pdf",
+                "extraction_method": "llm",
+            },
         }
     ]
     triples = validate_triples(payload)

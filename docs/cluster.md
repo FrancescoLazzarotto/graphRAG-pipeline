@@ -5,6 +5,7 @@
 - Python 3.10+
 - Access to Neo4j endpoint
 - Network access to Hugging Face model hub or pre-cached model files
+- For server-backed inference mode: vLLM-capable GPU node (installed via requirements-gpu.txt)
 
 ## 2. Immediate Run (Recommended)
 
@@ -29,6 +30,12 @@ CPU run:
 
 ```bash
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
+```
+
+KG pipeline run that survives laptop disconnects:
+
+```bash
+sbatch -p <partition> scripts/run_kg_pipeline.sbatch
 ```
 
 Before submission, export required Neo4j variables in your shell or directly in the script.
@@ -60,6 +67,13 @@ Optional:
 - NEO4J_DATABASE (default: neo4j)
 - MODEL_ID (default: Qwen/Qwen2.5-7B-Instruct)
 - HF_HOME / TRANSFORMERS_CACHE for model cache location
+- USE_VLLM=1 to enable vLLM server mode in `run_graphrag.sbatch`
+- VLLM_BASE_URL (default: http://127.0.0.1:8000/v1)
+- VLLM_HOST / VLLM_PORT (defaults: 127.0.0.1 / 8000)
+- VLLM_GPU_MEMORY_UTILIZATION (default: 0.90)
+- VLLM_STARTUP_TIMEOUT_SEC (default: 180)
+- CONDA_ENV (default: graphllm) for `scripts/run_kg_pipeline.sbatch`
+- KG_CONFIG / KG_ENV_FILE / KG_RUN_DIR / KG_STAGE / KG_LOG_LEVEL for the KG pipeline launcher
 
 ## 4. Manual Install (Optional)
 
@@ -105,6 +119,14 @@ Both scripts support these runtime overrides:
 - MODEL_ID: set custom model
 - LLM_WARMUP=0 or 1: disable/enable warmup (GPU script default is 1)
 - RUN_LLM_ON_CPU=1: enable local LLM on CPU script (default is 0)
+- USE_VLLM=1: in GPU script, start a local vLLM server and run `graphrag-demo --vllm`
+
+When `USE_VLLM=1` in `scripts/run_graphrag.sbatch`, the script:
+
+- starts `vllm.entrypoints.openai.api_server` in background
+- waits for endpoint readiness on `/models`
+- runs `graphrag-demo` with `--vllm --vllm-base-url ...`
+- cleans up the background server process on exit (trap)
 
 Example:
 

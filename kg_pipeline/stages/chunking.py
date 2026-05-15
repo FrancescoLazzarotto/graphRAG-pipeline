@@ -136,12 +136,18 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
                 if t < small_min_tokens:
                     continue
                 if t <= small_max_tokens:
-                    chunks.append(_build_chunk(doc, next_chunk_idx, p.section_title, [p]))
+                    chunks.append(
+                        _build_chunk(doc, next_chunk_idx, p.section_title, [p])
+                    )
                     next_chunk_idx += 1
                 else:
-                    windows = _window_paragraphs([p], max_tokens=small_max_tokens, overlap_tokens=0)
+                    windows = _window_paragraphs(
+                        [p], max_tokens=small_max_tokens, overlap_tokens=0
+                    )
                     for win in windows:
-                        chunks.append(_build_chunk(doc, next_chunk_idx, p.section_title, win))
+                        chunks.append(
+                            _build_chunk(doc, next_chunk_idx, p.section_title, win)
+                        )
                         next_chunk_idx += 1
             continue
 
@@ -153,7 +159,9 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
                     end_page=section.end_page,
                     section_title=section.title,
                 )
-                windows = _window_paragraphs(paragraphs, max_tokens=medium_window, overlap_tokens=medium_overlap)
+                windows = _window_paragraphs(
+                    paragraphs, max_tokens=medium_window, overlap_tokens=medium_overlap
+                )
                 for win in windows:
                     chunks.append(_build_chunk(doc, next_chunk_idx, section.title, win))
                     next_chunk_idx += 1
@@ -167,7 +175,9 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
                 end_page=section.end_page,
                 section_title=section.title,
             )
-            windows = _window_paragraphs(paragraphs, max_tokens=large_window, overlap_tokens=large_overlap)
+            windows = _window_paragraphs(
+                paragraphs, max_tokens=large_window, overlap_tokens=large_overlap
+            )
             for win in windows:
                 chunks.append(_build_chunk(doc, next_chunk_idx, section.title, win))
                 next_chunk_idx += 1

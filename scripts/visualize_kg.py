@@ -56,7 +56,9 @@ def _tooltip(title: str, labels: list[str], props: dict[str, Any]) -> str:
     )
 
 
-def _fetch_subgraph(session, limit: int, custom_query: str | None) -> list[dict[str, Any]]:
+def _fetch_subgraph(
+    session, limit: int, custom_query: str | None
+) -> list[dict[str, Any]]:
     query = custom_query or (
         "MATCH (s)-[r]->(t) "
         "WITH s, r, t LIMIT $limit "
@@ -68,7 +70,9 @@ def _fetch_subgraph(session, limit: int, custom_query: str | None) -> list[dict[
     return session.run(query, limit=limit).data()
 
 
-def _build_pyvis(rows: list[dict[str, Any]], out_html: Path, directed: bool = True) -> tuple[int, int]:
+def _build_pyvis(
+    rows: list[dict[str, Any]], out_html: Path, directed: bool = True
+) -> tuple[int, int]:
     try:
         from pyvis.network import Network
     except ImportError as exc:
@@ -146,7 +150,9 @@ def _build_pyvis(rows: list[dict[str, Any]], out_html: Path, directed: bool = Tr
         net.add_edge(s_id, t_id, label=rel_type, title=rel_title, arrows="to")
         edge_count += 1
 
-    net.barnes_hut(gravity=-30000, central_gravity=0.18, spring_length=170, spring_strength=0.02)
+    net.barnes_hut(
+        gravity=-30000, central_gravity=0.18, spring_length=170, spring_strength=0.02
+    )
     net.set_edge_smooth("dynamic")
 
     out_html.parent.mkdir(parents=True, exist_ok=True)
@@ -179,9 +185,17 @@ def _print_stats(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Visualize a Neo4j KG as interactive HTML.")
-    parser.add_argument("--out", default="artifacts/visualization/kg_graph.html", help="Output HTML path")
-    parser.add_argument("--limit", type=int, default=600, help="Max relationships to fetch")
+    parser = argparse.ArgumentParser(
+        description="Visualize a Neo4j KG as interactive HTML."
+    )
+    parser.add_argument(
+        "--out",
+        default="artifacts/visualization/kg_graph.html",
+        help="Output HTML path",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=600, help="Max relationships to fetch"
+    )
     parser.add_argument(
         "--query",
         default="",
@@ -208,7 +222,11 @@ def main() -> None:
 
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         with driver.session(database=database) as session:
-            rows = _fetch_subgraph(session, limit=max(1, args.limit), custom_query=args.query.strip() or None)
+            rows = _fetch_subgraph(
+                session,
+                limit=max(1, args.limit),
+                custom_query=args.query.strip() or None,
+            )
 
     if not rows:
         print("No rows returned by query. Nothing to visualize.")

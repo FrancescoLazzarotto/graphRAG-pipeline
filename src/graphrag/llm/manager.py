@@ -45,14 +45,22 @@ class LLMManager:
         self.gpu_memory_fraction = gpu_memory_fraction
         self.use_vllm = bool(use_vllm)
         self.vllm_base_url = vllm_base_url.strip().rstrip("/")
-        self.vllm_api_key = os.getenv("VLLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "EMPTY"
-        env_allow_fallback = os.getenv("GRAPHRAG_ALLOW_LARGE_MODEL_FP16_FALLBACK", "").strip().lower()
-        self.allow_large_model_fp16_fallback = allow_large_model_fp16_fallback or env_allow_fallback in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        self.vllm_api_key = (
+            os.getenv("VLLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "EMPTY"
+        )
+        env_allow_fallback = (
+            os.getenv("GRAPHRAG_ALLOW_LARGE_MODEL_FP16_FALLBACK", "").strip().lower()
+        )
+        self.allow_large_model_fp16_fallback = (
+            allow_large_model_fp16_fallback
+            or env_allow_fallback
+            in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        )
 
         self._cached_model: Any | None = None
         self._cached_model_id: str | None = None
@@ -75,7 +83,7 @@ class LLMManager:
         except Exception as exc:
             raise RuntimeError(
                 "vLLM mode requires langchain-openai. Install it in your runtime env, for example: "
-                "conda run -n graphllm python -m pip install \"langchain-openai>=0.2,<0.4\""
+                'conda run -n graphllm python -m pip install "langchain-openai>=0.2,<0.4"'
             ) from exc
 
         return ChatOpenAI
@@ -84,17 +92,29 @@ class LLMManager:
     def _import_hf_stack() -> tuple[Any, Any, Any, Any, Any, Any]:
         try:
             from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
-            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+            from transformers import (
+                AutoModelForCausalLM,
+                AutoTokenizer,
+                BitsAndBytesConfig,
+                pipeline,
+            )
         except Exception as exc:  # pragma: no cover - depends on runtime env
             text = str(exc).lower()
             if "huggingface-hub" in text and "required" in text:
                 raise RuntimeError(
                     "Incompatible transformers/huggingface-hub versions detected. "
-                    "Fix with: conda run -n graphllm python -m pip install \"huggingface-hub>=0.34.0,<1.0\""
+                    'Fix with: conda run -n graphllm python -m pip install "huggingface-hub>=0.34.0,<1.0"'
                 ) from exc
             raise
 
-        return ChatHuggingFace, HuggingFacePipeline, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+        return (
+            ChatHuggingFace,
+            HuggingFacePipeline,
+            AutoModelForCausalLM,
+            AutoTokenizer,
+            BitsAndBytesConfig,
+            pipeline,
+        )
 
     @staticmethod
     def _hf_token() -> str | None:
@@ -184,9 +204,9 @@ class LLMManager:
             + model_id
             + "\n"
             + "Fast path (recommended): export HF_TOKEN and rerun the same command.\n"
-            + "  export HF_TOKEN=\"<your-hf-token>\"\n"
+            + '  export HF_TOKEN="<your-hf-token>"\n'
             + "Optional persistent login from this conda env:\n"
-            + "  $CONDA_PREFIX/bin/python -m huggingface_hub.commands.huggingface_cli login --token \"$HF_TOKEN\"\n"
+            + '  $CONDA_PREFIX/bin/python -m huggingface_hub.commands.huggingface_cli login --token "$HF_TOKEN"\n'
             + "You can also use HUGGINGFACE_HUB_TOKEN instead of HF_TOKEN.\n"
             + "You can also switch to an ungated model, for example Qwen/Qwen2.5-7B-Instruct."
         ) from exc
@@ -243,17 +263,23 @@ class LLMManager:
                             "bitsandbytes is required for large models (>=30B) in this production profile. "
                             "Install bitsandbytes or use a smaller model, or explicitly allow fp16 fallback."
                         )
-                    logger.warning("bitsandbytes not installed: loading model on GPU without 4-bit quantization.")
+                    logger.warning(
+                        "bitsandbytes not installed: loading model on GPU without 4-bit quantization."
+                    )
                     base_model = AutoModelForCausalLM.from_pretrained(
                         model_id,
                         torch_dtype=torch.float16,
                         **common_load_kwargs,
                     )
-                except Exception as exc:  # pragma: no cover - depends on GPU/runtime setup
+                except (
+                    Exception
+                ) as exc:  # pragma: no cover - depends on GPU/runtime setup
                     if self._is_hf_auth_error(exc):
                         raise
                     if model_is_large and not self.allow_large_model_fp16_fallback:
-                        raise self._fp16_fallback_message(model_id=model_id, root_exc=exc) from exc
+                        raise self._fp16_fallback_message(
+                            model_id=model_id, root_exc=exc
+                        ) from exc
                     logger.warning(
                         "bitsandbytes is installed, but 4-bit loading failed (%s). "
                         "Falling back to standard fp16 GPU loading.",
@@ -294,7 +320,11 @@ class LLMManager:
 
     def _build_vllm_llm(self, model_id: str) -> Any:
         ChatOpenAI = self._import_vllm_stack()
-        logger.info("Using vLLM OpenAI-compatible endpoint at %s for model %s", self.vllm_base_url, model_id)
+        logger.info(
+            "Using vLLM OpenAI-compatible endpoint at %s for model %s",
+            self.vllm_base_url,
+            model_id,
+        )
         return ChatOpenAI(
             model=model_id,
             base_url=self.vllm_base_url,
@@ -318,7 +348,9 @@ class LLMManager:
             with urllib.request.urlopen(request, timeout=timeout_sec) as response:
                 status_code = int(getattr(response, "status", 200))
                 if status_code >= 400:
-                    raise RuntimeError(f"vLLM endpoint returned HTTP {status_code} on {models_url}")
+                    raise RuntimeError(
+                        f"vLLM endpoint returned HTTP {status_code} on {models_url}"
+                    )
                 payload = response.read().decode("utf-8", errors="ignore")
         except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
             raise RuntimeError(
@@ -354,7 +386,10 @@ class LLMManager:
             return self._cached_model
 
         with self._load_lock:
-            if self._cached_model is not None and self._cached_model_id == target_model_id:
+            if (
+                self._cached_model is not None
+                and self._cached_model_id == target_model_id
+            ):
                 return self._cached_model
 
             if self.use_vllm and not self._vllm_endpoint_checked:
@@ -393,16 +428,17 @@ class LLMManager:
             "exact nodes or triples that support the answer.\n\n"
             f"Answer:"
         )
-        
+
         logger.info("System prompt: %s", system_prompt[:300])
         logger.info("User prompt (first 500 chars): %s", user_prompt[:500])
         logger.info("Context length (chars): %d", len(context))
-        
+
         model = self.load_llm()
-        
+
         # For vLLM (ChatOpenAI), use the Langchain-style invocation with messages
         if self.use_vllm:
             from langchain_core.messages import HumanMessage, SystemMessage
+
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
@@ -411,12 +447,14 @@ class LLMManager:
         else:
             # For local HF models, use the PromptLibrary template
             prompt = PromptLibrary.answer_prompt(config)
-            rendered = prompt.invoke({
-                "question": query,
-                "context": context,
-            })
+            rendered = prompt.invoke(
+                {
+                    "question": query,
+                    "context": context,
+                }
+            )
             output = model.invoke(rendered)
-        
+
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.info("LLM raw output (first 800 chars): %s", answer[:800])
 
@@ -441,14 +479,21 @@ class LLMManager:
                     "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda in italiano. "
                     "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
                     "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
-                    "Contesto:\n" + str(context) + "\n\nDomanda:\n" + str(query) + "\n\nRisposta:"
+                    "Contesto:\n"
+                    + str(context)
+                    + "\n\nDomanda:\n"
+                    + str(query)
+                    + "\n\nRisposta:"
                 )
                 if self.use_vllm:
                     from langchain_core.messages import HumanMessage
+
                     output2 = model.invoke([HumanMessage(content=fallback_prompt)])
                 else:
                     output2 = model.invoke(fallback_prompt)
-                answer2 = str(output2.content if hasattr(output2, "content") else output2).strip()
+                answer2 = str(
+                    output2.content if hasattr(output2, "content") else output2
+                ).strip()
                 if answer2:
                     logger.info("Fallback retry succeeded: %s", answer2[:500])
                     answer = answer2
@@ -469,11 +514,33 @@ class LLMManager:
     def _extract_programs_from_context(context: str) -> list[str]:
         if not context:
             return []
-        keywords = ("program", "programma", "programmi", "programme", "resilience", "resilienza", "shock", "climate", "clima")
+        keywords = (
+            "program",
+            "programma",
+            "programmi",
+            "programme",
+            "resilience",
+            "resilienza",
+            "shock",
+            "climate",
+            "clima",
+        )
         # Skip obvious metadata/artifacts
         skip_terms = {
-            "query", "context", "includes", "analyzes", "contains", "located", "region", "based",
-            "type", "component", "value", "data", "source_doc", "page_range"
+            "query",
+            "context",
+            "includes",
+            "analyzes",
+            "contains",
+            "located",
+            "region",
+            "based",
+            "type",
+            "component",
+            "value",
+            "data",
+            "source_doc",
+            "page_range",
         }
         candidates: list[str] = []
         seen: set[str] = set()
@@ -488,19 +555,24 @@ class LLMManager:
                 continue
             if len(line) < 5:
                 continue
-            
+
             lowered = line.lower()
             if not any(k in lowered for k in keywords):
                 continue
-            
+
             # find capitalized sequences (simple heuristic for program names)
-            for match in re.findall(r"\b[A-Z][A-Za-z0-9/&.\- ]{2,}(?:\s+[A-Z][A-Za-z0-9/&.\-]{2,})*\b", line):
+            for match in re.findall(
+                r"\b[A-Z][A-Za-z0-9/&.\- ]{2,}(?:\s+[A-Z][A-Za-z0-9/&.\-]{2,})*\b", line
+            ):
                 norm = match.strip()
                 # Filter: skip if it's a stopword, too short, or already seen
-                if norm and norm not in seen and norm.lower() not in skip_terms and len(norm) > 4:
+                if (
+                    norm
+                    and norm not in seen
+                    and norm.lower() not in skip_terms
+                    and len(norm) > 4
+                ):
                     seen.add(norm)
                     candidates.append(norm)
 
         return candidates[:12]
-    
-        

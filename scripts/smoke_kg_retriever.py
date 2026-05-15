@@ -8,17 +8,22 @@ from dotenv import load_dotenv
 from graphrag.config import AgentConfig, build_kg_config_from_env
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
-from graphrag.kg.seed import inject_movie_dataset
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Smoke test for KG retriever behavior")
-    parser.add_argument("--question", default="Chi ha diretto The Matrix?")
-    parser.add_argument("--entity", default="The Matrix")
+    parser.add_argument(
+        "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
+    )
+    parser.add_argument("--entity", default="Entita A")
     parser.add_argument("--entity-a", default="")
     parser.add_argument("--entity-b", default="")
     parser.add_argument("--labels", default="", help="Comma-separated labels filter")
-    parser.add_argument("--relationship-types", default="", help="Comma-separated relationship type filter")
+    parser.add_argument(
+        "--relationship-types",
+        default="",
+        help="Comma-separated relationship type filter",
+    )
 
     parser.add_argument("--min-nodes", type=int, default=0)
     parser.add_argument("--min-triples", type=int, default=1)
@@ -34,7 +39,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hops", type=int, default=1)
     parser.add_argument("--max-depth", type=int, default=6)
 
-    parser.add_argument("--seed-movie-dataset", action="store_true")
     return parser
 
 
@@ -56,10 +60,9 @@ def main() -> int:
         print(f"- config/env error: {exc}")
         return 2
 
-    if args.seed_movie_dataset:
-        inject_movie_dataset(kg_manager)
-
-    include_shortest_path = bool(args.entity_a and args.entity_b) or args.min_shortest_path > 0
+    include_shortest_path = (
+        bool(args.entity_a and args.entity_b) or args.min_shortest_path > 0
+    )
 
     config = AgentConfig(
         query=args.question,

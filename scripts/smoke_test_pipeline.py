@@ -12,6 +12,7 @@ This script performs safe checks:
 
 Run without network or model downloads.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -21,17 +22,20 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
+
 # ensure project root is importable for local package imports
 sys.path.insert(0, str(ROOT))
 SYS_OK = 0
 results = {"ok": [], "failed": []}
 
+
 def ok(msg: str):
     results["ok"].append(msg)
 
+
 def fail(msg: str):
     results["failed"].append(msg)
+
 
 def main():
     try:
@@ -61,17 +65,22 @@ def main():
             mod = loaded["kg_pipeline.prompts.extraction_prompt"]
             from kg_pipeline.models.types import ChunkRecord
 
-            chunk = ChunkRecord.model_validate({
-                "doc_id": "d1",
-                "filename": "example.pdf",
-                "chunk_id": "c1",
-                "page_range": "1-1",
-                "section_title": "Introduction",
-                "chunk_index": 1,
-                "text": "This policy governs wheat and ensures high levels of protection.",
-            })
+            chunk = ChunkRecord.model_validate(
+                {
+                    "doc_id": "d1",
+                    "filename": "example.pdf",
+                    "chunk_id": "c1",
+                    "page_range": "1-1",
+                    "section_title": "Introduction",
+                    "chunk_index": 1,
+                    "text": "This policy governs wheat and ensures high levels of protection.",
+                }
+            )
             prompt = mod.build_extraction_prompt(chunk, [], ["Concept", "Policy"])
-            if "ALLOWED PREDICATES" in prompt or "You MUST use ONLY the following predicate types" in prompt:
+            if (
+                "ALLOWED PREDICATES" in prompt
+                or "You MUST use ONLY the following predicate types" in prompt
+            ):
                 ok("extraction prompt contains allowed-predicates instructions")
             else:
                 fail("extraction prompt does not contain allowed-predicates block")
@@ -95,7 +104,10 @@ def main():
                 "object_labels": ["Document"],
                 "subject_properties": {"name": "wheat"},
                 "object_properties": {"name": "report"},
-                "relationship_properties": {"source_doc": "example.pdf", "extraction_method": "llm"},
+                "relationship_properties": {
+                    "source_doc": "example.pdf",
+                    "extraction_method": "llm",
+                },
             }
             try:
                 kt = types_mod.KGTriple.model_validate(triple_payload)
@@ -121,7 +133,9 @@ def main():
 
         # check ner threshold default
         if "kg_pipeline.stages.ner" in loaded:
-            ner_src = Path(loaded["kg_pipeline.stages.ner"].__file__).read_text(encoding="utf-8")
+            ner_src = Path(loaded["kg_pipeline.stages.ner"].__file__).read_text(
+                encoding="utf-8"
+            )
             if "default=0.55" in ner_src:
                 ok("ner default threshold set to 0.55")
             else:
@@ -134,7 +148,9 @@ def main():
                 ok("neo4j_ingestion.run_quality_checks exists")
                 neo_src = Path(neo_mod.__file__).read_text(encoding="utf-8")
                 if "HAS_MAXIMUM_LEVEL" in neo_src and "outOfVocab" in neo_src:
-                    ok("neo4j quality queries include HAS_MAXIMUM_LEVEL and outOfVocab check")
+                    ok(
+                        "neo4j quality queries include HAS_MAXIMUM_LEVEL and outOfVocab check"
+                    )
                 else:
                     fail("neo4j quality queries appear incomplete")
             else:
@@ -147,6 +163,7 @@ def main():
     print(json.dumps(results, ensure_ascii=False, indent=2))
     if results["failed"]:
         sys.exit(2)
+
 
 if __name__ == "__main__":
     main()

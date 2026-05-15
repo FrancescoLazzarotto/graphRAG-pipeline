@@ -9,10 +9,19 @@ from typing import Any
 from openai import OpenAI
 from tqdm import tqdm
 
-from kg_pipeline.models.types import ChunkRecord, KGTriple, NEREntityCandidate, kg_triple_array_schema
+from kg_pipeline.models.types import (
+    ChunkRecord,
+    KGTriple,
+    NEREntityCandidate,
+    kg_triple_array_schema,
+)
 from kg_pipeline.prompts.extraction_prompt import build_extraction_prompt
 from kg_pipeline.utils.acronym_map import update_acronym_map
-from kg_pipeline.utils.validation import parse_json_array, validate_triples, write_failed_chunk
+from kg_pipeline.utils.validation import (
+    parse_json_array,
+    validate_triples,
+    write_failed_chunk,
+)
 
 
 _GENERIC_SECTION_TITLES = {
@@ -38,13 +47,15 @@ _GENERIC_SECTION_TITLES = {
     "table of contents",
 }
 
-_SECTION_PREFIX_RE = re.compile(r"^(annex|appendix|chapter|section|part)\s+\w+", re.IGNORECASE)
+_SECTION_PREFIX_RE = re.compile(
+    r"^(annex|appendix|chapter|section|part)\s+\w+", re.IGNORECASE
+)
 
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
     """Build OpenAI client with optimized timeout and retry configuration."""
     import os
-    
+
     http_client_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
     return OpenAI(
         base_url=base_url.rstrip("/"),
@@ -112,7 +123,9 @@ def _enforce_labels(
                 continue
             output.append(label)
 
-        if "Document" in output and _looks_like_section_title(entity_title, section_title):
+        if "Document" in output and _looks_like_section_title(
+            entity_title, section_title
+        ):
             output = [label for label in output if label != "Document"]
 
         return output or ["Concept"]
@@ -162,7 +175,7 @@ def _validate_raw_triples(
     failed_chunks_path: Path,
     raw_response: str,
 ) -> list[KGTriple]:
-    """ to understand if is this method that stops the pipeline"""
+    """to understand if is this method that stops the pipeline"""
     valid_triples: list[KGTriple] = []
 
     for item in raw_items:
@@ -200,22 +213,21 @@ def extract_triples(
 ) -> tuple[list[KGTriple], dict[str, str]]:
     """
     Extract triples from chunks with periodic checkpointing.
-    
+
     Args:
         checkpoint_every: Save checkpoint every N chunks (default 50). Set to 0 to disable.
     """
-    import os
-    
+
     client = _build_client(base_url=base_url, api_key=api_key)
     allowed_label_set = set(allowed_labels)
 
     all_triples: list[KGTriple] = []
     acronym_map: dict[str, str] = {}
-    
+
     # Determine checkpoint path (same directory as failed_chunks_path)
     checkpoint_path = failed_chunks_path.parent / "stage3_checkpoint.json"
     checkpoint_info_path = failed_chunks_path.parent / "stage3_checkpoint_info.json"
-    
+
     # Try to resume from checkpoint
     start_chunk_idx = 0
     if checkpoint_path.exists() and checkpoint_info_path.exists():
@@ -225,18 +237,26 @@ def extract_triples(
             start_chunk_idx = checkpoint_info.get("last_completed_chunk_idx", 0) + 1
             acronym_map = checkpoint_info.get("acronym_map", {})
             import logging
+
             logging.getLogger("kg_pipeline").info(
                 f"Resuming from checkpoint: chunk {start_chunk_idx}/{len(chunks)}, "
                 f"triples so far: {len(all_triples)}"
             )
         except Exception as e:
             import logging
+
             logging.getLogger("kg_pipeline").warning(f"Could not load checkpoint: {e}")
             all_triples = []
             acronym_map = {}
             start_chunk_idx = 0
 
-    for chunk_idx in tqdm(range(start_chunk_idx, len(chunks)), desc="Stage 3 LLM Extraction", unit="chunk", initial=start_chunk_idx, total=len(chunks)):
+    for chunk_idx in tqdm(
+        range(start_chunk_idx, len(chunks)),
+        desc="Stage 3 LLM Extraction",
+        unit="chunk",
+        initial=start_chunk_idx,
+        total=len(chunks),
+    ):
         chunk = chunks[chunk_idx]
 
         candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
@@ -297,7 +317,7 @@ def extract_triples(
 
         if not success:
             continue
-        
+
         # Save checkpoint periodically
         if checkpoint_every > 0 and (chunk_idx + 1) % checkpoint_every == 0:
             try:
@@ -311,13 +331,17 @@ def extract_triples(
                 }
                 _save_json(checkpoint_info_path, checkpoint_info)
                 import logging
+
                 logging.getLogger("kg_pipeline").info(
                     f"Checkpoint saved at chunk {chunk_idx + 1}/{len(chunks)}: "
                     f"{len(all_triples)} triples"
                 )
             except Exception as e:
                 import logging
-                logging.getLogger("kg_pipeline").warning(f"Failed to save checkpoint: {e}")
+
+                logging.getLogger("kg_pipeline").warning(
+                    f"Failed to save checkpoint: {e}"
+                )
 
     return all_triples, acronym_map
 

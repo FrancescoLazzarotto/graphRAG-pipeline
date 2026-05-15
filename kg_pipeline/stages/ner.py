@@ -24,7 +24,9 @@ def run_ner(
     output: dict[str, list[NEREntityCandidate]] = {}
 
     for chunk in tqdm(chunks, desc="Stage 2 GLiNER", unit="chunk"):
-        raw_entities = model.predict_entities(chunk.text, model_labels, threshold=threshold)
+        raw_entities = model.predict_entities(
+            chunk.text, model_labels, threshold=threshold
+        )
         entities: list[NEREntityCandidate] = []
 
         for item in raw_entities:

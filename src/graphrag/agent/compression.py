@@ -21,5 +21,7 @@ class ContextCompressor:
         char_budget = int(self.max_tokens / self.ratio)
         half = char_budget // 2
         compressed = text[:half] + "\n\n[... context trimmed ...]\n\n" + text[-half:]
-        logger.info("Context compressed: %d to %d estimated tokens", estimated, self.max_tokens)
+        logger.info(
+            "Context compressed: %d to %d estimated tokens", estimated, self.max_tokens
+        )
         return compressed

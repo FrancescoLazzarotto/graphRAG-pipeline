@@ -46,7 +46,9 @@ class KGRetriever:
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
         configured_entity = (self.config.entity or "").strip()
-        search_terms = self._build_search_terms(query_text=query_text, configured_entity=configured_entity)
+        search_terms = self._build_search_terms(
+            query_text=query_text, configured_entity=configured_entity
+        )
 
         nodes: list[KGNode] = []
         triples: list[KGTriple] = []
@@ -55,10 +57,14 @@ class KGRetriever:
         shortest_path: list[KGTriple] = []
 
         if self.config.include_nodes and search_terms:
-            nodes = self._collect_nodes(search_terms=search_terms, limit=self.config.nodes_limit)
+            nodes = self._collect_nodes(
+                search_terms=search_terms, limit=self.config.nodes_limit
+            )
 
         if self.config.include_triples and search_terms:
-            triples = self._collect_triples(search_terms=search_terms, limit=self.config.triples_limit)
+            triples = self._collect_triples(
+                search_terms=search_terms, limit=self.config.triples_limit
+            )
 
         seed_entities = self._seed_entities(
             query_text=query_text,
@@ -66,7 +72,9 @@ class KGRetriever:
             triples=triples,
             search_terms=search_terms,
         )
-        resolved_entity = configured_entity or (seed_entities[0] if seed_entities else "")
+        resolved_entity = configured_entity or (
+            seed_entities[0] if seed_entities else ""
+        )
 
         if self.config.include_neighbors and resolved_entity:
             neighbors = self.kg_store.get_neighbors(
@@ -84,8 +92,12 @@ class KGRetriever:
             )
 
         if self.config.include_shortest_path:
-            entity_a = self.config.entity_a or (seed_entities[0] if len(seed_entities) > 0 else None)
-            entity_b = self.config.entity_b or (seed_entities[1] if len(seed_entities) > 1 else None)
+            entity_a = self.config.entity_a or (
+                seed_entities[0] if len(seed_entities) > 0 else None
+            )
+            entity_b = self.config.entity_b or (
+                seed_entities[1] if len(seed_entities) > 1 else None
+            )
             if entity_a and entity_b and entity_a != entity_b:
                 shortest_path = self.kg_store.get_shortest_path(
                     entity_a=entity_a,
@@ -113,7 +125,9 @@ class KGRetriever:
             "subgraph": subgraph,
             "shortest_path": shortest_path,
             "context_sections": context_sections,
-            "context_text": "\n\n".join(section for section in context_sections if section),
+            "context_text": "\n\n".join(
+                section for section in context_sections if section
+            ),
         }
 
     def multi_hop(
@@ -123,14 +137,18 @@ class KGRetriever:
         limit: int | None = None,
         relationship_types: Sequence[str] | None = None,
     ) -> list[KGTriple]:
-        target_entity = (entity or self.config.entity or self.config.query or "").strip()
+        target_entity = (
+            entity or self.config.entity or self.config.query or ""
+        ).strip()
         if not target_entity:
             return []
         return self.kg_store.extract_subgraph(
             entity=target_entity,
             hops=hops if hops is not None else self.config.hops,
             limit=limit if limit is not None else self.config.subgraph_limit,
-            relationship_types=relationship_types or self.config.relationship_types or None,
+            relationship_types=relationship_types
+            or self.config.relationship_types
+            or None,
         )
 
     def retrieve_context(self, query: str | None = None) -> str:
@@ -241,7 +259,9 @@ class KGRetriever:
 
         return collected
 
-    def _collect_triples(self, search_terms: Sequence[str], limit: int) -> list[KGTriple]:
+    def _collect_triples(
+        self, search_terms: Sequence[str], limit: int
+    ) -> list[KGTriple]:
         if limit <= 0:
             return []
 
@@ -284,7 +304,9 @@ class KGRetriever:
             sections.append("Matched nodes:\n" + self.kg_store.nodes_to_text(nodes))
 
         if triples:
-            sections.append("Matched triples:\n" + self.kg_store.triples_to_text(triples))
+            sections.append(
+                "Matched triples:\n" + self.kg_store.triples_to_text(triples)
+            )
 
         if neighbors:
             sections.append("Neighbors:\n" + self.kg_store.nodes_to_text(neighbors))
@@ -293,7 +315,9 @@ class KGRetriever:
             sections.append("Subgraph:\n" + self.kg_store.triples_to_text(subgraph))
 
         if shortest_path:
-            sections.append("Shortest path:\n" + self.kg_store.triples_to_text(shortest_path))
+            sections.append(
+                "Shortest path:\n" + self.kg_store.triples_to_text(shortest_path)
+            )
 
         return sections
 
@@ -328,5 +352,3 @@ class KGRetriever:
         subject = str(triple.get("subject", "")).strip().lower()
         obj = str(triple.get("object", "")).strip().lower()
         return (subject, predicate, obj)
-
-

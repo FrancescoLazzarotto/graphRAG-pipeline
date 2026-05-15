@@ -1,0 +1,1349 @@
+{
+  "basic": {
+    "node_count": 6007,
+    "edge_count": 7002,
+    "label_count": 12,
+    "reltype_count": 44,
+    "labels": [
+      "Document",
+      "Organization",
+      "Commodity",
+      "Concept",
+      "Method",
+      "Policy",
+      "Region",
+      "TimePeriod",
+      "Event",
+      "DataValue",
+      "Dataset",
+      "Indicator"
+    ],
+    "relationship_types": [
+      "WORKED_WITH",
+      "HAS_COMPONENT",
+      "CONTRIBUTES_TO",
+      "COMPLIES_WITH",
+      "REQUIRES",
+      "ESTABLISHES",
+      "DEFINED_AS",
+      "APPLIES_TO",
+      "AIMS_TO_ACHIEVE",
+      "INCLUDES",
+      "ENSURES",
+      "COMPOSED_OF",
+      "IS_TYPE_OF",
+      "HAS_MAXIMUM_LEVEL",
+      "BASED_ON",
+      "ASSOCIATED_WITH",
+      "PRODUCES",
+      "LEADS_TO",
+      "AFFECTS",
+      "OCCURS_IN",
+      "CAUSES",
+      "MEASURES",
+      "HAS_VALUE",
+      "DRIVEN_BY",
+      "USES_METHOD",
+      "LOCATED_IN",
+      "NEEDED_FOR",
+      "USES",
+      "PUBLISHED",
+      "PART_OF",
+      "CONTAINS_DATA",
+      "DEPENDS_ON",
+      "REGULATED_BY",
+      "HAS_MEMBER",
+      "TARGETS",
+      "ANALYZES",
+      "IMPACTS",
+      "SHOULD_BE_MANAGED_BY",
+      "TAKE_INTO_ACCOUNT",
+      "INDICATES",
+      "MANAGES",
+      "RELATED_TO",
+      "GOVERNS",
+      "EXCHANGES_INFO_WITH"
+    ]
+  },
+  "label_distribution": {
+    "Document": 688,
+    "Organization": 692,
+    "Commodity": 772,
+    "Concept": 1457,
+    "Method": 275,
+    "Policy": 341,
+    "Region": 450,
+    "TimePeriod": 73,
+    "Event": 181,
+    "DataValue": 578,
+    "Dataset": 178,
+    "Indicator": 343
+  },
+  "reltype_distribution": {
+    "WORKED_WITH": 401,
+    "HAS_COMPONENT": 615,
+    "CONTRIBUTES_TO": 166,
+    "COMPLIES_WITH": 22,
+    "REQUIRES": 10,
+    "ESTABLISHES": 139,
+    "DEFINED_AS": 125,
+    "APPLIES_TO": 104,
+    "AIMS_TO_ACHIEVE": 66,
+    "INCLUDES": 909,
+    "ENSURES": 76,
+    "COMPOSED_OF": 1,
+    "IS_TYPE_OF": 264,
+    "HAS_MAXIMUM_LEVEL": 425,
+    "BASED_ON": 178,
+    "ASSOCIATED_WITH": 4,
+    "PRODUCES": 14,
+    "LEADS_TO": 9,
+    "AFFECTS": 488,
+    "OCCURS_IN": 6,
+    "CAUSES": 4,
+    "MEASURES": 3,
+    "HAS_VALUE": 113,
+    "DRIVEN_BY": 16,
+    "USES_METHOD": 1,
+    "LOCATED_IN": 5,
+    "NEEDED_FOR": 148,
+    "USES": 51,
+    "PUBLISHED": 469,
+    "PART_OF": 3,
+    "CONTAINS_DATA": 210,
+    "DEPENDS_ON": 7,
+    "REGULATED_BY": 3,
+    "HAS_MEMBER": 2,
+    "TARGETS": 2,
+    "ANALYZES": 199,
+    "IMPACTS": 6,
+    "SHOULD_BE_MANAGED_BY": 26,
+    "TAKE_INTO_ACCOUNT": 17,
+    "INDICATES": 2,
+    "MANAGES": 3,
+    "RELATED_TO": 1622,
+    "GOVERNS": 58,
+    "EXCHANGES_INFO_WITH": 10
+  },
+  "degree_stats": {
+    "sample_size": 1,
+    "min": 6898,
+    "max": 6898,
+    "mean": 6898.0,
+    "median": 6898,
+    "std": 0.0,
+    "power_law_alpha_estimate": 1.113,
+    "degree_distribution_top10": {
+      "6898": 1
+    }
+  },
+  "isolated_node_count": 0,
+  "hub_nodes": [
+    {
+      "labels": [
+        "Organization"
+      ],
+      "degree": 277,
+      "id_hint": "FAO"
+    },
+    {
+      "labels": [
+        "Organization"
+      ],
+      "degree": 202,
+      "id_hint": "Commission"
+    },
+    {
+      "labels": [
+        "Organization"
+      ],
+      "degree": 141,
+      "id_hint": "Authority"
+    },
+    {
+      "labels": [
+        "Region"
+      ],
+      "degree": 138,
+      "id_hint": "Africa"
+    },
+    {
+      "labels": [
+        "Region"
+      ],
+      "degree": 90,
+      "id_hint": "ASIA*"
+    },
+    {
+      "labels": [
+        "Region"
+      ],
+      "degree": 83,
+      "id_hint": "REGIONS/SUBREGIONS/COUNTRIES/TERRITORIES"
+    },
+    {
+      "labels": [
+        "Concept"
+      ],
+      "degree": 81,
+      "id_hint": "URBANIZATION"
+    },
+    {
+      "labels": [
+        "Document"
+      ],
+      "degree": 62,
+      "id_hint": "_The State of Food Security and Nutrition in the World_"
+    },
+    {
+      "labels": [
+        "Concept"
+      ],
+      "degree": 61,
+      "id_hint": "RURAL–URBAN CONTINUUM"
+    },
+    {
+      "labels": [
+        "Commodity"
+      ],
+      "degree": 61,
+      "id_hint": "food"
+    }
+  ],
+  "property_coverage": {
+    "Document": {
+      "total_sampled": 688,
+      "properties": {
+        "name": 1.0,
+        "title": 0.048,
+        "year": 0.006,
+        "source_doc": 0.001,
+        "page_range": 0.004,
+        "section_title": 0.003,
+        "publication_year": 0.013,
+        "edition": 0.003,
+        "volume": 0.003,
+        "series": 0.003,
+        "url": 0.003,
+        "issue": 0.001,
+        "publisher": 0.001,
+        "full_name": 0.004,
+        "number": 0.001,
+        "location": 0.001,
+        "type": 0.001
+      }
+    },
+    "Organization": {
+      "total_sampled": 692,
+      "properties": {
+        "name": 1.0,
+        "description": 0.13,
+        "country": 0.13,
+        "organization_type": 0.13,
+        "full_name": 0.059,
+        "value": 0.001,
+        "acronym": 0.003,
+        "abbreviation": 0.001
+      }
+    },
+    "Commodity": {
+      "total_sampled": 772,
+      "properties": {
+        "name": 1.0,
+        "details": 0.01,
+        "description": 0.004,
+        "exception": 0.001,
+        "species": 0.003,
+        "contaminants": 0.001,
+        "type": 0.004
+      }
+    },
+    "Concept": {
+      "total_sampled": 1457,
+      "properties": {
+        "name": 1.0,
+        "unit": 0.003,
+        "description": 0.007,
+        "category": 0.003,
+        "full_name": 0.001,
+        "region_type": 0.003,
+        "percentage": 0.001,
+        "value": 0.001,
+        "country": 0.001
+      }
+    },
+    "Method": {
+      "total_sampled": 275,
+      "properties": {
+        "name": 1.0,
+        "full_name": 0.004,
+        "abbreviation": 0.004
+      }
+    },
+    "Policy": {
+      "total_sampled": 341,
+      "properties": {
+        "name": 1.0,
+        "unit": 0.006,
+        "value": 0.006,
+        "contaminant": 0.003,
+        "full_name": 0.006
+      }
+    },
+    "Region": {
+      "total_sampled": 450,
+      "properties": {
+        "name": 1.0,
+        "description": 0.44,
+        "country": 0.351,
+        "region_type": 0.44,
+        "population": 0.009,
+        "region": 0.002
+      }
+    },
+    "TimePeriod": {
+      "total_sampled": 73,
+      "properties": {
+        "name": 1.0,
+        "year": 0.014
+      }
+    },
+    "Event": {
+      "total_sampled": 181,
+      "properties": {
+        "name": 1.0,
+        "date": 0.017,
+        "location": 0.017,
+        "event_type": 0.006,
+        "description": 0.133
+      }
+    },
+    "DataValue": {
+      "total_sampled": 578,
+      "properties": {
+        "name": 1.0,
+        "unit": 0.685,
+        "value": 0.76,
+        "less_than": 0.002,
+        "year": 0.024,
+        "significance": 0.016,
+        "contaminant": 0.009,
+        "description": 0.026,
+        "comparison": 0.012,
+        "currency": 0.005,
+        "min_value": 0.002,
+        "max_value": 0.002,
+        "amount": 0.002,
+        "qualifier": 0.005,
+        "value_min": 0.002,
+        "value_max": 0.002
+      }
+    },
+    "Dataset": {
+      "total_sampled": 178,
+      "properties": {
+        "name": 1.0
+      }
+    },
+    "Indicator": {
+      "total_sampled": 343,
+      "properties": {
+        "name": 1.0,
+        "description": 0.108,
+        "category": 0.105,
+        "unit": 0.064,
+        "value": 0.006,
+        "source": 0.003,
+        "short_name": 0.017,
+        "full_name": 0.003
+      }
+    }
+  },
+  "connected_components": {
+    "method": "APOC (partial)",
+    "largest_component_approx": 5695
+  },
+  "triple_patterns": [
+    {
+      "pattern": "(Region)-[INCLUDES]->(Region)",
+      "count": 410
+    },
+    {
+      "pattern": "(Commodity)-[HAS_MAXIMUM_LEVEL]->(DataValue)",
+      "count": 373
+    },
+    {
+      "pattern": "(Organization)-[PUBLISHED]->(Document)",
+      "count": 362
+    },
+    {
+      "pattern": "(Organization)-[WORKED_WITH]->(Organization)",
+      "count": 261
+    },
+    {
+      "pattern": "(Concept)-[RELATED_TO]->(Concept)",
+      "count": 248
+    },
+    {
+      "pattern": "(Region)-[RELATED_TO]->(DataValue)",
+      "count": 214
+    },
+    {
+      "pattern": "(Concept)-[AFFECTS]->(Concept)",
+      "count": 182
+    },
+    {
+      "pattern": "(Organization)-[RELATED_TO]->(Concept)",
+      "count": 140
+    },
+    {
+      "pattern": "(Region)-[HAS_COMPONENT]->(Region)",
+      "count": 115
+    },
+    {
+      "pattern": "(Concept)-[INCLUDES]->(Concept)",
+      "count": 110
+    },
+    {
+      "pattern": "(Organization)-[RELATED_TO]->(Organization)",
+      "count": 101
+    },
+    {
+      "pattern": "(Commodity)-[INCLUDES]->(Commodity)",
+      "count": 99
+    },
+    {
+      "pattern": "(Commodity)-[IS_TYPE_OF]->(Commodity)",
+      "count": 73
+    },
+    {
+      "pattern": "(Concept)-[HAS_COMPONENT]->(Concept)",
+      "count": 73
+    },
+    {
+      "pattern": "(Concept)-[CONTRIBUTES_TO]->(Concept)",
+      "count": 67
+    },
+    {
+      "pattern": "(Organization)-[HAS_COMPONENT]->(Concept)",
+      "count": 67
+    },
+    {
+      "pattern": "(Region)-[IS_TYPE_OF]->(Region)",
+      "count": 66
+    },
+    {
+      "pattern": "(Commodity)-[RELATED_TO]->(Commodity)",
+      "count": 59
+    },
+    {
+      "pattern": "(Region)-[RELATED_TO]->(Region)",
+      "count": 53
+    },
+    {
+      "pattern": "(Region)-[HAS_COMPONENT]->(DataValue)",
+      "count": 52
+    }
+  ],
+  "reltype_endpoint_consistency": {
+    "WORKED_WITH": {
+      "distinct_patterns": 20,
+      "patterns": {
+        "(Organization)->(Organization)": 261,
+        "(Organization)->(Commodity)": 7,
+        "(Organization)->(Policy)": 1,
+        "(Organization)->(Concept)": 51,
+        "(Organization)->(Document)": 1,
+        "(Region)->(Organization)": 12,
+        "(Region)->(Region)": 5,
+        "(Organization)->(Dataset)": 4,
+        "(Document)->(Organization)": 4,
+        "(Concept)->(Concept)": 33,
+        "(Dataset)->(Organization)": 2,
+        "(Organization)->(Region)": 6,
+        "(Method)->(Organization)": 1,
+        "(Policy)->(Organization)": 7,
+        "(Policy)->(Policy)": 1,
+        "(Concept)->(Region)": 1,
+        "(Organization)->(Event)": 1,
+        "(Concept)->(Organization)": 1,
+        "(Organization)->(Method)": 1,
+        "(Concept)->(Policy)": 1
+      }
+    },
+    "HAS_COMPONENT": {
+      "distinct_patterns": 40,
+      "patterns": {
+        "(Organization)->(Organization)": 23,
+        "(Region)->(Region)": 110,
+        "(Region)->(Concept)": 15,
+        "(Method)->(Method)": 8,
+        "(Method)->(Concept)": 1,
+        "(Organization)->(Commodity)": 9,
+        "(Organization)->(Concept)": 67,
+        "(Organization)->(Method)": 2,
+        "(Organization)->(Document)": 2,
+        "(Organization)->(Event)": 2,
+        "(Document)->(Document)": 2,
+        "(Concept)->(Concept)": 58,
+        "(Concept)->(Policy)": 2,
+        "(Concept)->(Organization)": 4,
+        "(Concept)->(Region)": 47,
+        "(Concept)->(Indicator)": 8,
+        "(Commodity)->(Commodity)": 12,
+        "(Commodity)->(Concept)": 2,
+        "(Region)->(Indicator)": 3,
+        "(Region)->(DataValue)": 52,
+        "(Indicator)->(Concept)": 3,
+        "(Region)->(Organization)": 5,
+        "(TimePeriod)->(DataValue)": 3,
+        "(TimePeriod)->(TimePeriod)": 4,
+        "(Indicator)->(Indicator)": 14,
+        "(DataValue)->(DataValue)": 4,
+        "(Organization)->(Region)": 5,
+        "(Organization)->(TimePeriod)": 2,
+        "(Organization)->(Policy)": 2,
+        "(Event)->(Indicator)": 1,
+        "(Event)->(Method)": 4,
+        "(Organization)->(Indicator)": 6,
+        "(Concept)->(Commodity)": 4,
+        "(Concept)->(DataValue)": 2,
+        "(Region)->(Commodity)": 3,
+        "(Policy)->(Policy)": 3,
+        "(Organization)->(DataValue)": 2,
+        "(Organization)->(Dataset)": 2,
+        "(Dataset)->(Dataset)": 1,
+        "(Commodity)->(DataValue)": 1
+      }
+    },
+    "CONTRIBUTES_TO": {
+      "distinct_patterns": 27,
+      "patterns": {
+        "(Organization)->(Organization)": 3,
+        "(Commodity)->(Concept)": 4,
+        "(Region)->(Concept)": 1,
+        "(Region)->(Region)": 2,
+        "(Organization)->(Policy)": 1,
+        "(Organization)->(Concept)": 16,
+        "(Organization)->(Event)": 3,
+        "(Commodity)->(Commodity)": 5,
+        "(Concept)->(Concept)": 67,
+        "(Commodity)->(DataValue)": 3,
+        "(Commodity)->(Indicator)": 4,
+        "(Event)->(Event)": 7,
+        "(Policy)->(Concept)": 17,
+        "(Policy)->(Policy)": 17,
+        "(Method)->(Concept)": 1,
+        "(Method)->(Method)": 2,
+        "(Indicator)->(Indicator)": 3,
+        "(Commodity)->(Organization)": 1,
+        "(Organization)->(Indicator)": 1,
+        "(Concept)->(Indicator)": 1,
+        "(Commodity)->(Policy)": 1,
+        "(Dataset)->(Method)": 1,
+        "(Dataset)->(Dataset)": 1,
+        "(Document)->(Dataset)": 1,
+        "(Document)->(Concept)": 1,
+        "(Method)->(Indicator)": 1,
+        "(Policy)->(Indicator)": 1
+      }
+    },
+    "COMPLIES_WITH": {
+      "distinct_patterns": 8,
+      "patterns": {
+        "(Commodity)->(Document)": 4,
+        "(Commodity)->(Indicator)": 1,
+        "(Commodity)->(Policy)": 10,
+        "(Organization)->(Policy)": 2,
+        "(Organization)->(Organization)": 1,
+        "(Document)->(TimePeriod)": 1,
+        "(Concept)->(Concept)": 2,
+        "(Document)->(Document)": 1
+      }
+    },
+    "REQUIRES": {
+      "distinct_patterns": 8,
+      "patterns": {
+        "(Method)->(Dataset)": 2,
+        "(Method)->(Method)": 1,
+        "(Policy)->(Policy)": 2,
+        "(Commodity)->(Region)": 1,
+        "(Organization)->(Organization)": 1,
+        "(Concept)->(Region)": 1,
+        "(Event)->(Event)": 1,
+        "(Concept)->(Concept)": 1
+      }
+    },
+    "ESTABLISHES": {
+      "distinct_patterns": 18,
+      "patterns": {
+        "(Document)->(Organization)": 6,
+        "(Organization)->(Organization)": 20,
+        "(Organization)->(Document)": 37,
+        "(Organization)->(Policy)": 13,
+        "(Organization)->(Concept)": 17,
+        "(Organization)->(Indicator)": 4,
+        "(Region)->(Organization)": 5,
+        "(Region)->(Policy)": 7,
+        "(Organization)->(Event)": 2,
+        "(Organization)->(Method)": 10,
+        "(Document)->(Policy)": 5,
+        "(Document)->(Document)": 5,
+        "(Region)->(Document)": 1,
+        "(Event)->(Organization)": 1,
+        "(Method)->(Organization)": 1,
+        "(Organization)->(Dataset)": 3,
+        "(Concept)->(Concept)": 1,
+        "(Policy)->(Policy)": 1
+      }
+    },
+    "DEFINED_AS": {
+      "distinct_patterns": 27,
+      "patterns": {
+        "(Commodity)->(Commodity)": 6,
+        "(Commodity)->(Document)": 1,
+        "(Policy)->(Concept)": 2,
+        "(Method)->(Method)": 9,
+        "(Organization)->(Organization)": 12,
+        "(Document)->(Document)": 10,
+        "(Concept)->(Concept)": 37,
+        "(Method)->(Concept)": 1,
+        "(Policy)->(Policy)": 2,
+        "(Concept)->(Indicator)": 4,
+        "(Concept)->(DataValue)": 1,
+        "(Concept)->(Commodity)": 1,
+        "(Commodity)->(Concept)": 1,
+        "(Organization)->(Concept)": 4,
+        "(Indicator)->(Indicator)": 17,
+        "(Indicator)->(Dataset)": 1,
+        "(Concept)->(Region)": 1,
+        "(Indicator)->(Concept)": 3,
+        "(Indicator)->(DataValue)": 1,
+        "(Dataset)->(Indicator)": 1,
+        "(Dataset)->(Concept)": 2,
+        "(Region)->(Region)": 1,
+        "(Event)->(Event)": 2,
+        "(Method)->(Document)": 2,
+        "(Document)->(DataValue)": 1,
+        "(Document)->(Organization)": 1,
+        "(TimePeriod)->(TimePeriod)": 1
+      }
+    },
+    "APPLIES_TO": {
+      "distinct_patterns": 40,
+      "patterns": {
+        "(Policy)->(Region)": 4,
+        "(Policy)->(Commodity)": 5,
+        "(Document)->(Document)": 4,
+        "(Document)->(Concept)": 3,
+        "(Commodity)->(Policy)": 3,
+        "(Region)->(Commodity)": 1,
+        "(Document)->(Commodity)": 7,
+        "(Commodity)->(Commodity)": 2,
+        "(Dataset)->(Region)": 5,
+        "(Policy)->(Concept)": 4,
+        "(Document)->(Region)": 5,
+        "(Concept)->(Concept)": 7,
+        "(Concept)->(Organization)": 2,
+        "(Organization)->(Document)": 1,
+        "(Concept)->(TimePeriod)": 1,
+        "(Region)->(TimePeriod)": 1,
+        "(Region)->(Document)": 5,
+        "(Indicator)->(Indicator)": 1,
+        "(DataValue)->(TimePeriod)": 1,
+        "(Indicator)->(TimePeriod)": 4,
+        "(Organization)->(Region)": 1,
+        "(Commodity)->(Region)": 1,
+        "(Region)->(Region)": 3,
+        "(DataValue)->(Concept)": 1,
+        "(Concept)->(Commodity)": 4,
+        "(Method)->(Commodity)": 5,
+        "(Concept)->(Region)": 2,
+        "(Dataset)->(Dataset)": 4,
+        "(Dataset)->(Indicator)": 1,
+        "(Dataset)->(Concept)": 1,
+        "(Method)->(Indicator)": 1,
+        "(Method)->(Dataset)": 2,
+        "(Dataset)->(TimePeriod)": 2,
+        "(Event)->(TimePeriod)": 1,
+        "(Policy)->(Organization)": 3,
+        "(Organization)->(Organization)": 1,
+        "(Method)->(Method)": 1,
+        "(Event)->(Region)": 1,
+        "(Policy)->(Policy)": 2,
+        "(Document)->(Policy)": 1
+      }
+    },
+    "AIMS_TO_ACHIEVE": {
+      "distinct_patterns": 13,
+      "patterns": {
+        "(Organization)->(Organization)": 2,
+        "(Organization)->(Concept)": 7,
+        "(Organization)->(Indicator)": 1,
+        "(Policy)->(Policy)": 19,
+        "(Concept)->(Concept)": 9,
+        "(Document)->(Document)": 10,
+        "(Method)->(Method)": 2,
+        "(Policy)->(Concept)": 10,
+        "(Policy)->(Commodity)": 1,
+        "(Event)->(Event)": 1,
+        "(Organization)->(Policy)": 2,
+        "(Concept)->(Commodity)": 1,
+        "(Document)->(Policy)": 1
+      }
+    },
+    "INCLUDES": {
+      "distinct_patterns": 34,
+      "patterns": {
+        "(Commodity)->(Commodity)": 23,
+        "(Commodity)->(Concept)": 1,
+        "(Policy)->(Policy)": 2,
+        "(Method)->(Method)": 3,
+        "(Method)->(Concept)": 2,
+        "(Concept)->(Concept)": 61,
+        "(Organization)->(Region)": 1,
+        "(Event)->(Organization)": 3,
+        "(Event)->(Commodity)": 3,
+        "(Organization)->(Concept)": 12,
+        "(Document)->(Indicator)": 9,
+        "(Concept)->(Commodity)": 2,
+        "(Concept)->(Organization)": 4,
+        "(Concept)->(Indicator)": 3,
+        "(Dataset)->(TimePeriod)": 1,
+        "(Dataset)->(Region)": 2,
+        "(Method)->(Indicator)": 3,
+        "(Region)->(Concept)": 14,
+        "(Region)->(Organization)": 2,
+        "(Region)->(Region)": 304,
+        "(Document)->(Concept)": 5,
+        "(Organization)->(Commodity)": 4,
+        "(Concept)->(Region)": 17,
+        "(Indicator)->(Commodity)": 1,
+        "(Indicator)->(Concept)": 1,
+        "(Organization)->(Indicator)": 4,
+        "(Organization)->(Organization)": 2,
+        "(Concept)->(DataValue)": 1,
+        "(Region)->(Indicator)": 1,
+        "(Indicator)->(Indicator)": 1,
+        "(Dataset)->(Indicator)": 2,
+        "(Concept)->(Policy)": 4,
+        "(Method)->(Dataset)": 1,
+        "(Dataset)->(Concept)": 1
+      }
+    },
+    "ENSURES": {
+      "distinct_patterns": 15,
+      "patterns": {
+        "(Organization)->(Indicator)": 5,
+        "(Organization)->(Concept)": 28,
+        "(Organization)->(Organization)": 7,
+        "(Organization)->(Event)": 1,
+        "(Region)->(Policy)": 1,
+        "(Region)->(Concept)": 1,
+        "(Concept)->(Concept)": 12,
+        "(Policy)->(Policy)": 4,
+        "(Organization)->(Policy)": 7,
+        "(Document)->(Document)": 4,
+        "(Organization)->(Method)": 2,
+        "(Region)->(Region)": 1,
+        "(Method)->(Method)": 1,
+        "(Policy)->(Concept)": 1,
+        "(Document)->(Concept)": 1
+      }
+    },
+    "COMPOSED_OF": {
+      "distinct_patterns": 1,
+      "patterns": {
+        "(Organization)->(Concept)": 1
+      }
+    },
+    "IS_TYPE_OF": {
+      "distinct_patterns": 23,
+      "patterns": {
+        "(Commodity)->(Commodity)": 73,
+        "(Organization)->(Organization)": 4,
+        "(Commodity)->(Organization)": 1,
+        "(Region)->(Region)": 66,
+        "(Concept)->(Organization)": 1,
+        "(Concept)->(Concept)": 27,
+        "(Concept)->(Region)": 9,
+        "(Organization)->(Concept)": 5,
+        "(Concept)->(Policy)": 1,
+        "(Concept)->(Commodity)": 3,
+        "(Indicator)->(Concept)": 27,
+        "(Organization)->(Region)": 1,
+        "(TimePeriod)->(TimePeriod)": 10,
+        "(Region)->(Concept)": 9,
+        "(Method)->(Method)": 11,
+        "(Indicator)->(Indicator)": 2,
+        "(Event)->(Event)": 1,
+        "(Dataset)->(Dataset)": 3,
+        "(Commodity)->(Concept)": 1,
+        "(Document)->(Document)": 5,
+        "(Policy)->(Policy)": 1,
+        "(Indicator)->(Commodity)": 2,
+        "(TimePeriod)->(Indicator)": 1
+      }
+    },
+    "HAS_MAXIMUM_LEVEL": {
+      "distinct_patterns": 13,
+      "patterns": {
+        "(Commodity)->(Commodity)": 10,
+        "(Commodity)->(Indicator)": 12,
+        "(Commodity)->(DataValue)": 373,
+        "(Policy)->(Commodity)": 2,
+        "(Document)->(Policy)": 1,
+        "(Document)->(Commodity)": 1,
+        "(Commodity)->(Policy)": 1,
+        "(Commodity)->(Document)": 12,
+        "(TimePeriod)->(DataValue)": 8,
+        "(Region)->(DataValue)": 2,
+        "(Indicator)->(Indicator)": 1,
+        "(Concept)->(Concept)": 1,
+        "(Document)->(Concept)": 1
+      }
+    },
+    "BASED_ON": {
+      "distinct_patterns": 41,
+      "patterns": {
+        "(Policy)->(Method)": 2,
+        "(Method)->(Method)": 37,
+        "(Method)->(Concept)": 3,
+        "(Document)->(Concept)": 1,
+        "(Organization)->(Concept)": 4,
+        "(Organization)->(Document)": 8,
+        "(Document)->(Document)": 7,
+        "(Concept)->(Document)": 3,
+        "(Organization)->(Dataset)": 4,
+        "(Event)->(Event)": 2,
+        "(Concept)->(Concept)": 26,
+        "(Organization)->(Method)": 2,
+        "(Dataset)->(TimePeriod)": 3,
+        "(Method)->(Dataset)": 5,
+        "(Concept)->(Organization)": 9,
+        "(Concept)->(Indicator)": 1,
+        "(Organization)->(Region)": 1,
+        "(Indicator)->(Organization)": 4,
+        "(Indicator)->(Concept)": 3,
+        "(Indicator)->(Indicator)": 6,
+        "(DataValue)->(Concept)": 1,
+        "(Concept)->(Commodity)": 2,
+        "(Dataset)->(Document)": 1,
+        "(Dataset)->(Dataset)": 13,
+        "(Dataset)->(Concept)": 1,
+        "(Method)->(Indicator)": 6,
+        "(Policy)->(Policy)": 3,
+        "(Method)->(Region)": 2,
+        "(Organization)->(Indicator)": 1,
+        "(Concept)->(Dataset)": 1,
+        "(Concept)->(Method)": 3,
+        "(Concept)->(TimePeriod)": 1,
+        "(Indicator)->(Region)": 1,
+        "(Method)->(Commodity)": 4,
+        "(DataValue)->(Dataset)": 1,
+        "(Indicator)->(DataValue)": 1,
+        "(Dataset)->(Method)": 1,
+        "(Method)->(Document)": 1,
+        "(Document)->(Policy)": 1,
+        "(Document)->(Method)": 1,
+        "(Indicator)->(TimePeriod)": 1
+      }
+    },
+    "ASSOCIATED_WITH": {
+      "distinct_patterns": 1,
+      "patterns": {
+        "(Concept)->(Concept)": 4
+      }
+    },
+    "PRODUCES": {
+      "distinct_patterns": 4,
+      "patterns": {
+        "(Organization)->(Commodity)": 7,
+        "(Organization)->(Concept)": 1,
+        "(Organization)->(Indicator)": 5,
+        "(Commodity)->(Commodity)": 1
+      }
+    },
+    "LEADS_TO": {
+      "distinct_patterns": 4,
+      "patterns": {
+        "(Concept)->(Concept)": 6,
+        "(Method)->(Method)": 1,
+        "(Organization)->(Policy)": 1,
+        "(Policy)->(Policy)": 1
+      }
+    },
+    "AFFECTS": {
+      "distinct_patterns": 53,
+      "patterns": {
+        "(Organization)->(Method)": 1,
+        "(Organization)->(Concept)": 19,
+        "(Organization)->(Commodity)": 2,
+        "(Commodity)->(Indicator)": 3,
+        "(Commodity)->(Concept)": 23,
+        "(Commodity)->(Region)": 1,
+        "(Region)->(Policy)": 1,
+        "(Policy)->(Policy)": 13,
+        "(Concept)->(Concept)": 182,
+        "(Organization)->(Region)": 1,
+        "(Organization)->(Document)": 1,
+        "(Policy)->(Region)": 1,
+        "(Policy)->(Organization)": 2,
+        "(Policy)->(Commodity)": 5,
+        "(Event)->(Event)": 29,
+        "(Commodity)->(Commodity)": 13,
+        "(Concept)->(Commodity)": 3,
+        "(Concept)->(Document)": 1,
+        "(Concept)->(Region)": 2,
+        "(Concept)->(Indicator)": 11,
+        "(Document)->(Concept)": 2,
+        "(Region)->(Concept)": 21,
+        "(Concept)->(Dataset)": 3,
+        "(Concept)->(DataValue)": 7,
+        "(Concept)->(Organization)": 4,
+        "(DataValue)->(DataValue)": 2,
+        "(Indicator)->(Commodity)": 1,
+        "(Indicator)->(DataValue)": 3,
+        "(Event)->(Concept)": 22,
+        "(Event)->(Indicator)": 4,
+        "(Policy)->(Concept)": 31,
+        "(Concept)->(Event)": 2,
+        "(Event)->(Commodity)": 5,
+        "(Indicator)->(Indicator)": 22,
+        "(Commodity)->(Policy)": 2,
+        "(Indicator)->(Dataset)": 1,
+        "(Region)->(Event)": 1,
+        "(Organization)->(Organization)": 3,
+        "(DataValue)->(Indicator)": 1,
+        "(Indicator)->(Concept)": 5,
+        "(Commodity)->(Organization)": 1,
+        "(Method)->(Concept)": 1,
+        "(Method)->(Region)": 2,
+        "(Event)->(Organization)": 1,
+        "(Policy)->(Event)": 4,
+        "(Dataset)->(Indicator)": 1,
+        "(Method)->(Method)": 2,
+        "(Concept)->(Policy)": 1,
+        "(Event)->(Policy)": 1,
+        "(Policy)->(Indicator)": 10,
+        "(Event)->(Region)": 6,
+        "(TimePeriod)->(Concept)": 1,
+        "(Indicator)->(Organization)": 1
+      }
+    },
+    "OCCURS_IN": {
+      "distinct_patterns": 4,
+      "patterns": {
+        "(Concept)->(Concept)": 1,
+        "(Concept)->(Region)": 3,
+        "(Event)->(TimePeriod)": 1,
+        "(Document)->(TimePeriod)": 1
+      }
+    },
+    "CAUSES": {
+      "distinct_patterns": 4,
+      "patterns": {
+        "(Event)->(Event)": 1,
+        "(Concept)->(Concept)": 1,
+        "(Concept)->(Event)": 1,
+        "(Commodity)->(Indicator)": 1
+      }
+    },
+    "MEASURES": {
+      "distinct_patterns": 3,
+      "patterns": {
+        "(Indicator)->(Concept)": 1,
+        "(Concept)->(Concept)": 1,
+        "(Method)->(Method)": 1
+      }
+    },
+    "HAS_VALUE": {
+      "distinct_patterns": 10,
+      "patterns": {
+        "(Commodity)->(Commodity)": 1,
+        "(Commodity)->(DataValue)": 33,
+        "(Region)->(DataValue)": 47,
+        "(Concept)->(DataValue)": 6,
+        "(TimePeriod)->(Region)": 2,
+        "(Indicator)->(DataValue)": 17,
+        "(DataValue)->(DataValue)": 3,
+        "(Policy)->(DataValue)": 2,
+        "(Organization)->(DataValue)": 1,
+        "(TimePeriod)->(DataValue)": 1
+      }
+    },
+    "DRIVEN_BY": {
+      "distinct_patterns": 10,
+      "patterns": {
+        "(Concept)->(Concept)": 5,
+        "(Concept)->(Document)": 1,
+        "(Commodity)->(Indicator)": 2,
+        "(Commodity)->(DataValue)": 1,
+        "(Commodity)->(Commodity)": 1,
+        "(Concept)->(Commodity)": 1,
+        "(Event)->(Indicator)": 1,
+        "(Indicator)->(Commodity)": 1,
+        "(Indicator)->(Indicator)": 2,
+        "(Event)->(Event)": 1
+      }
+    },
+    "USES_METHOD": {
+      "distinct_patterns": 1,
+      "patterns": {
+        "(Organization)->(Method)": 1
+      }
+    },
+    "LOCATED_IN": {
+      "distinct_patterns": 2,
+      "patterns": {
+        "(Concept)->(Region)": 2,
+        "(Organization)->(Region)": 3
+      }
+    },
+    "NEEDED_FOR": {
+      "distinct_patterns": 30,
+      "patterns": {
+        "(Commodity)->(Concept)": 7,
+        "(Commodity)->(Commodity)": 13,
+        "(Concept)->(Concept)": 35,
+        "(Concept)->(Organization)": 1,
+        "(Method)->(Concept)": 1,
+        "(Policy)->(Policy)": 12,
+        "(Organization)->(Concept)": 28,
+        "(Indicator)->(Commodity)": 1,
+        "(Concept)->(Indicator)": 6,
+        "(Policy)->(Concept)": 5,
+        "(Concept)->(Policy)": 2,
+        "(Indicator)->(Indicator)": 2,
+        "(Indicator)->(Concept)": 1,
+        "(Event)->(Event)": 6,
+        "(Organization)->(Indicator)": 1,
+        "(Organization)->(Policy)": 1,
+        "(Policy)->(Event)": 1,
+        "(Concept)->(Region)": 1,
+        "(Organization)->(Method)": 1,
+        "(Region)->(Event)": 1,
+        "(Dataset)->(Concept)": 1,
+        "(Method)->(Method)": 3,
+        "(Organization)->(Organization)": 1,
+        "(Organization)->(Commodity)": 5,
+        "(Dataset)->(Dataset)": 4,
+        "(Concept)->(Event)": 1,
+        "(Event)->(Concept)": 1,
+        "(Policy)->(Document)": 2,
+        "(Document)->(Document)": 1,
+        "(Concept)->(Commodity)": 3
+      }
+    },
+    "USES": {
+      "distinct_patterns": 24,
+      "patterns": {
+        "(Commodity)->(Commodity)": 1,
+        "(Dataset)->(Dataset)": 2,
+        "(Organization)->(Indicator)": 2,
+        "(Organization)->(Method)": 6,
+        "(Organization)->(Concept)": 2,
+        "(Concept)->(Concept)": 3,
+        "(Policy)->(Concept)": 3,
+        "(Event)->(Method)": 3,
+        "(Concept)->(Dataset)": 1,
+        "(Concept)->(Method)": 1,
+        "(Concept)->(Commodity)": 1,
+        "(Organization)->(Dataset)": 4,
+        "(Method)->(Region)": 1,
+        "(Dataset)->(Indicator)": 6,
+        "(Method)->(Method)": 4,
+        "(Region)->(Organization)": 1,
+        "(Method)->(Organization)": 1,
+        "(DataValue)->(DataValue)": 1,
+        "(Document)->(Document)": 1,
+        "(Organization)->(Document)": 1,
+        "(Commodity)->(Method)": 1,
+        "(Method)->(Event)": 3,
+        "(Document)->(Event)": 1,
+        "(Document)->(Policy)": 1
+      }
+    },
+    "PUBLISHED": {
+      "distinct_patterns": 17,
+      "patterns": {
+        "(Organization)->(Policy)": 2,
+        "(Organization)->(Document)": 362,
+        "(Organization)->(Method)": 4,
+        "(Document)->(Organization)": 49,
+        "(Document)->(Policy)": 1,
+        "(Document)->(Document)": 7,
+        "(Event)->(Document)": 3,
+        "(Region)->(Document)": 17,
+        "(Organization)->(Concept)": 1,
+        "(Organization)->(Dataset)": 13,
+        "(Document)->(TimePeriod)": 1,
+        "(Organization)->(Commodity)": 2,
+        "(Organization)->(Indicator)": 2,
+        "(Dataset)->(Document)": 2,
+        "(Organization)->(Organization)": 1,
+        "(Organization)->(DataValue)": 1,
+        "(Dataset)->(Organization)": 1
+      }
+    },
+    "PART_OF": {
+      "distinct_patterns": 3,
+      "patterns": {
+        "(Policy)->(Policy)": 1,
+        "(Policy)->(Document)": 1,
+        "(Organization)->(Organization)": 1
+      }
+    },
+    "CONTAINS_DATA": {
+      "distinct_patterns": 37,
+      "patterns": {
+        "(Organization)->(Dataset)": 19,
+        "(Document)->(Dataset)": 38,
+        "(Document)->(Organization)": 1,
+        "(Document)->(Indicator)": 13,
+        "(Document)->(Document)": 29,
+        "(Concept)->(Concept)": 2,
+        "(Organization)->(Concept)": 5,
+        "(Organization)->(Indicator)": 6,
+        "(Document)->(Concept)": 17,
+        "(Document)->(DataValue)": 3,
+        "(Dataset)->(Concept)": 1,
+        "(Dataset)->(Dataset)": 19,
+        "(Concept)->(Document)": 3,
+        "(Commodity)->(Commodity)": 3,
+        "(Document)->(Policy)": 1,
+        "(Method)->(Method)": 4,
+        "(Document)->(Method)": 7,
+        "(Organization)->(Organization)": 1,
+        "(Dataset)->(Indicator)": 4,
+        "(Dataset)->(Commodity)": 1,
+        "(Dataset)->(Document)": 3,
+        "(Region)->(Document)": 1,
+        "(DataValue)->(DataValue)": 3,
+        "(Organization)->(Policy)": 1,
+        "(Region)->(Dataset)": 1,
+        "(Dataset)->(DataValue)": 1,
+        "(Dataset)->(Event)": 1,
+        "(Policy)->(Policy)": 6,
+        "(Event)->(Document)": 1,
+        "(Policy)->(Concept)": 3,
+        "(Organization)->(DataValue)": 4,
+        "(Policy)->(DataValue)": 2,
+        "(Event)->(Dataset)": 1,
+        "(Event)->(Event)": 2,
+        "(Document)->(Event)": 1,
+        "(Dataset)->(TimePeriod)": 1,
+        "(Policy)->(Document)": 1
+      }
+    },
+    "DEPENDS_ON": {
+      "distinct_patterns": 5,
+      "patterns": {
+        "(Region)->(Commodity)": 1,
+        "(Organization)->(Commodity)": 2,
+        "(Policy)->(Event)": 1,
+        "(Policy)->(Policy)": 1,
+        "(Policy)->(Concept)": 2
+      }
+    },
+    "REGULATED_BY": {
+      "distinct_patterns": 3,
+      "patterns": {
+        "(Method)->(Organization)": 1,
+        "(Method)->(Document)": 1,
+        "(Organization)->(Organization)": 1
+      }
+    },
+    "HAS_MEMBER": {
+      "distinct_patterns": 1,
+      "patterns": {
+        "(Event)->(Organization)": 2
+      }
+    },
+    "TARGETS": {
+      "distinct_patterns": 2,
+      "patterns": {
+        "(Policy)->(Policy)": 1,
+        "(Policy)->(Organization)": 1
+      }
+    },
+    "ANALYZES": {
+      "distinct_patterns": 31,
+      "patterns": {
+        "(Organization)->(Concept)": 45,
+        "(Organization)->(Document)": 2,
+        "(Organization)->(Dataset)": 5,
+        "(Organization)->(Indicator)": 15,
+        "(Document)->(Indicator)": 2,
+        "(Event)->(Event)": 1,
+        "(Concept)->(Concept)": 2,
+        "(Document)->(Concept)": 9,
+        "(Document)->(Document)": 10,
+        "(Document)->(Commodity)": 7,
+        "(Organization)->(Method)": 1,
+        "(Organization)->(DataValue)": 1,
+        "(Organization)->(Event)": 2,
+        "(Organization)->(Organization)": 1,
+        "(Method)->(Concept)": 2,
+        "(Method)->(Indicator)": 8,
+        "(Method)->(Document)": 1,
+        "(Dataset)->(Commodity)": 2,
+        "(Dataset)->(Concept)": 4,
+        "(Dataset)->(Indicator)": 1,
+        "(Indicator)->(Concept)": 1,
+        "(Dataset)->(Dataset)": 5,
+        "(Event)->(Concept)": 2,
+        "(Method)->(Dataset)": 1,
+        "(Method)->(DataValue)": 1,
+        "(Method)->(Method)": 6,
+        "(Document)->(Dataset)": 1,
+        "(Organization)->(Commodity)": 5,
+        "(Method)->(Commodity)": 30,
+        "(Commodity)->(Method)": 25,
+        "(Commodity)->(Commodity)": 1
+      }
+    },
+    "IMPACTS": {
+      "distinct_patterns": 4,
+      "patterns": {
+        "(Event)->(Event)": 1,
+        "(Concept)->(Concept)": 2,
+        "(Policy)->(Indicator)": 1,
+        "(Policy)->(Concept)": 2
+      }
+    },
+    "SHOULD_BE_MANAGED_BY": {
+      "distinct_patterns": 10,
+      "patterns": {
+        "(Commodity)->(Organization)": 2,
+        "(Document)->(Policy)": 1,
+        "(Method)->(Concept)": 1,
+        "(Organization)->(Organization)": 6,
+        "(Event)->(Organization)": 1,
+        "(Concept)->(Concept)": 4,
+        "(Policy)->(Organization)": 3,
+        "(Organization)->(Region)": 1,
+        "(Commodity)->(Commodity)": 5,
+        "(Policy)->(Policy)": 2
+      }
+    },
+    "TAKE_INTO_ACCOUNT": {
+      "distinct_patterns": 5,
+      "patterns": {
+        "(Organization)->(Concept)": 5,
+        "(Method)->(Method)": 2,
+        "(Concept)->(Concept)": 6,
+        "(DataValue)->(DataValue)": 2,
+        "(Policy)->(Concept)": 2
+      }
+    },
+    "INDICATES": {
+      "distinct_patterns": 2,
+      "patterns": {
+        "(Concept)->(Concept)": 1,
+        "(Policy)->(Concept)": 1
+      }
+    },
+    "MANAGES": {
+      "distinct_patterns": 2,
+      "patterns": {
+        "(Organization)->(Concept)": 2,
+        "(Region)->(Policy)": 1
+      }
+    },
+    "RELATED_TO": {
+      "distinct_patterns": 50,
+      "patterns": {
+        "(Document)->(Document)": 11,
+        "(Organization)->(TimePeriod)": 2,
+        "(Organization)->(Organization)": 71,
+        "(Organization)->(Document)": 34,
+        "(Organization)->(Concept)": 79,
+        "(Organization)->(Indicator)": 13,
+        "(Organization)->(Event)": 12,
+        "(Organization)->(Region)": 6,
+        "(Organization)->(Commodity)": 14,
+        "(Organization)->(Policy)": 21,
+        "(Organization)->(Dataset)": 10,
+        "(Commodity)->(Commodity)": 12,
+        "(Commodity)->(Concept)": 10,
+        "(Commodity)->(Event)": 1,
+        "(Commodity)->(DataValue)": 6,
+        "(Commodity)->(Organization)": 3,
+        "(Region)->(Policy)": 1,
+        "(Region)->(Concept)": 11,
+        "(Region)->(Region)": 4,
+        "(Policy)->(Policy)": 2,
+        "(Concept)->(Concept)": 32,
+        "(Document)->(Organization)": 7,
+        "(Event)->(Event)": 1,
+        "(Event)->(Commodity)": 1,
+        "(Policy)->(TimePeriod)": 1,
+        "(Document)->(Concept)": 2,
+        "(Document)->(Indicator)": 1,
+        "(Commodity)->(Region)": 10,
+        "(Region)->(Organization)": 3,
+        "(Region)->(Commodity)": 19,
+        "(Commodity)->(Indicator)": 2,
+        "(Commodity)->(Document)": 1,
+        "(Region)->(Method)": 2,
+        "(Document)->(Commodity)": 4,
+        "(Concept)->(Document)": 2,
+        "(Event)->(Organization)": 1,
+        "(Concept)->(Event)": 1,
+        "(Concept)->(DataValue)": 8,
+        "(Concept)->(Organization)": 3,
+        "(TimePeriod)->(Document)": 1,
+        "(Method)->(Method)": 1,
+        "(Region)->(DataValue)": 50,
+        "(Region)->(TimePeriod)": 4,
+        "(Region)->(Indicator)": 8,
+        "(Concept)->(Commodity)": 7,
+        "(Concept)->(Region)": 1,
+        "(Concept)->(Indicator)": 1,
+        "(Concept)->(TimePeriod)": 1,
+        "(Concept)->(Dataset)": 1,
+        "(Region)->(Event)": 1
+      }
+    },
+    "GOVERNS": {
+      "distinct_patterns": 17,
+      "patterns": {
+        "(Organization)->(Policy)": 3,
+        "(Organization)->(Indicator)": 1,
+        "(Policy)->(Policy)": 10,
+        "(Document)->(Document)": 5,
+        "(Document)->(Commodity)": 4,
+        "(Concept)->(Concept)": 6,
+        "(Policy)->(Concept)": 11,
+        "(Document)->(Region)": 1,
+        "(Concept)->(Region)": 1,
+        "(Policy)->(Commodity)": 8,
+        "(Organization)->(Commodity)": 1,
+        "(Organization)->(Method)": 1,
+        "(Organization)->(Concept)": 1,
+        "(Concept)->(Event)": 1,
+        "(Concept)->(Organization)": 1,
+        "(Policy)->(Organization)": 1,
+        "(Policy)->(Indicator)": 2
+      }
+    },
+    "EXCHANGES_INFO_WITH": {
+      "distinct_patterns": 2,
+      "patterns": {
+        "(Organization)->(Organization)": 9,
+        "(Organization)->(Concept)": 1
+      }
+    }
+  },
+  "graph_density": 0.000194,
+  "sparsity_class": "sparse (1–3)",
+  "edge_node_ratio": 1.166,
+  "quality_scores": {
+    "structural_completeness": 1.0,
+    "connectivity": 0.233,
+    "semantic_richness": 1.0,
+    "reltype_consistency": 0.24,
+    "note": "Punteggi 0–1. Valori più alti = migliore qualità."
+  }
+}

@@ -59,10 +59,12 @@ class PromptLibrary:
             "lacks factual evidence."
         )
 
-        return ChatPromptTemplate.from_messages([
-            ("system", system_message),
-            ("human", human_message_template),
-        ])
+        return ChatPromptTemplate.from_messages(
+            [
+                ("system", system_message),
+                ("human", human_message_template),
+            ]
+        )
 
     @staticmethod
     def rewrite_prompt(config: AgentConfig) -> ChatPromptTemplate:
@@ -121,6 +123,6 @@ class PromptLibrary:
             "So far you have gathered:\n{hop_history}\n\n"
             "Question: {question}\n\n"
             "Based on what you know so far, do you have enough information?\n"
-            "Respond with JSON: {\"enough\": true/false, \"next_entities\": [\"...\"], "
-            "\"reasoning\": \"...\"}"
+            'Respond with JSON: {"enough": true/false, "next_entities": ["..."], '
+            '"reasoning": "..."}'
         )
