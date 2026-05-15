@@ -6,7 +6,8 @@ on:
   pull_request:
 
 jobs:
-  quality:
+  lint:
+    name: Lint and Format Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -15,8 +16,51 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      - name: Syntax check
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint with ruff
+        run: ruff check src scripts kg_pipeline --select=E,F,W
+
+      - name: Format check with ruff
+        run: ruff format --check src scripts kg_pipeline
+
+  syntax:
+    name: Syntax and Import Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Compile check
+        run: python -m compileall src scripts kg_pipeline
+
+      - name: Import check
+        run: python scripts/smoke_check.py --check-imports-only
+
+  build:
+    name: Build Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
         run: |
-          python -m compileall src scripts
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt
+
+      - name: Build package
+        run: pip install -e .
