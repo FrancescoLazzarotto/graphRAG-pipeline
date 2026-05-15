@@ -465,7 +465,11 @@ class KGRAGAgent:
 
             rel_props = triple.get("relationship_properties", {})
             if isinstance(rel_props, dict):
-                source_doc = str(rel_props.get("source_doc", "") or rel_props.get("source", "") or "").strip()
+                source_doc = str(
+                    rel_props.get("source_doc", "")
+                    or rel_props.get("source", "")
+                    or ""
+                ).strip()
                 page_range = str(rel_props.get("page_range", "")).strip()
                 provenance_bits = [bit for bit in (source_doc, page_range) if bit]
                 if provenance_bits:
@@ -484,7 +488,11 @@ class KGRAGAgent:
                 text = str(node.get("text", "")).strip()
                 node_id = str(node.get("node_id", "")).strip()
                 labels = node.get("labels", [])
-                label_text = ", ".join(str(label) for label in labels) if isinstance(labels, list) else ""
+                label_text = (
+                    ", ".join(str(label) for label in labels)
+                    if isinstance(labels, list)
+                    else ""
+                )
                 if not text:
                     continue
                 detail = f"({text})"
@@ -500,12 +508,18 @@ class KGRAGAgent:
                     break
 
         if not lines:
-            return "Verifica nel grafo:\n- Nessuna evidenza strutturata recuperata da mostrare in modo affidabile."
+            return (
+                "Verifica nel grafo:\n"
+                "- Nessuna evidenza strutturata recuperata da mostrare in "
+                "modo affidabile."
+            )
 
         return "Verifica nel grafo:\n" + "\n".join(lines)
 
     @staticmethod
-    def _extract_context_highlights(query: str, context: str, limit: int = 4) -> list[str]:
+    def _extract_context_highlights(
+        query: str, context: str, limit: int = 4
+    ) -> list[str]:
         tokens = set(KGRAGAgent._extract_salient_terms(query=query, context=context))
         if not tokens:
             tokens = {"fao", "who"}
