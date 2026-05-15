@@ -376,12 +376,21 @@ class LLMManager:
             "If context does not answer the question, state this plainly. "
             "Do not invent or generate content outside the context. "
             "Preserve all entity names exactly as given. "
-            "Respond in the same language as the question (English or Italian)."
+            "Respond in the same language as the question (English or Italian). "
+            "Prefer a natural, human explanation over a mechanical list. "
+            "If you mention a fact, tie it to an exact node, triple, or other "
+            "explicit evidence from the context."
         )
-        
+
         user_prompt = (
             f"Question:\n{query}\n\n"
             f"Context:\n{context}\n\n"
+            "Write a concise answer in 1-2 short paragraphs unless the user "
+            "explicitly asked for a list. "
+            "If the context is sparse, add a short 'Limits and confidence' "
+            "section. "
+            "When possible, add a short 'Evidence in graph' section naming the "
+            "exact nodes or triples that support the answer.\n\n"
             f"Answer:"
         )
         
@@ -429,7 +438,9 @@ class LLMManager:
             try:
                 logger.info("LLM refusal detected; attempting fallback retry...")
                 fallback_prompt = (
-                    "Usa solo il contesto fornito per rispondere brevemente alla domanda in italiano. "
+                    "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda in italiano. "
+                    "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
+                    "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
                     "Contesto:\n" + str(context) + "\n\nDomanda:\n" + str(query) + "\n\nRisposta:"
                 )
                 if self.use_vllm:

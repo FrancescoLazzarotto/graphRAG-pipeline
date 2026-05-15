@@ -36,7 +36,10 @@ class PromptLibrary:
             "If context does not answer the question, state this plainly. "
             "Do not invent or generate content outside the context. "
             "Preserve all entity names exactly as given. "
-            "Respond in the same language as the question (English or Italian)."
+            "Respond in the same language as the question (English or Italian). "
+            "Prefer a natural, human explanation over a mechanical list. "
+            "If you mention a fact, tie it to an exact node, triple, or other "
+            "explicit evidence from the context."
         )
 
         human_message_template = (
@@ -45,9 +48,15 @@ class PromptLibrary:
             f"{structured}\n"
             "Question:\n{{question}}\n\n"
             "Context:\n{{context}}\n\n"
-            "If context has at least some factual evidence, provide the best grounded answer possible. "
-            "If context is sparse, include a short section titled 'Limits and confidence'. "
-            "State that context is insufficient only when context is empty or lacks factual evidence."
+            "If context has at least some factual evidence, provide the best "
+            "grounded answer possible in 1-2 short paragraphs. "
+            "Avoid a checklist style unless the user explicitly asks for a list. "
+            "If context is sparse, include a short section titled "
+            "'Limits and confidence'. "
+            "When possible, add a short 'Evidence in graph' section with the "
+            "exact node or triple names that support the answer. "
+            "State that context is insufficient only when context is empty or "
+            "lacks factual evidence."
         )
 
         return ChatPromptTemplate.from_messages([
