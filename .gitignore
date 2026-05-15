@@ -37,3 +37,14 @@ logs/
 artifacts/
 questions.txt
 questions_matrix_long.txt
+dry_run.log
+kg_evaluator.py
+kg_evaluator_run.log
+output.txt
+pipeline.log
+pipeline.out
+questions_test_strategies.txt
+ruff_output.txt
+test_experiment.log
+lib/
+documents/
