@@ -266,14 +266,5 @@ Troubleshooting
 - If a vLLM run does not generate answers, confirm the server URL and model name match the server process.
 - If experiment runs complete but produce no useful context, inspect the generated `summary.json` and `results.jsonl` before changing the pipeline.
 
-License
-
-Check the repository license file (if present) before reusing code or datasets.
-
-Examples and next steps
-
-- I can add concrete example outputs (sample `results.jsonl` records), badges (CI/conda/coverage), or a bilingual README (EN + IT). Which do you want me to do next?
-
-File updated: [README.md](README.md)
 
 
