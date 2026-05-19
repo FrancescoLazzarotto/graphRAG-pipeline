@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Sequence
 
@@ -84,12 +85,20 @@ class KGRetriever:
             )
 
         if self.config.include_subgraph and resolved_entity:
-            subgraph = self.kg_store.extract_subgraph(
-                entity=resolved_entity,
-                hops=self.config.hops,
-                limit=self.config.subgraph_limit,
-                relationship_types=self.config.relationship_types or None,
-            )
+            if self.config.adaptive_hops:
+                subgraph = self._adaptive_subgraph(
+                    entity=resolved_entity,
+                    hops=self.config.hops,
+                    limit=self.config.subgraph_limit,
+                    relationship_types=self.config.relationship_types or None,
+                )
+            else:
+                subgraph = self.kg_store.extract_subgraph(
+                    entity=resolved_entity,
+                    hops=self.config.hops,
+                    limit=self.config.subgraph_limit,
+                    relationship_types=self.config.relationship_types or None,
+                )
 
         if self.config.include_shortest_path:
             entity_a = self.config.entity_a or (
@@ -104,6 +113,10 @@ class KGRetriever:
                     entity_b=entity_b,
                     max_depth=self.config.max_depth,
                 )
+
+        if self.config.rank_triples:
+            triples = self._rank_triples(triples, query_text)
+            subgraph = self._rank_triples(subgraph, query_text)
 
         context_sections = self._build_context_sections(
             query_text=query_text,
@@ -153,6 +166,172 @@ class KGRetriever:
 
     def retrieve_context(self, query: str | None = None) -> str:
         return self.retrieve(query=query)["context_text"]
+
+    def format_triples(self, triples: Sequence[KGTriple]) -> str:
+        return self._format_triples(triples)
+
+    def _format_triples(self, triples: Sequence[KGTriple]) -> str:
+        if not triples:
+            return ""
+
+        if not self.config.include_triple_metadata:
+            return self.kg_store.triples_to_text(triples)
+
+        lines: list[str] = []
+        for triple in triples:
+            subject = str(triple.get("subject", "")).strip()
+            predicate = str(triple.get("predicate", "")).strip()
+            obj = str(triple.get("object", "")).strip()
+            rel_props = dict(triple.get("relationship_properties", {}) or {})
+
+            meta: list[str] = []
+            source_doc = str(rel_props.get("source_doc", "")).strip()
+            page_range = str(rel_props.get("page_range", "")).strip()
+            mention_count = self._mention_count(triple)
+            confidence = self._confidence_score(triple)
+
+            if source_doc:
+                meta.append(f"source={source_doc}")
+            if page_range:
+                meta.append(f"pages={page_range}")
+            if mention_count > 1:
+                meta.append(f"mentions={mention_count}")
+            if confidence > 0:
+                meta.append(f"conf={confidence:.2f}")
+
+            suffix = f" [{', '.join(meta)}]" if meta else ""
+            lines.append(f"({subject}, {predicate}, {obj}){suffix}")
+
+        return "\n".join(lines)
+
+    def _adaptive_subgraph(
+        self,
+        entity: str,
+        hops: int,
+        limit: int,
+        relationship_types: Sequence[str] | None,
+    ) -> list[KGTriple]:
+        min_triples = max(0, int(self.config.min_subgraph_triples))
+        start_hops = max(1, int(hops))
+        max_hops = max(start_hops, int(self.config.max_hops))
+
+        collected: list[KGTriple] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for hop in range(start_hops, max_hops + 1):
+            batch = self.kg_store.extract_subgraph(
+                entity=entity,
+                hops=hop,
+                limit=limit,
+                relationship_types=relationship_types,
+            )
+            for triple in batch:
+                key = self._triple_key(triple)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(triple)
+
+            if min_triples and len(collected) >= min_triples:
+                break
+
+        return collected
+
+    def _rank_triples(
+        self, triples: Sequence[KGTriple], query_text: str
+    ) -> list[KGTriple]:
+        if not triples:
+            return []
+
+        query_tokens = self._tokenize(query_text)
+        if not query_tokens:
+            return list(triples)
+
+        max_mention = max(self._mention_count(triple) for triple in triples)
+        max_mention = max(1, int(max_mention))
+
+        scored: list[tuple[float, KGTriple]] = []
+        for triple in triples:
+            score = self._score_triple(
+                triple=triple,
+                query_tokens=query_tokens,
+                max_mention=max_mention,
+            )
+            scored.append((score, triple))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [triple for _, triple in scored]
+
+    def _score_triple(
+        self,
+        triple: KGTriple,
+        query_tokens: set[str],
+        max_mention: int,
+    ) -> float:
+        subject = str(triple.get("subject", "")).lower()
+        predicate = str(triple.get("predicate", "")).lower()
+        obj = str(triple.get("object", "")).lower()
+        triple_tokens = set(
+            tok for tok in _TOKEN_RE.findall(f"{subject} {predicate} {obj}") if tok
+        )
+
+        lexical_hits = len(query_tokens & triple_tokens)
+        lexical_score = (
+            float(lexical_hits) / float(max(1, len(query_tokens)))
+            if query_tokens
+            else 0.0
+        )
+
+        mention_count = self._mention_count(triple)
+        if max_mention > 1:
+            mention_score = math.log1p(mention_count) / math.log1p(max_mention)
+        else:
+            mention_score = 1.0
+
+        confidence = self._confidence_score(triple)
+
+        score = (
+            self.config.ranker_weight_lexical * lexical_score
+            + self.config.ranker_weight_mention * mention_score
+            + self.config.ranker_weight_confidence * confidence
+        )
+
+        if self._is_system_link(triple):
+            penalty = max(0.0, min(1.0, float(self.config.ranker_system_link_penalty)))
+            score *= max(0.0, 1.0 - penalty)
+
+        return score
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        tokens = [tok.lower() for tok in _TOKEN_RE.findall(text) if len(tok) >= 3]
+        return {tok for tok in tokens if tok not in _QUESTION_STOPWORDS}
+
+    @staticmethod
+    def _mention_count(triple: KGTriple) -> int:
+        rel_props = triple.get("relationship_properties", {}) or {}
+        value = rel_props.get("mention_count")
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
+    def _confidence_score(triple: KGTriple) -> float:
+        rel_props = triple.get("relationship_properties", {}) or {}
+        value = rel_props.get("confidence")
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, score))
+
+    @staticmethod
+    def _is_system_link(triple: KGTriple) -> bool:
+        rel_props = triple.get("relationship_properties", {}) or {}
+        if str(rel_props.get("extraction_method", "")).lower() == "system_linking":
+            return True
+        return str(triple.get("predicate", "")) in {"MENTIONED_IN", "SAME_AS"}
 
     def _seed_entities(
         self,
@@ -305,18 +484,18 @@ class KGRetriever:
 
         if triples:
             sections.append(
-                "Matched triples:\n" + self.kg_store.triples_to_text(triples)
+                "Matched triples:\n" + self._format_triples(triples)
             )
 
         if neighbors:
             sections.append("Neighbors:\n" + self.kg_store.nodes_to_text(neighbors))
 
         if subgraph:
-            sections.append("Subgraph:\n" + self.kg_store.triples_to_text(subgraph))
+            sections.append("Subgraph:\n" + self._format_triples(subgraph))
 
         if shortest_path:
             sections.append(
-                "Shortest path:\n" + self.kg_store.triples_to_text(shortest_path)
+                "Shortest path:\n" + self._format_triples(shortest_path)
             )
 
         return sections
