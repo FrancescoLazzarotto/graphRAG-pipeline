@@ -197,7 +197,12 @@ class KGRAGAgent:
                     limit=self.config.subgraph_limit,
                 )
                 try:
-                    context = str(self.kg_retriever.kg_store.triples_to_text(subgraph))
+                    if hasattr(self.kg_retriever, "format_triples"):
+                        context = str(self.kg_retriever.format_triples(subgraph))
+                    else:
+                        context = str(
+                            self.kg_retriever.kg_store.triples_to_text(subgraph)
+                        )
                 except Exception:
                     context = ""
                 retrieved_data = {
