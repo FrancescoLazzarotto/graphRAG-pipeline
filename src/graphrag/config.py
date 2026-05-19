@@ -57,6 +57,15 @@ class AgentConfig:
     complexity: OUTPUT_COMPLEXITY = OUTPUT_COMPLEXITY.MEDIUM
     target_audience: str = "domain_expert"
     use_structured_response: bool = False
+    rank_triples: bool = True
+    ranker_weight_lexical: float = 0.55
+    ranker_weight_mention: float = 0.25
+    ranker_weight_confidence: float = 0.20
+    ranker_system_link_penalty: float = 0.5
+    adaptive_hops: bool = True
+    min_subgraph_triples: int = 10
+    max_hops: int = 4
+    include_triple_metadata: bool = True
 
 
 @dataclass(slots=True)
