@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 from kg_pipeline.models.types import CanonicalEntityRecord, DocumentRecord, KGTriple
@@ -24,6 +25,28 @@ def _document_props(doc: DocumentRecord) -> dict:
         "title": doc.title,
         "publication_year": doc.publication_year,
     }
+
+
+def _normalize_key(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _triple_key(triple: KGTriple) -> tuple[str, str, str]:
+    return (
+        _normalize_key(triple.subject),
+        _normalize_key(triple.predicate),
+        _normalize_key(triple.object),
+    )
+
+
+def _apply_mention_counts(triples: list[KGTriple]) -> list[KGTriple]:
+    counts = Counter(_triple_key(triple) for triple in triples)
+    for triple in triples:
+        key = _triple_key(triple)
+        rel_props = dict(triple.relationship_properties)
+        rel_props.setdefault("mention_count", int(counts.get(key, 1)))
+        triple.relationship_properties = rel_props
+    return triples
 
 
 def add_cross_document_links(
@@ -112,7 +135,7 @@ def add_cross_document_links(
                 )
             )
 
-    return linked
+            return _apply_mention_counts(linked)
 
 
 def save_triples(path: Path, triples: list[KGTriple]) -> None:
