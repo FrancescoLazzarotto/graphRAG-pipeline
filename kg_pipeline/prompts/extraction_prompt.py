@@ -69,6 +69,7 @@ Additional guidelines:
 - Output must be pure JSON array only. No prose.
 - Include numeric relationship attributes in relationship_properties when present
     (for example value, unit, year).
+- If possible, add relationship_properties.confidence as a float between 0 and 1.
 - relationship_properties must always include source_doc and extraction_method.
 - extraction_method must be "llm".
 
