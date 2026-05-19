@@ -506,8 +506,8 @@ def _cli() -> None:
     parser.add_argument(
         "--embedding-model", default="sentence-transformers/all-MiniLM-L6-v2"
     )
-    parser.add_argument("--similarity-threshold", type=float, default=0.92)
-    parser.add_argument("--context-jaccard-floor", type=float, default=0.10)
+    parser.add_argument("--similarity-threshold", type=float, default=0.88)
+    parser.add_argument("--context-jaccard-floor", type=float, default=0.15)
     parser.add_argument("--base-url", default="")
     parser.add_argument("--api-key", default="EMPTY")
     parser.add_argument("--model-name", default="")
