@@ -4,17 +4,36 @@ import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 from neo4j import GraphDatabase
 from tqdm import tqdm
 import logging
 from neo4j.exceptions import CypherTypeError
+from dotenv import load_dotenv
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from kg_pipeline.models.types import KGTriple
 
 
 _ID_RE = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _setup_logging(log_level: str, log_file: str | None = None) -> None:
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file, mode="a", encoding="utf-8"))
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        handlers=handlers,
+        force=True,
+    )
 
 
 def _safe_identifier(value: str, fallback: str) -> str:
@@ -254,13 +273,18 @@ def ingest_triples(
     user: str,
     password: str,
     database: str | None = None,
+    log_every: int = 0,
 ) -> int:
     count = 0
+    total = len(triples)
+    logger = logging.getLogger(__name__)
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         with driver.session(database=database) as session:
             for triple in tqdm(triples, desc="Stage 6 Neo4j Ingestion", unit="triple"):
                 session.execute_write(_merge_triple, triple)
                 count += 1
+                if log_every > 0 and count % log_every == 0:
+                    logger.info("ingest_progress count=%d total=%d", count, total)
     return count
 
 
@@ -347,14 +371,44 @@ def _cli() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--triples-json", required=True)
     parser.add_argument("--database", default="")
+    parser.add_argument(
+        "--env-file",
+        default="kg_pipeline/.env",
+        help="Optional .env file to load Neo4j credentials from",
+    )
+    parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--log-file",
+        default="",
+        help="Optional log file path for ingest progress",
+    )
+    parser.add_argument(
+        "--log-every",
+        type=int,
+        default=0,
+        help="Log progress every N triples (0 disables)",
+    )
     args = parser.parse_args()
+
+    env_file = args.env_file.strip()
+    if env_file:
+        env_path = Path(env_file)
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+
+    _setup_logging(args.log_level, args.log_file.strip() or None)
 
     uri, user, password, env_db = _resolve_neo4j_env()
     database = args.database.strip() or env_db
 
     triples = load_triples(Path(args.triples_json))
     written = ingest_triples(
-        triples, uri=uri, user=user, password=password, database=database
+        triples,
+        uri=uri,
+        user=user,
+        password=password,
+        database=database,
+        log_every=int(args.log_every or 0),
     )
     summary = summary_counts(uri=uri, user=user, password=password, database=database)
     print(
