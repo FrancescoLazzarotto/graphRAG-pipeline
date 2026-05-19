@@ -40,11 +40,11 @@ llm:
 
 resolution:
   embedding_model: sentence-transformers/all-MiniLM-L6-v2
-  similarity_threshold: 0.92
-  context_jaccard_floor: 0.10
+  similarity_threshold: 0.88
+  context_jaccard_floor: 0.15
 
 neo4j:
   database: '588fe1bc'
 
 linking:
-  include_mentioned_in: false
+  include_mentioned_in: true
