@@ -5,11 +5,52 @@ import json
 from kg_pipeline.models.types import ChunkRecord
 
 
+_DEFAULT_RELATION_VOCAB = [
+    "WORKED_WITH",
+    "HAS_COMPONENT",
+    "CONTRIBUTES_TO",
+    "COMPLIES_WITH",
+    "REQUIRES",
+    "ESTABLISHES",
+    "DEFINED_AS",
+    "APPLIES_TO",
+    "AIMS_TO_ACHIEVE",
+    "INCLUDES",
+    "ENSURES",
+    "IS_TYPE_OF",
+    "HAS_MAXIMUM_LEVEL",
+    "BASED_ON",
+    "PRODUCES",
+    "AFFECTS",
+    "CAUSES",
+    "MEASURES",
+    "HAS_VALUE",
+    "LOCATED_IN",
+    "NEEDED_FOR",
+    "USES",
+    "PUBLISHED",
+    "CONTAINS_DATA",
+    "REGULATED_BY",
+    "HAS_MEMBER",
+    "ANALYZES",
+    "IMPACTS",
+    "GOVERNED_BY",
+    "RELATED_TO",
+    "GOVERNS",
+    "EXCHANGES_INFO_WITH",
+]
+
+
 def build_extraction_prompt(
     chunk: ChunkRecord,
     candidate_entities: list[dict],
     allowed_labels: list[str],
+    relation_vocab: list[str] | None = None,
 ) -> str:
+    canonical_vocab = relation_vocab or _DEFAULT_RELATION_VOCAB
+    canonical_vocab = [
+        str(item).strip().upper() for item in canonical_vocab if str(item).strip()
+    ]
     few_shot = [
         {
             "subject": "Europe",
@@ -62,6 +103,8 @@ CRITICAL Validation rules (DO NOT VIOLATE):
 
 Additional guidelines:
 - Allowed labels: {json.dumps(allowed_labels)}
+- Canonical relation vocabulary (use ONLY these predicate types):
+{json.dumps(canonical_vocab, ensure_ascii=False, indent=2)}
 - You may introduce a new label only if none of the allowed labels fits.
 - Do not use meta labels like Email, PageRange, SectionTitle, Chunk, Grant, Identifier.
 - Document label is only for whole documents (filename or full document title), not section headings.
@@ -73,39 +116,11 @@ Additional guidelines:
 - relationship_properties must always include source_doc and extraction_method.
 - extraction_method must be "llm".
 
-You MUST use ONLY the following predicate types. Never invent new predicates.
-If the relationship does not fit any of these, either skip it or use the 
-closest match.
-
-ALLOWED PREDICATES (with usage guidance):
-- GOVERNS            → a policy/regulation governs a commodity/concept
-- ESTABLISHES        → an org or document establishes another org or policy
-- ESTABLISHED_BY     → inverse of ESTABLISHES
-- HAS_COMPONENT      → a concept/method is composed of sub-components
-- BASED_ON           → a method or policy is based on a concept/principle
-- AFFECTS            → an event or entity affects another entity
-- CONTRIBUTES_TO     → an entity contributes to a goal or concept
-- APPLIES_TO         → a rule/document applies to an entity
-- DEFINED_AS         → canonical definition relationship
-- INCLUDES           → a set includes members
-- IS_TYPE_OF         → instance-of or subtype relationship
-- HAS_MAXIMUM_LEVEL  → a commodity/indicator has a maximum regulatory level
-                                             Use ONLY this form. Never use HAS_MAX_LEVEL, 
-                                             HAS_MAXIMUM_LEVEL_AFLATOXIN_B1, or any variant.
-                                             Instead, add a property "contaminant" to the triple.
-- PUBLISHED          → an org published a document. Use for all publish 
-                                             variants (PUBLISHED_REPORT, PUBLISHER_OF, etc.)
-- WORKED_WITH        → collaboration between organizations
-- EXCHANGES_INFO_WITH → information exchange between organizations
-- TAKE_INTO_ACCOUNT  → a method considers a factor
-- ENSURES            → an entity ensures a quality or outcome. 
-                                             Use for ALL variants of ENSURES_HIGH_LEVEL_OF_*.
-- SHOULD_BE_MANAGED_BY → governance/management responsibility
-- AIMS_TO_ACHIEVE    → goal of a policy or process
-- NEEDED_FOR         → dependency relationship
-- CONTAINS_DATA      → a document contains a dataset
-- COMPLIES_WITH      → regulatory compliance
-- ANALYZES           → an org analyzes a concept
+Predicate guidance:
+- Use HAS_MAXIMUM_LEVEL for max regulatory limits. Put the contaminant in relationship_properties.contaminant.
+- Use PUBLISHED for all publish variants (PUBLISHED_REPORT, PUBLISHER_OF, etc.).
+- Use ENSURES for all ENSURES_HIGH_LEVEL_OF_* variants.
+- Use RELATED_TO only if no other canonical predicate fits.
 
 PROPERTY RULES — the following must NEVER become relationships. 
 Encode them as properties of the subject node instead:
