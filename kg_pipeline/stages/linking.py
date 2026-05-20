@@ -135,7 +135,7 @@ def add_cross_document_links(
                 )
             )
 
-            return _apply_mention_counts(linked)
+    return _apply_mention_counts(linked)
 
 
 def save_triples(path: Path, triples: list[KGTriple]) -> None:
