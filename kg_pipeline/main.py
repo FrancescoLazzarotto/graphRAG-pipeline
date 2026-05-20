@@ -51,6 +51,26 @@ def _save_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_relation_vocab(config: dict[str, Any], config_path: Path) -> list[str] | None:
+    rel_path = str(config.get("llm", {}).get("relation_vocab_path", "")).strip()
+    if not rel_path:
+        return None
+
+    vocab_path = Path(rel_path)
+    if not vocab_path.is_absolute():
+        vocab_path = config_path.parent / vocab_path
+    if not vocab_path.exists():
+        raise FileNotFoundError(f"relation vocab not found: {vocab_path}")
+    payload = _load_json(vocab_path)
+    if not isinstance(payload, list):
+        raise ValueError("relation vocab must be a JSON array")
+    return [str(item).strip().upper() for item in payload if str(item).strip()]
+
+
 def _log_versions(config: dict[str, Any]) -> None:
     pkg_names = [
         "pymupdf4llm",
@@ -136,6 +156,7 @@ def _load_or_run_raw_triples(
     chunks: list[ChunkRecord],
     ner_map: dict[str, list[NEREntityCandidate]],
     seed: int,
+    relation_vocab: list[str] | None,
 ) -> tuple[list[KGTriple], dict[str, str]]:
     if paths["triples_raw"].exists() and paths["acronyms"].exists():
         return llm_extraction.load_triples(
@@ -150,6 +171,7 @@ def _load_or_run_raw_triples(
         chunks=chunks,
         ner_map=ner_map,
         allowed_labels=config["ontology"]["labels"],
+        relation_vocab=relation_vocab,
         base_url=base_url,
         model_name=model_name,
         api_key=api_key,
@@ -244,7 +266,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
-    config = _load_yaml(Path(args.config))
+    config_path = Path(args.config)
+    config = _load_yaml(config_path)
     load_dotenv(args.env_file, override=True)
 
     if args.run_dir.strip():
@@ -298,8 +321,9 @@ def main() -> None:
         LOGGER.info("Completed stage=ner entities=%d", entity_count)
         return
 
+    relation_vocab = _load_relation_vocab(config, config_path)
     raw_triples, acronym_map = _load_or_run_raw_triples(
-        paths, config, chunks, ner_map, seed=seed
+        paths, config, chunks, ner_map, seed=seed, relation_vocab=relation_vocab
     )
     if args.stage == "llm":
         LOGGER.info("Completed stage=llm triples=%d", len(raw_triples))
