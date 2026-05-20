@@ -28,10 +28,18 @@ def parse_json_array(raw_text: str) -> list[dict[str, Any]]:
     return parsed
 
 
-def validate_triples(raw_items: list[dict[str, Any]]) -> list[KGTriple]:
+def validate_triples(
+    raw_items: list[dict[str, Any]],
+    allowed_predicates: list[str] | None = None,
+) -> list[KGTriple]:
     triples: list[KGTriple] = []
+    allowed_set = None
+    if allowed_predicates:
+        allowed_set = {str(item).strip().upper() for item in allowed_predicates}
     for item in raw_items:
         triple = KGTriple.model_validate(item)
+        if allowed_set is not None and triple.predicate not in allowed_set:
+            raise ValueError(f"predicate '{triple.predicate}' not in canonical list")
         triples.append(triple)
     return triples
 
