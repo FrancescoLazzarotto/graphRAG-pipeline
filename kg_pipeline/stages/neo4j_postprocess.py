@@ -1752,6 +1752,77 @@ def _count_relationships(session, rel_type: str) -> int:
     return int(session.run(query).single()["c"])
 
 
+def _cleanup_mentioned_in(
+    session,
+    mode: str,
+    dry_run: bool,
+    prop_name: str,
+    count_prop: str,
+    mentions_prop: str,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "mode": mode,
+        "relationships": 0,
+        "nodes_updated": 0,
+        "edges_deleted": 0,
+        "errors": [],
+    }
+
+    try:
+        report["relationships"] = _count_relationships(session, "MENTIONED_IN")
+    except Exception as exc:
+        report["errors"].append(f"count failed: {exc}")
+        return report
+
+    if report["relationships"] == 0:
+        return report
+
+    if mode == "convert":
+        query = (
+            "MATCH (e)-[r:MENTIONED_IN]->(d:Document) "
+            "WITH e, collect(DISTINCT d.name) AS docs, count(r) AS mentions "
+            "SET e[$prop_name] = docs, "
+            "    e[$count_prop] = size(docs), "
+            "    e[$mentions_prop] = mentions "
+            "RETURN count(e) AS nodes_updated"
+        )
+        if dry_run:
+            try:
+                result = session.run(
+                    query,
+                    prop_name=prop_name,
+                    count_prop=count_prop,
+                    mentions_prop=mentions_prop,
+                ).single()
+                report["nodes_updated"] = int(result["nodes_updated"])
+            except Exception as exc:
+                report["errors"].append(f"convert dry-run failed: {exc}")
+        else:
+            try:
+                result = session.run(
+                    query,
+                    prop_name=prop_name,
+                    count_prop=count_prop,
+                    mentions_prop=mentions_prop,
+                ).single()
+                report["nodes_updated"] = int(result["nodes_updated"])
+            except Exception as exc:
+                report["errors"].append(f"convert failed: {exc}")
+
+    if dry_run:
+        return report
+
+    try:
+        deleted = session.run(
+            "MATCH ()-[r:MENTIONED_IN]->() DELETE r RETURN count(r) AS c"
+        ).single()["c"]
+        report["edges_deleted"] = int(deleted)
+    except Exception as exc:
+        report["errors"].append(f"delete failed: {exc}")
+
+    return report
+
+
 def _run_aura_issues(
     session,
     relation_vocab: list[str],
@@ -2092,9 +2163,31 @@ def main() -> None:
             "micro-types",
             "aura-issues",
             "cleanup-pass3",
+            "mentioned-in",
         ],
         default="",
         help="Run a single cleanup task and skip the default pipeline",
+    )
+    parser.add_argument(
+        "--mentioned-in-mode",
+        choices=["delete", "convert"],
+        default="delete",
+        help="How to handle MENTIONED_IN relationships when --fix mentioned-in",
+    )
+    parser.add_argument(
+        "--mentioned-in-prop",
+        default="source_documents",
+        help="Node property name for document sources when converting",
+    )
+    parser.add_argument(
+        "--mentioned-in-count-prop",
+        default="source_documents_count",
+        help="Node property name for document count when converting",
+    )
+    parser.add_argument(
+        "--mentioned-in-mentions-prop",
+        default="source_mentions",
+        help="Node property name for mention count when converting",
     )
     parser.add_argument(
         "--dedup-label-mode",
@@ -2137,7 +2230,10 @@ def main() -> None:
         "Concept"
     ]
 
-    relation_vocab = _load_relation_vocab(args.relation_vocab)
+    relation_vocab_path = args.relation_vocab.strip() or str(
+        config.get("llm", {}).get("relation_vocab_path", "")
+    ).strip()
+    relation_vocab = _load_relation_vocab(relation_vocab_path)
     property_schema = _load_property_schema(args.property_schema)
 
     fix_mode = args.fix.strip()
@@ -2181,6 +2277,18 @@ def main() -> None:
                         dry_run=args.dry_run,
                         batch_size=_RELATION_RECLASS_BATCH_SIZE,
                         apoc_available=apoc_available,
+                    )
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                    return
+
+                if fix_mode == "mentioned-in":
+                    report["mentioned_in_cleanup"] = _cleanup_mentioned_in(
+                        session=session,
+                        mode=args.mentioned_in_mode,
+                        dry_run=args.dry_run,
+                        prop_name=args.mentioned_in_prop,
+                        count_prop=args.mentioned_in_count_prop,
+                        mentions_prop=args.mentioned_in_mentions_prop,
                     )
                     print(json.dumps(report, ensure_ascii=False, indent=2))
                     return
