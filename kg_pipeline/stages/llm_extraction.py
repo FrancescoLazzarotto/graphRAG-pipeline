@@ -174,13 +174,16 @@ def _validate_raw_triples(
     chunk: ChunkRecord,
     failed_chunks_path: Path,
     raw_response: str,
+    allowed_predicates: list[str] | None,
 ) -> list[KGTriple]:
     """to understand if is this method that stops the pipeline"""
     valid_triples: list[KGTriple] = []
 
     for item in raw_items:
         try:
-            valid_triples.extend(validate_triples([item]))
+            valid_triples.extend(
+                validate_triples([item], allowed_predicates=allowed_predicates)
+            )
         except Exception as exc:
             write_failed_chunk(
                 failed_path=failed_chunks_path,
@@ -209,6 +212,7 @@ def extract_triples(
     use_structured_output: bool,
     failed_chunks_path: Path,
     new_label_log_path: Path,
+    relation_vocab: list[str] | None = None,
     checkpoint_every: int = 50,
 ) -> tuple[list[KGTriple], dict[str, str]]:
     """
@@ -260,7 +264,12 @@ def extract_triples(
         chunk = chunks[chunk_idx]
 
         candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
-        prompt = build_extraction_prompt(chunk, candidates, allowed_labels)
+        prompt = build_extraction_prompt(
+            chunk,
+            candidates,
+            allowed_labels,
+            relation_vocab=relation_vocab,
+        )
 
         update_acronym_map(acronym_map, chunk.text)
         for entity in candidates:
@@ -284,6 +293,7 @@ def extract_triples(
                     chunk=chunk,
                     failed_chunks_path=failed_chunks_path,
                     raw_response=raw,
+                    allowed_predicates=relation_vocab,
                 )
                 cleaned_triples: list[KGTriple] = []
 
@@ -369,6 +379,7 @@ def _cli() -> None:
     parser.add_argument("--chunks-json", required=True)
     parser.add_argument("--ner-json", required=True)
     parser.add_argument("--labels-json", required=True)
+    parser.add_argument("--relation-vocab-json", default="")
     parser.add_argument("--output-triples-json", required=True)
     parser.add_argument("--output-acronyms-json", required=True)
     parser.add_argument("--failed-chunks-jsonl", required=True)
@@ -385,6 +396,9 @@ def _cli() -> None:
     chunks_payload = _load_json(Path(args.chunks_json))
     ner_payload = _load_json(Path(args.ner_json))
     labels = _load_json(Path(args.labels_json))
+    relation_vocab = None
+    if args.relation_vocab_json:
+        relation_vocab = _load_json(Path(args.relation_vocab_json))
 
     chunks = [ChunkRecord.model_validate(item) for item in chunks_payload]
     ner_map = {
@@ -396,6 +410,7 @@ def _cli() -> None:
         chunks=chunks,
         ner_map=ner_map,
         allowed_labels=labels,
+        relation_vocab=relation_vocab,
         base_url=args.base_url,
         model_name=args.model_name,
         api_key=args.api_key,
