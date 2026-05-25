@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import uuid
+from typing import Any
 
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -140,7 +141,8 @@ class KGRAGAgent:
             return {"chosen_retrieval_mode": "HYBRID"}
 
         if not self.llm:
-            return {"chosen_retrieval_mode": "TEXT"}
+            # Without an LLM router available, prefer HYBRID to avoid dropping KG evidence.
+            return {"chosen_retrieval_mode": "HYBRID"}
 
         prompt = PromptLibrary.adaptive_router_prompt(self.config)
         rendered = prompt.invoke({"question": question})
@@ -158,53 +160,136 @@ class KGRAGAgent:
         return {"chosen_retrieval_mode": mode}
 
     def _retrieve(self, state: RAGState) -> dict:
-        query = state.get("rewritten_question") or state.get("question", "")
+        query = str(state.get("rewritten_question") or state.get("question", "")).strip()
         mode = state.get("chosen_retrieval_mode", "HYBRID")
+        sub_questions = state.get("sub_questions", []) or []
+        retrieval_queries = self._build_retrieval_queries(
+            query=query,
+            sub_questions=sub_questions if isinstance(sub_questions, list) else [],
+        )
+        cache_query = " || ".join(retrieval_queries) if retrieval_queries else query
 
         if self.cache:
-            hit = self.cache.get(query, mode)
+            hit = self.cache.get(cache_query, str(mode))
             if hit is not None:
                 return hit
 
-        # Choose retrieval strategy based on adaptive routing mode
-        retrieved_data: dict = {}
+        retrieved_data: dict[str, Any] = {
+            "query": query,
+            "context_text": "",
+            "nodes": [],
+            "triples": [],
+            "neighbors": [],
+            "subgraph": [],
+            "shortest_path": [],
+        }
         context = ""
+
         if self.kg_retriever:
             mm = str(mode).upper() if mode is not None else "HYBRID"
             if mm == "TEXT":
-                # Text-only: return only the textual context (no KG evidence)
-                context = str(self.kg_retriever.retrieve_context(query))
+                text_sections: list[str] = []
+                for candidate_query in retrieval_queries:
+                    value = str(self.kg_retriever.retrieve_context(candidate_query)).strip()
+                    if value:
+                        text_sections.append(value)
+
+                context = self._merge_context_sections(text_sections)
+                retrieved_data["context_text"] = context
+
+            elif mm in {"KG", "HYBRID"}:
+                nodes: list[dict[str, Any]] = []
+                triples: list[dict[str, Any]] = []
+                neighbors: list[dict[str, Any]] = []
+                subgraph: list[dict[str, Any]] = []
+                shortest_path: list[dict[str, Any]] = []
+                context_sections: list[str] = []
+
+                node_seen: set[tuple[str, str]] = set()
+                neighbor_seen: set[tuple[str, str]] = set()
+                triple_seen: set[tuple[str, str, str]] = set()
+                subgraph_seen: set[tuple[str, str, str]] = set()
+                shortest_path_seen: set[tuple[str, str, str]] = set()
+
+                for candidate_query in retrieval_queries:
+                    batch = self.kg_retriever.retrieve(candidate_query)
+
+                    nodes = self._merge_nodes(
+                        existing=nodes,
+                        incoming=batch.get("nodes", []),
+                        seen=node_seen,
+                        limit=max(1, int(self.config.nodes_limit)),
+                    )
+                    triples = self._merge_triples(
+                        existing=triples,
+                        incoming=batch.get("triples", []),
+                        seen=triple_seen,
+                        limit=max(1, int(self.config.triples_limit)),
+                    )
+                    neighbors = self._merge_nodes(
+                        existing=neighbors,
+                        incoming=batch.get("neighbors", []),
+                        seen=neighbor_seen,
+                        limit=max(1, int(self.config.neighbors_limit)),
+                    )
+                    subgraph = self._merge_triples(
+                        existing=subgraph,
+                        incoming=batch.get("subgraph", []),
+                        seen=subgraph_seen,
+                        limit=max(1, int(self.config.subgraph_limit)),
+                    )
+                    shortest_path = self._merge_triples(
+                        existing=shortest_path,
+                        incoming=batch.get("shortest_path", []),
+                        seen=shortest_path_seen,
+                        limit=max(1, int(self.config.subgraph_limit)),
+                    )
+
+                    candidate_context = str(batch.get("context_text", "")).strip()
+                    if candidate_context:
+                        context_sections.append(candidate_context)
+
+                context = self._merge_context_sections(context_sections)
+                if mm == "KG" and not context:
+                    context = self._format_triples_for_context(triples + subgraph + shortest_path)
+
                 retrieved_data = {
                     "query": query,
                     "context_text": context,
-                    "nodes": [],
-                    "triples": [],
-                    "neighbors": [],
-                    "subgraph": [],
-                    "shortest_path": [],
+                    "nodes": nodes,
+                    "triples": triples,
+                    "neighbors": neighbors,
+                    "subgraph": subgraph,
+                    "shortest_path": shortest_path,
                 }
-            elif mm == "KG":
-                # KG-only: prioritize structural KG outputs and suppress free-text context
-                raw = self.kg_retriever.retrieve(query)
-                raw["context_text"] = ""
-                retrieved_data = raw
-                context = ""
+
             elif mm == "MULTIHOP":
-                # Multi-hop: use the multi_hop API to extract a broader subgraph
-                subgraph = self.kg_retriever.multi_hop(
-                    entity=query,
-                    hops=self.config.hops,
-                    limit=self.config.subgraph_limit,
-                )
-                try:
-                    if hasattr(self.kg_retriever, "format_triples"):
-                        context = str(self.kg_retriever.format_triples(subgraph))
-                    else:
-                        context = str(
-                            self.kg_retriever.kg_store.triples_to_text(subgraph)
-                        )
-                except Exception:
-                    context = ""
+                subgraph: list[dict[str, Any]] = []
+                triple_seen: set[tuple[str, str, str]] = set()
+                seed_entities: list[str] = []
+                seed_seen: set[str] = set()
+
+                for candidate_query in retrieval_queries:
+                    seed = self.kg_retriever.resolve_entity_seed(candidate_query)
+                    normalized = seed.strip().lower()
+                    if seed and normalized not in seed_seen:
+                        seed_seen.add(normalized)
+                        seed_entities.append(seed)
+
+                for seed in seed_entities[:2]:
+                    batch = self.kg_retriever.multi_hop(
+                        entity=seed,
+                        hops=self.config.hops,
+                        limit=self.config.subgraph_limit,
+                    )
+                    subgraph = self._merge_triples(
+                        existing=subgraph,
+                        incoming=batch,
+                        seen=triple_seen,
+                        limit=max(1, int(self.config.subgraph_limit)),
+                    )
+
+                context = self._format_triples_for_context(subgraph)
                 retrieved_data = {
                     "query": query,
                     "context_text": context,
@@ -214,8 +299,8 @@ class KGRAGAgent:
                     "subgraph": subgraph,
                     "shortest_path": [],
                 }
+
             else:
-                # HYBRID and default: use the full retrieve implementation
                 retrieved_data = self.kg_retriever.retrieve(query)
                 context = str(retrieved_data.get("context_text", ""))
 
@@ -266,21 +351,145 @@ class KGRAGAgent:
         }
 
         if self.cache:
-            self.cache.put(query, mode, result)
+            self.cache.put(cache_query, str(mode), result)
 
         return result
+
+    def _build_retrieval_queries(
+        self,
+        query: str,
+        sub_questions: list[object],
+        max_queries: int = 4,
+    ) -> list[str]:
+        queries: list[str] = []
+        seen: set[str] = set()
+
+        def add(candidate: str) -> None:
+            value = " ".join(str(candidate).split()).strip()
+            if not value:
+                return
+            key = value.lower()
+            if key in seen:
+                return
+            seen.add(key)
+            queries.append(value)
+
+        add(query)
+        if self.config.enable_decomposition_step:
+            for sub in sub_questions:
+                add(str(sub))
+                if len(queries) >= max_queries:
+                    break
+
+        return queries or ([query] if query else [])
+
+    @staticmethod
+    def _node_key(node: dict[str, Any]) -> tuple[str, str]:
+        node_id = str(node.get("node_id", "")).strip()
+        if node_id:
+            return ("id", node_id)
+        return ("text", str(node.get("text", "")).strip().lower())
+
+    @staticmethod
+    def _triple_key(triple: dict[str, Any]) -> tuple[str, str, str]:
+        subject_id = str(triple.get("subject_id", "")).strip()
+        object_id = str(triple.get("object_id", "")).strip()
+        predicate = str(triple.get("predicate", "")).strip().lower()
+
+        if subject_id and object_id:
+            return (f"id:{subject_id}", predicate, f"id:{object_id}")
+
+        subject = str(triple.get("subject", "")).strip().lower()
+        obj = str(triple.get("object", "")).strip().lower()
+        return (subject, predicate, obj)
+
+    def _merge_nodes(
+        self,
+        existing: list[dict[str, Any]],
+        incoming: object,
+        seen: set[tuple[str, str]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(incoming, list):
+            return existing
+
+        for item in incoming:
+            if not isinstance(item, dict):
+                continue
+            key = self._node_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            existing.append(item)
+            if len(existing) >= limit:
+                break
+
+        return existing
+
+    def _merge_triples(
+        self,
+        existing: list[dict[str, Any]],
+        incoming: object,
+        seen: set[tuple[str, str, str]],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(incoming, list):
+            return existing
+
+        for item in incoming:
+            if not isinstance(item, dict):
+                continue
+            key = self._triple_key(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            existing.append(item)
+            if len(existing) >= limit:
+                break
+
+        return existing
+
+    @staticmethod
+    def _merge_context_sections(sections: list[str]) -> str:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for section in sections:
+            value = section.strip()
+            if not value:
+                continue
+            key = " ".join(value.split()).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(value)
+        return "\n\n".join(merged)
+
+    def _format_triples_for_context(self, triples: list[dict[str, Any]]) -> str:
+        if not triples:
+            return ""
+        try:
+            if hasattr(self.kg_retriever, "format_triples") and self.kg_retriever:
+                return str(self.kg_retriever.format_triples(triples))
+            if self.kg_retriever:
+                return str(self.kg_retriever.kg_store.triples_to_text(triples))
+        except Exception:
+            return ""
+        return ""
 
     def _grade(self, state: RAGState) -> dict:
         nodes_count = int(state.get("retrieved_nodes_count", 0) or 0)
         triples_count = len(state.get("kg_triples", []) or [])
         subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
         shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
+        text_context = str(state.get("text_context", "") or "")
+        has_text_evidence = bool(text_context.strip())
 
         # Stronger semantic gating: ensure retrieved KG items actually match the
         # salient terms in the query/context instead of accepting any hit.
-        evidence_units = (
+        kg_evidence_units = (
             nodes_count + triples_count + subgraph_count + shortest_path_count
         )
+        evidence_units = kg_evidence_units + (1 if has_text_evidence else 0)
         if evidence_units == 0:
             return {"relevance": "not_relevant"}
 
@@ -320,10 +529,18 @@ class KGRAGAgent:
             if any(term in hay for term in salient):
                 matched += 1
 
+        if has_text_evidence:
+            context_lower = text_context.lower()
+            if any(term in context_lower for term in salient):
+                matched += 1
+
         # Determine relevance: require at least one semantic match, and either
         # multiple matches or a reasonable match ratio to accept as relevant.
         match_ratio = matched / max(1, evidence_units)
-        is_relevant = matched >= 1 and (matched >= 2 or match_ratio >= 0.30)
+        if kg_evidence_units == 0 and has_text_evidence:
+            is_relevant = matched >= 1
+        else:
+            is_relevant = matched >= 1 and (matched >= 2 or match_ratio >= 0.30)
 
         logger.debug(
             "Grading retrieval: evidence_units=%d matched=%d match_ratio=%.2f salient=%s",
@@ -338,14 +555,16 @@ class KGRAGAgent:
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
         context = state.get("text_context", "")
+        has_text_evidence = bool(str(context or "").strip())
         nodes_count = int(state.get("retrieved_nodes_count", 0) or 0)
         triples_count = len(state.get("kg_triples", []) or [])
         subgraph_count = int(state.get("retrieved_subgraph_count", 0) or 0)
         shortest_path_count = int(state.get("retrieved_shortest_path_count", 0) or 0)
 
-        evidence_units = (
+        kg_evidence_units = (
             nodes_count + triples_count + subgraph_count + shortest_path_count
         )
+        evidence_units = kg_evidence_units + (1 if has_text_evidence else 0)
 
         if evidence_units == 0:
             return {
@@ -355,7 +574,7 @@ class KGRAGAgent:
                 )
             }
 
-        sparse_context = evidence_units <= 2
+        sparse_context = evidence_units <= 2 and len(str(context or "").strip()) < 1600
         effective_query = query
         if sparse_context:
             effective_query = (
