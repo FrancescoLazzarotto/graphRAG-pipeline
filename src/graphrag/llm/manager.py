@@ -405,6 +405,8 @@ class LLMManager:
         self.load_llm()
 
     def generate(self, query: str, context: str, config: AgentConfig) -> dict[str, str]:
+        response_language = self._detect_query_language(query)
+
         # Build prompt directly to avoid templating issues
         system_prompt = (
             "You are a knowledge graph assistant. Answer using ONLY the provided context. "
@@ -475,15 +477,10 @@ class LLMManager:
         if _looks_like_refusal(answer) and context and str(context).strip():
             try:
                 logger.info("LLM refusal detected; attempting fallback retry...")
-                fallback_prompt = (
-                    "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda in italiano. "
-                    "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
-                    "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
-                    "Contesto:\n"
-                    + str(context)
-                    + "\n\nDomanda:\n"
-                    + str(query)
-                    + "\n\nRisposta:"
+                fallback_prompt = self._build_refusal_retry_prompt(
+                    query=query,
+                    context=context,
+                    language=response_language,
                 )
                 if self.use_vllm:
                     from langchain_core.messages import HumanMessage
@@ -509,6 +506,71 @@ class LLMManager:
         # to the caller instead of being converted into questionable lists.
 
         return {"answer": answer}
+
+    @staticmethod
+    def _detect_query_language(query: str) -> str:
+        text = str(query or "").strip().lower()
+        if not text:
+            return "en"
+
+        italian_markers = {
+            "il",
+            "la",
+            "gli",
+            "della",
+            "delle",
+            "perche",
+            "quali",
+            "quale",
+            "come",
+            "sono",
+            "rispetto",
+            "tra",
+            "sulla",
+        }
+        english_markers = {
+            "the",
+            "which",
+            "what",
+            "why",
+            "how",
+            "are",
+            "is",
+            "between",
+            "about",
+            "regarding",
+        }
+
+        tokens = re.findall(r"[a-zà-öø-ÿ']+", text)
+        it_score = sum(1 for token in tokens if token in italian_markers)
+        en_score = sum(1 for token in tokens if token in english_markers)
+
+        return "it" if it_score > en_score else "en"
+
+    @staticmethod
+    def _build_refusal_retry_prompt(query: str, context: str, language: str) -> str:
+        if language == "it":
+            return (
+                "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda. "
+                "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
+                "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
+                "Contesto:\n"
+                + str(context)
+                + "\n\nDomanda:\n"
+                + str(query)
+                + "\n\nRisposta:"
+            )
+
+        return (
+            "Use only the provided context to answer the question naturally and concisely. "
+            "Avoid a mechanical list; prefer a short 1-2 paragraph explanation. "
+            "When possible, add a short 'Evidence in graph' section with the exact node or triple names that support the answer. "
+            "Context:\n"
+            + str(context)
+            + "\n\nQuestion:\n"
+            + str(query)
+            + "\n\nAnswer:"
+        )
 
     @staticmethod
     def _extract_programs_from_context(context: str) -> list[str]:
