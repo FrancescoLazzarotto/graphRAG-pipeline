@@ -22,7 +22,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
     )
-    parser.add_argument("--entity", default="Entita A")
+    parser.add_argument(
+        "--entity",
+        default="",
+        help="Optional entity seed for graph traversal (leave empty for auto-seeding)",
+    )
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
     parser.add_argument("--llm", action="store_true", help="Enable LLM generation")
     parser.add_argument(
