@@ -24,6 +24,9 @@ class ExperimentResult:
     kg_subgraph_triples_used: int = 0
     kg_shortest_path_triples_used: int = 0
     sub_questions: int = 0
+    contexts: list[str] = field(default_factory=list)
+    retrieved_triples: list[dict[str, Any]] = field(default_factory=list)
+    retrieved_entities: list[dict[str, Any] | str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -44,6 +47,14 @@ class ExperimentRunner:
             metadata: dict[str, Any] = {"run_id": state.get("run_id", "")}
             if run_metadata:
                 metadata.update(run_metadata)
+
+            contexts = self._extract_contexts(state)
+            retrieved_triples = self._extract_retrieved_triples(state)
+            retrieved_entities = self._extract_retrieved_entities(
+                state=state,
+                triples=retrieved_triples,
+            )
+
             result = ExperimentResult(
                 strategy=label,
                 question=question,
@@ -64,12 +75,119 @@ class ExperimentRunner:
                 sub_questions=len(state.get("sub_questions", []))
                 if isinstance(state.get("sub_questions", []), list)
                 else 0,
+                contexts=contexts,
+                retrieved_triples=retrieved_triples,
+                retrieved_entities=retrieved_entities,
                 metadata=metadata,
             )
             batch.append(result)
 
         self.results.extend(batch)
         return batch
+
+    @staticmethod
+    def _extract_contexts(state: dict[str, Any]) -> list[str]:
+        contexts: list[str] = []
+        seen: set[str] = set()
+
+        for key in ("text_context", "kg_context", "merged_context"):
+            value = str(state.get(key, "") or "").strip()
+            if not value:
+                continue
+            normalized = " ".join(value.split()).lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            contexts.append(value)
+
+        return contexts
+
+    @staticmethod
+    def _triple_key(triple: dict[str, Any]) -> tuple[str, str, str]:
+        subject_id = str(triple.get("subject_id", "")).strip()
+        object_id = str(triple.get("object_id", "")).strip()
+        predicate = str(triple.get("predicate", "")).strip().lower()
+
+        if subject_id and object_id:
+            return (f"id:{subject_id}", predicate, f"id:{object_id}")
+
+        subject = str(triple.get("subject", "")).strip().lower()
+        obj = str(triple.get("object", "")).strip().lower()
+        return (subject, predicate, obj)
+
+    def _extract_retrieved_triples(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        triples: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for key in ("kg_triples", "retrieved_subgraph", "retrieved_shortest_path"):
+            value = state.get(key, [])
+            if not isinstance(value, list):
+                continue
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                triple = {
+                    "subject": str(item.get("subject", "")),
+                    "predicate": str(item.get("predicate", "")),
+                    "object": str(item.get("object", "")),
+                }
+                key_tuple = self._triple_key(item)
+                if key_tuple in seen:
+                    continue
+                seen.add(key_tuple)
+                triples.append(triple)
+
+        return triples
+
+    @staticmethod
+    def _extract_retrieved_entities(
+        state: dict[str, Any],
+        triples: list[dict[str, Any]],
+    ) -> list[dict[str, Any] | str]:
+        entities: list[dict[str, Any] | str] = []
+        seen: set[str] = set()
+
+        nodes = state.get("retrieved_nodes", []) or state.get("nodes", []) or []
+        if isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                node_id = str(node.get("node_id", "")).strip()
+                name = str(node.get("text", "")).strip()
+                labels = node.get("labels", [])
+                label_list = (
+                    [str(label) for label in labels if str(label).strip()]
+                    if isinstance(labels, list)
+                    else []
+                )
+
+                key = f"id:{node_id}" if node_id else f"name:{name.lower()}"
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                item: dict[str, Any] = {}
+                if node_id:
+                    item["id"] = node_id
+                if name:
+                    item["name"] = name
+                if label_list:
+                    item["labels"] = label_list
+                if item:
+                    entities.append(item)
+
+        for triple in triples:
+            for field in ("subject", "object"):
+                value = str(triple.get(field, "")).strip()
+                if not value:
+                    continue
+                key = f"name:{value.lower()}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                entities.append(value)
+
+        return entities
 
     def compare(self) -> dict[str, list[ExperimentResult]]:
         grouped: dict[str, list[ExperimentResult]] = {}
@@ -100,6 +218,9 @@ class ExperimentRunner:
                     "kg_subgraph_triples_used",
                     "kg_shortest_path_triples_used",
                     "sub_questions",
+                    "contexts_json",
+                    "retrieved_triples_json",
+                    "retrieved_entities_json",
                     "metadata_json",
                 ]
             )
@@ -117,6 +238,9 @@ class ExperimentRunner:
                         result.kg_subgraph_triples_used,
                         result.kg_shortest_path_triples_used,
                         result.sub_questions,
+                        json.dumps(result.contexts, ensure_ascii=False),
+                        json.dumps(result.retrieved_triples, ensure_ascii=False),
+                        json.dumps(result.retrieved_entities, ensure_ascii=False),
                         json.dumps(result.metadata, ensure_ascii=False, sort_keys=True),
                     ]
                 )
