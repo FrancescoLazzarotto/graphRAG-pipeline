@@ -142,6 +142,16 @@ def save_triples(path: Path, triples: list[KGTriple]) -> None:
     _save_json(path, [triple.as_dict() for triple in triples])
 
 
+def check_triples(path: Path, triples: list[KGTriple]) -> None:
+    predicate_counts = Counter(triple.predicate for triple in triples)
+    report = {
+        "triples_count": len(triples),
+        "distinct_predicates": len(predicate_counts),
+        "predicate_counts": dict(sorted(predicate_counts.items())),
+    }
+    _save_json(path, report)
+
+
 def load_triples(path: Path) -> list[KGTriple]:
     payload = _load_json(path)
     return [KGTriple.model_validate(item) for item in payload]
