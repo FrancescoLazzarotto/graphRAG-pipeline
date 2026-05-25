@@ -70,7 +70,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
     )
     parser.add_argument("--questions-file", default="", help="One question per line")
-    parser.add_argument("--entity", default="Entita A")
+    parser.add_argument(
+        "--entity",
+        default="",
+        help="Optional entity seed for graph traversal (leave empty for auto-seeding)",
+    )
 
     parser.add_argument(
         "--documents",
