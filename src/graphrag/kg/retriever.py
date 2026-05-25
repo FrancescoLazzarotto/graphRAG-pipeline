@@ -38,6 +38,12 @@ _QUESTION_STOPWORDS = {
     "an",
 }
 
+_PLACEHOLDER_ENTITIES = {
+    "entita a",
+    "entità a",
+    "entity a",
+}
+
 
 class KGRetriever:
     def __init__(self, kg_store: KnowledgeGraphManager, config: AgentConfig) -> None:
@@ -46,7 +52,7 @@ class KGRetriever:
 
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
-        configured_entity = (self.config.entity or "").strip()
+        configured_entity = self._sanitize_entity_name(self.config.entity or "")
         search_terms = self._build_search_terms(
             query_text=query_text, configured_entity=configured_entity
         )
@@ -73,9 +79,8 @@ class KGRetriever:
             triples=triples,
             search_terms=search_terms,
         )
-        resolved_entity = configured_entity or (
-            seed_entities[0] if seed_entities else ""
-        )
+        resolved_entity = configured_entity or (seed_entities[0] if seed_entities else "")
+        resolved_entity = self._sanitize_entity_name(resolved_entity)
 
         if self.config.include_neighbors and resolved_entity:
             neighbors = self.kg_store.get_neighbors(
@@ -101,10 +106,10 @@ class KGRetriever:
                 )
 
         if self.config.include_shortest_path:
-            entity_a = self.config.entity_a or (
+            entity_a = self._sanitize_entity_name(self.config.entity_a or "") or (
                 seed_entities[0] if len(seed_entities) > 0 else None
             )
-            entity_b = self.config.entity_b or (
+            entity_b = self._sanitize_entity_name(self.config.entity_b or "") or (
                 seed_entities[1] if len(seed_entities) > 1 else None
             )
             if entity_a and entity_b and entity_a != entity_b:
@@ -142,6 +147,25 @@ class KGRetriever:
                 section for section in context_sections if section
             ),
         }
+
+    def resolve_entity_seed(self, query: str | None = None) -> str:
+        query_text = (query or self.config.query or self.config.entity or "").strip()
+        configured_entity = self._sanitize_entity_name(self.config.entity or "")
+        search_terms = self._build_search_terms(
+            query_text=query_text,
+            configured_entity=configured_entity,
+        )
+        seed_entities = self._seed_entities(
+            query_text=query_text,
+            nodes=[],
+            triples=[],
+            search_terms=search_terms,
+        )
+        for candidate in [configured_entity, *seed_entities]:
+            normalized = self._sanitize_entity_name(candidate)
+            if normalized:
+                return normalized
+        return ""
 
     def multi_hop(
         self,
@@ -342,12 +366,18 @@ class KGRetriever:
     ) -> list[str]:
         seeds: list[str] = []
 
-        if self.config.entity:
-            seeds.append(self.config.entity.strip())
+        configured_entity = self._sanitize_entity_name(self.config.entity or "")
+        if configured_entity:
+            seeds.append(configured_entity)
 
         seeds.extend(search_terms)
 
         for node in nodes:
+            # prefer elementId/node_id when available (more reliable for exact matching)
+            node_id = str(node.get("node_id", "") or "").strip()
+            if node_id:
+                seeds.append(node_id)
+                continue
             text = node.get("text", "").strip()
             if text:
                 seeds.append(text)
@@ -362,6 +392,16 @@ class KGRetriever:
             seeds.append(query_text)
 
         return self._unique_values(seeds)
+
+    @staticmethod
+    def _sanitize_entity_name(value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            return ""
+        normalized = " ".join(cleaned.lower().split())
+        if normalized in _PLACEHOLDER_ENTITIES:
+            return ""
+        return cleaned
 
     def _build_search_terms(self, query_text: str, configured_entity: str) -> list[str]:
         terms: list[str] = []
