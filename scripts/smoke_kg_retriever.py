@@ -15,7 +15,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
     )
-    parser.add_argument("--entity", default="Entita A")
+    parser.add_argument("--entity", default="")
     parser.add_argument("--entity-a", default="")
     parser.add_argument("--entity-b", default="")
     parser.add_argument("--labels", default="", help="Comma-separated labels filter")
