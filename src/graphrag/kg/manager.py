@@ -263,7 +263,7 @@ class KnowledgeGraphManager:
             rel_filter = "type(r) IN $relationship_types"
             params["relationship_types"] = list(relationship_types)
 
-        cypher = f"""
+        cypher_exact = f"""
         MATCH (seed)
         WHERE {self._node_text_match_clause("seed", "entity", exact=True)}
         MATCH p = (seed)-[*1..{hops}]-(other)
@@ -283,7 +283,33 @@ class KnowledgeGraphManager:
             properties(r) AS relationship_properties
         LIMIT $limit
         """
-        return [self._row_to_triple(row) for row in self.run_query(cypher, params)]
+
+        rows = self.run_query(cypher_exact, params)
+        if not rows:
+            # fallback to a looser text match when exact matching returns nothing
+            cypher_fallback = f"""
+            MATCH (seed)
+            WHERE {self._node_text_match_clause("seed", "entity", exact=False)}
+            MATCH p = (seed)-[*1..{hops}]-(other)
+            UNWIND relationships(p) AS r
+            WITH DISTINCT r
+            WHERE {rel_filter}
+            RETURN DISTINCT
+                elementId(startNode(r)) AS subject_id,
+                {self._coalesce_name_expr("startNode(r)")} AS subject,
+                coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
+                elementId(endNode(r)) AS object_id,
+                {self._coalesce_name_expr("endNode(r)")} AS object,
+                labels(startNode(r)) AS subject_labels,
+                labels(endNode(r)) AS object_labels,
+                properties(startNode(r)) AS subject_properties,
+                properties(endNode(r)) AS object_properties,
+                properties(r) AS relationship_properties
+            LIMIT $limit
+            """
+            rows = self.run_query(cypher_fallback, params)
+
+        return [self._row_to_triple(row) for row in rows]
 
     def get_neighbors(
         self,
@@ -296,8 +322,7 @@ class KnowledgeGraphManager:
         if relationship_types:
             rel_clause = "AND type(r) IN $relationship_types"
             params["relationship_types"] = list(relationship_types)
-
-        cypher = f"""
+        cypher_exact = f"""
         MATCH (seed)-[r]-(neighbor)
         WHERE {self._node_text_match_clause("seed", "entity", exact=True)}
         {rel_clause}
@@ -308,7 +333,22 @@ class KnowledgeGraphManager:
             {self._coalesce_name_expr("neighbor")} AS text
         LIMIT $limit
         """
-        return [self._row_to_node(row) for row in self.run_query(cypher, params)]
+        rows = self.run_query(cypher_exact, params)
+        if not rows:
+            cypher_fallback = f"""
+            MATCH (seed)-[r]-(neighbor)
+            WHERE {self._node_text_match_clause("seed", "entity", exact=False)}
+            {rel_clause}
+            RETURN DISTINCT
+                elementId(neighbor) AS node_id,
+                labels(neighbor) AS labels,
+                properties(neighbor) AS properties,
+                {self._coalesce_name_expr("neighbor")} AS text
+            LIMIT $limit
+            """
+            rows = self.run_query(cypher_fallback, params)
+
+        return [self._row_to_node(row) for row in rows]
 
     def get_entity_types(self, entity: str) -> list[str]:
         cypher = f"""
@@ -328,7 +368,7 @@ class KnowledgeGraphManager:
         entity_b: str,
         max_depth: int = 6,
     ) -> list[KGTriple]:
-        cypher = f"""
+        cypher_exact = f"""
         MATCH (a)
         WHERE {self._node_text_match_clause("a", "entity_a", exact=True)}
         WITH DISTINCT a
@@ -349,7 +389,40 @@ class KnowledgeGraphManager:
             properties(endNode(r)) AS object_properties,
             properties(r) AS relationship_properties
         """
-        rows = self.run_query(cypher, {"entity_a": entity_a, "entity_b": entity_b})
+        try:
+            rows = self.run_query(cypher_exact, {"entity_a": entity_a, "entity_b": entity_b})
+        except Exception:
+            # If the shortestPath call fails (e.g. same-node cartesian product),
+            # return an empty result instead of propagating the DB error.
+            return []
+
+        if not rows:
+            cypher_fallback = f"""
+            MATCH (a)
+            WHERE {self._node_text_match_clause("a", "entity_a", exact=False)}
+            WITH DISTINCT a
+            MATCH (b)
+            WHERE {self._node_text_match_clause("b", "entity_b", exact=False)}
+            WITH DISTINCT a, b
+            MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
+            UNWIND relationships(p) AS r
+            RETURN DISTINCT
+                elementId(startNode(r)) AS subject_id,
+                {self._coalesce_name_expr("startNode(r)")} AS subject,
+                            coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
+                elementId(endNode(r)) AS object_id,
+                {self._coalesce_name_expr("endNode(r)")} AS object,
+                labels(startNode(r)) AS subject_labels,
+                labels(endNode(r)) AS object_labels,
+                properties(startNode(r)) AS subject_properties,
+                properties(endNode(r)) AS object_properties,
+                properties(r) AS relationship_properties
+            """
+            try:
+                rows = self.run_query(cypher_fallback, {"entity_a": entity_a, "entity_b": entity_b})
+            except Exception:
+                return []
+
         return [self._row_to_triple(row) for row in rows]
 
     def triples_to_text(self, triples: Sequence[KGTriple]) -> str:
