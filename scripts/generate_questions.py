@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sys
 import unicodedata
 import urllib.error
 import urllib.request
@@ -13,6 +14,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Ensure local package imports work when launched as `python scripts/generate_questions.py`.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from kg_pipeline.models.types import ChunkRecord, DocumentRecord
 from kg_pipeline.stages.chunking import load_chunks
