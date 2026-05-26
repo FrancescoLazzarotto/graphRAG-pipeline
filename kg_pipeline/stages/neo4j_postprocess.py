@@ -173,6 +173,24 @@ _VERBOSE_RELATION_INVERSES = [
     {"from": "DRIVEN_BY", "to": "AFFECTS"},
 ]
 
+_RELTYPE_STOP_TOKENS = {
+    "A",
+    "AN",
+    "AND",
+    "BY",
+    "FOR",
+    "FROM",
+    "HAS",
+    "IN",
+    "IS",
+    "OF",
+    "ON",
+    "OR",
+    "THE",
+    "TO",
+    "WITH",
+}
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -260,6 +278,40 @@ def _resolve_llm_env() -> tuple[str, str, str]:
     return base_url, model_name, api_key
 
 
+def _extract_first_json_array(text: str) -> str:
+    start = text.find("[")
+    if start < 0:
+        return ""
+
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for idx in range(start, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "[":
+            depth += 1
+            continue
+        if ch == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start:idx + 1]
+
+    return ""
+
+
 def _llm_json_array(
     client: OpenAI, model_name: str, prompt: str
 ) -> list[dict[str, Any]]:
@@ -269,7 +321,13 @@ def _llm_json_array(
         messages=[{"role": "user", "content": prompt}],
     )
     content = response.choices[0].message.content or "[]"
-    return parse_json_array(content)
+    try:
+        return parse_json_array(content)
+    except Exception:
+        candidate = _extract_first_json_array(content)
+        if candidate:
+            return parse_json_array(candidate)
+        raise
 
 
 def _has_apoc(session) -> bool:
@@ -383,6 +441,258 @@ def _fallback_relation_target(source: str, canonical_set: set[str]) -> str:
                 return candidate
 
     return "RELATED_TO"
+
+
+def _reltype_tokens(value: str) -> set[str]:
+    normalized = _normalize_rel_type(value)
+    tokens = [tok for tok in normalized.split("_") if tok]
+    return {
+        tok
+        for tok in tokens
+        if tok not in _RELTYPE_STOP_TOKENS and (len(tok) > 1 or tok.isdigit())
+    }
+
+
+def _deterministic_relation_target(
+    source: str,
+    canonical_set: set[str],
+    canonical_tokens: dict[str, set[str]],
+) -> str:
+    normalized = _normalize_rel_type(source)
+    if normalized in canonical_set:
+        return normalized
+
+    source_tokens = _reltype_tokens(normalized)
+    if not source_tokens:
+        return "RELATED_TO"
+
+    best_target = "RELATED_TO"
+    best_overlap = 0
+    best_jaccard = 0.0
+
+    for target, target_tokens in canonical_tokens.items():
+        if target == "RELATED_TO" or not target_tokens:
+            continue
+        overlap = len(source_tokens & target_tokens)
+        if overlap <= 0:
+            continue
+        union = len(source_tokens | target_tokens)
+        jaccard = overlap / union if union else 0.0
+        if overlap > best_overlap or (overlap == best_overlap and jaccard > best_jaccard):
+            best_target = target
+            best_overlap = overlap
+            best_jaccard = jaccard
+
+    if best_overlap >= 2:
+        return best_target
+    if best_jaccard >= 0.5:
+        return best_target
+    if best_overlap >= 1 and len(source_tokens) <= 2 and best_jaccard >= 0.34:
+        return best_target
+    return "RELATED_TO"
+
+
+def _compact_relation_types_deterministic(
+    session,
+    canonical: list[str],
+    dry_run: bool,
+    apoc_available: bool,
+    rare_threshold: int,
+) -> dict[str, Any]:
+    rows = session.run(
+        "MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS count ORDER BY count DESC"
+    ).data()
+    canonical_set = {_normalize_rel_type(item) for item in canonical}
+    canonical_tokens = {
+        _normalize_rel_type(item): _reltype_tokens(item) for item in canonical
+    }
+
+    report: dict[str, Any] = {
+        "total_relation_types": len(rows),
+        "total_edges": sum(int(row.get("count", 0)) for row in rows),
+        "rare_threshold": int(rare_threshold),
+        "renamed_types": 0,
+        "renamed_edges": 0,
+        "collapsed_to_related_to_edges": 0,
+        "already_canonical_types": 0,
+        "skipped_high_freq_noncanonical": [],
+        "renamed_samples": [],
+        "errors": [],
+    }
+
+    if not dry_run and not apoc_available:
+        report["errors"].append(
+            "APOC unavailable, cannot rename relationship types for compaction"
+        )
+        return report
+
+    for row in rows:
+        source = str(row.get("type") or "").strip()
+        count = int(row.get("count", 0))
+        if not source:
+            continue
+
+        normalized = _normalize_rel_type(source)
+        if normalized in canonical_set:
+            report["already_canonical_types"] += 1
+            continue
+
+        if count > rare_threshold:
+            if len(report["skipped_high_freq_noncanonical"]) < 200:
+                report["skipped_high_freq_noncanonical"].append(
+                    {"source": source, "count": count}
+                )
+            continue
+
+        target = _deterministic_relation_target(
+            source=source,
+            canonical_set=canonical_set,
+            canonical_tokens=canonical_tokens,
+        )
+        if not target or source == target:
+            continue
+
+        if not dry_run:
+            try:
+                session.run(
+                    "CALL apoc.refactor.rename.type($old, $new)",
+                    old=source,
+                    new=target,
+                ).consume()
+            except Exception as exc:
+                report["errors"].append(
+                    f"compaction rename failed for {source} -> {target}: {exc}"
+                )
+                continue
+
+        report["renamed_types"] += 1
+        report["renamed_edges"] += count
+        if target == "RELATED_TO":
+            report["collapsed_to_related_to_edges"] += count
+        if len(report["renamed_samples"]) < 250:
+            report["renamed_samples"].append(
+                {
+                    "source": source,
+                    "target": target,
+                    "count": count,
+                }
+            )
+
+    return report
+
+
+def _bridge_duplicate_name_groups(
+    session,
+    dry_run: bool,
+    max_edges_per_group: int,
+) -> dict[str, Any]:
+    groups = _find_duplicate_groups(session)
+    report: dict[str, Any] = {
+        "groups_considered": len(groups),
+        "candidate_pairs": 0,
+        "edges_created": 0,
+        "skipped_already_connected": 0,
+        "skipped_group_limit": 0,
+        "samples": [],
+        "errors": [],
+    }
+
+    for group in groups:
+        nodes = sorted(
+            group["nodes"], key=lambda row: (-int(row.get("degree", 0)), int(row["id"]))
+        )
+        if len(nodes) < 2:
+            continue
+
+        anchor = nodes[0]
+        anchor_id = int(anchor["id"])
+        local_edges = 0
+        for node in nodes[1:]:
+            if max_edges_per_group > 0 and local_edges >= max_edges_per_group:
+                report["skipped_group_limit"] += 1
+                continue
+
+            other_id = int(node["id"])
+            if other_id == anchor_id:
+                continue
+
+            try:
+                existing = int(
+                    session.run(
+                        "MATCH (a)-[r]-(b) "
+                        "WHERE id(a) = $a AND id(b) = $b "
+                        "RETURN count(r) AS c",
+                        a=anchor_id,
+                        b=other_id,
+                    ).single()["c"]
+                )
+            except Exception as exc:
+                report["errors"].append(
+                    f"bridge existence check failed for {anchor_id}-{other_id}: {exc}"
+                )
+                continue
+
+            if existing > 0:
+                report["skipped_already_connected"] += 1
+                continue
+
+            report["candidate_pairs"] += 1
+            if not dry_run:
+                try:
+                    session.run(
+                        "MATCH (a), (b) "
+                        "WHERE id(a) = $a AND id(b) = $b "
+                        "MERGE (a)-[:RELATED_TO]->(b)",
+                        a=anchor_id,
+                        b=other_id,
+                    ).consume()
+                except Exception as exc:
+                    report["errors"].append(
+                        f"bridge create failed for {anchor_id}-{other_id}: {exc}"
+                    )
+                    continue
+
+            report["edges_created"] += 1
+            local_edges += 1
+            if len(report["samples"]) < 100:
+                report["samples"].append(
+                    {
+                        "normalized": group["normalized"],
+                        "from": str(anchor.get("name") or ""),
+                        "to": str(node.get("name") or ""),
+                    }
+                )
+
+    return report
+
+
+def _run_semantic_compaction(
+    session,
+    relation_vocab: list[str],
+    dry_run: bool,
+    apoc_available: bool,
+    rare_threshold: int,
+    bridge_max_edges_per_group: int,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {}
+
+    compaction = _compact_relation_types_deterministic(
+        session=session,
+        canonical=relation_vocab,
+        dry_run=dry_run,
+        apoc_available=apoc_available,
+        rare_threshold=rare_threshold,
+    )
+    report["relation_type_compaction"] = compaction
+
+    bridge = _bridge_duplicate_name_groups(
+        session=session,
+        dry_run=dry_run,
+        max_edges_per_group=bridge_max_edges_per_group,
+    )
+    report["duplicate_name_bridging"] = bridge
+
+    return report
 
 
 def _labels_compatible(primary: list[str], secondary: list[str], mode: str) -> bool:
@@ -2164,6 +2474,7 @@ def main() -> None:
             "aura-issues",
             "cleanup-pass3",
             "mentioned-in",
+            "compact-semantic",
         ],
         default="",
         help="Run a single cleanup task and skip the default pipeline",
@@ -2205,6 +2516,18 @@ def main() -> None:
         "--rewrite-inverses",
         action="store_true",
         help="Rewrite inverse relation pairs to a single direction",
+    )
+    parser.add_argument(
+        "--rare-reltype-threshold",
+        type=int,
+        default=2,
+        help="Compact non-canonical relationship types with count <= threshold",
+    )
+    parser.add_argument(
+        "--duplicate-bridge-max-per-group",
+        type=int,
+        default=3,
+        help="Maximum RELATED_TO bridges created per duplicate-name group",
     )
     args = parser.parse_args()
 
@@ -2289,6 +2612,25 @@ def main() -> None:
                         prop_name=args.mentioned_in_prop,
                         count_prop=args.mentioned_in_count_prop,
                         mentions_prop=args.mentioned_in_mentions_prop,
+                    )
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                    return
+
+                if fix_mode == "compact-semantic":
+                    LOGGER.info(
+                        "Fix: semantic compaction (rare_reltype_threshold=%d bridge_max_edges_per_group=%d)",
+                        int(args.rare_reltype_threshold),
+                        int(args.duplicate_bridge_max_per_group),
+                    )
+                    report["semantic_compaction"] = _run_semantic_compaction(
+                        session=session,
+                        relation_vocab=relation_vocab,
+                        dry_run=args.dry_run,
+                        apoc_available=apoc_available,
+                        rare_threshold=max(int(args.rare_reltype_threshold), 0),
+                        bridge_max_edges_per_group=max(
+                            int(args.duplicate_bridge_max_per_group), 0
+                        ),
                     )
                     print(json.dumps(report, ensure_ascii=False, indent=2))
                     return
