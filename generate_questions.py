@@ -1,0 +1,933 @@
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import unicodedata
+import urllib.error
+import urllib.request
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from kg_pipeline.models.types import ChunkRecord, DocumentRecord
+from kg_pipeline.stages.chunking import load_chunks
+from kg_pipeline.stages.ingestion import load_documents
+
+
+LOGGER = logging.getLogger("generate_questions")
+
+DEFAULT_OUTPUT = Path("artifacts/tmp/graphrag_test_suite.json")
+DEFAULT_RUN_ROOT = Path("kg_pipeline/artifacts")
+QUESTION_TYPES = ["fact_based", "multi_hop", "comparative", "aggregation", "cross_doc"]
+NON_CROSS_TYPES = QUESTION_TYPES[:-1]
+TARGET_COUNTS = {
+    "fact_based": 7,
+    "multi_hop": 5,
+    "comparative": 4,
+    "aggregation": 4,
+    "cross_doc": 5,
+}
+QUESTION_NORMALIZE_RE = re.compile(r"\s+")
+QUESTION_TOKEN_RE = re.compile(r"[^a-z0-9]+")
+JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+REFUSAL_PATTERNS = [
+    re.compile(r"contesto[^\.\n]{0,120}(non\s+contiene|insufficiente)", re.IGNORECASE),
+    re.compile(r"non\s+[eè]\s+possibile\s+(fornire\s+)?(una\s+)?rispost", re.IGNORECASE),
+    re.compile(r"non\s+ho\s+informazioni\s+sufficienti", re.IGNORECASE),
+    re.compile(r"(not\s+enough|insufficient)\s+context", re.IGNORECASE),
+    re.compile(r"cannot\s+answer\s+from\s+the\s+provided\s+context", re.IGNORECASE),
+]
+JSON_ONLY_SUFFIX = "Return only valid JSON. Do not use markdown, code fences, or backticks."
+
+
+@dataclass(frozen=True)
+class VLLMConfig:
+    base_url: str
+    model_name: str
+    api_key: str
+
+
+def _setup_logging(verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.INFO if verbose else logging.WARNING,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        force=True,
+    )
+
+
+def _normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    normalized = QUESTION_TOKEN_RE.sub(" ", normalized.lower())
+    return QUESTION_NORMALIZE_RE.sub(" ", normalized).strip()
+
+
+def _looks_like_refusal(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return True
+    return any(pattern.search(candidate) for pattern in REFUSAL_PATTERNS)
+
+
+def _iter_json_candidates(raw: str) -> list[str]:
+    stripped = raw.strip()
+    if not stripped:
+        return []
+
+    candidates: list[str] = [stripped]
+
+    for match in JSON_FENCE_RE.findall(stripped):
+        fragment = match.strip()
+        if fragment:
+            candidates.append(fragment)
+
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start = stripped.find(opener)
+        end = stripped.rfind(closer)
+        if start >= 0 and end > start:
+            candidates.append(stripped[start : end + 1].strip())
+
+    starts = [idx for idx in (stripped.find("{"), stripped.find("[")) if idx >= 0]
+    if starts:
+        candidates.append(stripped[min(starts) :].strip())
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        if item not in seen:
+            unique.append(item)
+            seen.add(item)
+    return unique
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _discover_latest_run_dir(run_root: Path) -> Path:
+    if not run_root.exists() or not run_root.is_dir():
+        raise FileNotFoundError(f"Run root not found: {run_root}")
+
+    candidates = [path for path in run_root.iterdir() if path.is_dir() and path.name.startswith("run_")]
+    if not candidates:
+        raise FileNotFoundError(f"No run_* directories found under: {run_root}")
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def _load_run_artifacts(run_dir: Path) -> tuple[list[DocumentRecord], list[ChunkRecord]]:
+    docs_path = run_dir / "stage0_documents.json"
+    chunks_path = run_dir / "stage1_chunks.json"
+    if not docs_path.exists():
+        raise FileNotFoundError(f"Missing documents artifact: {docs_path}")
+    if not chunks_path.exists():
+        raise FileNotFoundError(f"Missing chunks artifact: {chunks_path}")
+
+    documents = load_documents(docs_path)
+    chunks = load_chunks(chunks_path)
+    return documents, chunks
+
+
+def _resolve_docs_and_chunks(run_dir: Path, doc_filter: str | None) -> tuple[Path, list[DocumentRecord], list[ChunkRecord]]:
+    documents, chunks = _load_run_artifacts(run_dir)
+    if doc_filter:
+        filtered_docs = [doc for doc in documents if doc_filter in {doc.filename, doc.doc_id}]
+        if not filtered_docs:
+            available = ", ".join(sorted({doc.filename for doc in documents}))
+            raise ValueError(f"Document '{doc_filter}' not found in {run_dir}. Available: {available}")
+        filtered_ids = {doc.doc_id for doc in filtered_docs}
+        documents = filtered_docs
+        chunks = [chunk for chunk in chunks if chunk.doc_id in filtered_ids]
+    if not documents:
+        raise ValueError("No documents available after filtering")
+    if not chunks:
+        raise ValueError("No chunks available after filtering")
+    return run_dir, documents, chunks
+
+
+def _resolve_vllm_config() -> VLLMConfig:
+    base_url = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1").strip().rstrip("/")
+    model_name = os.getenv("VLLM_MODEL_NAME", "").strip()
+    api_key = os.getenv("VLLM_API_KEY", os.getenv("OPENAI_API_KEY", "EMPTY")).strip()
+    if not model_name:
+        raise ValueError("Missing VLLM_MODEL_NAME environment variable")
+    return VLLMConfig(base_url=base_url, model_name=model_name, api_key=api_key or "EMPTY")
+
+
+def _chat_completion(vllm: VLLMConfig, messages: list[dict[str, str]], temperature: float = 0.0) -> str:
+    payload = {
+        "model": vllm.model_name,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    request = urllib.request.Request(
+        url=f"{vllm.base_url}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {vllm.api_key}",
+        },
+        method="POST",
+    )
+    timeout_sec = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_sec) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"vLLM request failed with HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Cannot reach vLLM endpoint at {vllm.base_url}: {exc}") from exc
+
+    payload_obj = json.loads(body)
+    return str(payload_obj["choices"][0]["message"].get("content", ""))
+
+
+def _parse_json_once(raw: str) -> Any:
+    last_error: json.JSONDecodeError | None = None
+    for candidate in _iter_json_candidates(raw):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("No JSON content found in model response", raw, 0)
+
+
+def _call_json_llm(
+    vllm: VLLMConfig,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    temperature: float = 0.0,
+) -> Any:
+    base_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    raw = _chat_completion(vllm, base_messages, temperature=temperature)
+    current_response = raw
+    parse_error: Exception | None = None
+
+    for attempt in range(3):
+        try:
+            return _parse_json_once(current_response)
+        except (json.JSONDecodeError, TypeError) as exc:
+            parse_error = exc
+            if attempt == 2:
+                break
+
+            repair_messages = [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous answer was invalid JSON. Repair it and return only valid JSON.\n\n"
+                        f"Original prompt:\n{user_prompt}\n\n"
+                        f"Invalid answer:\n{current_response}"
+                    ),
+                },
+            ]
+            current_response = _chat_completion(vllm, repair_messages, temperature=temperature)
+
+    preview = current_response[:400].replace("\n", " ")
+    raise RuntimeError(f"Failed to parse JSON response after retries: {parse_error}; preview={preview}")
+
+
+def _section_join(chunks: list[ChunkRecord]) -> str:
+    parts: list[str] = []
+    for chunk in chunks:
+        parts.append(f"[Chunk {chunk.chunk_index} | pages {chunk.page_range} | {chunk.section_title}]\n{chunk.text.strip()}")
+    return "\n\n".join(parts)
+
+
+def _truncate(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _build_doc_context(doc: DocumentRecord, chunks: list[ChunkRecord], limit_chars: int = 12000) -> str:
+    ordered = sorted(chunks, key=lambda chunk: chunk.chunk_index)
+    return _truncate(_section_join(ordered), limit_chars)
+
+
+def _build_doc_summary(doc: DocumentRecord, chunks: list[ChunkRecord], limit_chars: int = 2400) -> str:
+    context = _build_doc_context(doc, chunks, limit_chars=limit_chars * 2)
+    return _truncate(context, limit_chars)
+
+
+def _distributed_counts(total: int, buckets: int) -> list[int]:
+    if buckets <= 0:
+        return []
+    base, remainder = divmod(total, buckets)
+    return [base + (1 if index < remainder else 0) for index in range(buckets)]
+
+
+def _split_type_counts(total: int, remaining: dict[str, int], allowed_types: list[str]) -> dict[str, int]:
+    if total <= 0:
+        return {question_type: 0 for question_type in allowed_types}
+
+    available_total = sum(max(0, remaining.get(question_type, 0)) for question_type in allowed_types)
+    if available_total <= 0:
+        return {question_type: 0 for question_type in allowed_types}
+
+    provisional: dict[str, int] = {}
+    fractions: list[tuple[float, str]] = []
+    assigned = 0
+    for question_type in allowed_types:
+        available = max(0, remaining.get(question_type, 0))
+        exact = total * available / available_total
+        count = min(available, int(exact))
+        provisional[question_type] = count
+        assigned += count
+        fractions.append((exact - count, question_type))
+
+    fractions.sort(reverse=True)
+    for _, question_type in fractions:
+        if assigned >= total:
+            break
+        if provisional[question_type] >= max(0, remaining.get(question_type, 0)):
+            continue
+        provisional[question_type] += 1
+        assigned += 1
+
+    for question_type in allowed_types:
+        provisional.setdefault(question_type, 0)
+    return provisional
+
+
+def _question_generation_system_prompt() -> str:
+    return (
+        "You are an expert in Knowledge Graph and RAG evaluation. "
+        "Generate only questions whose answers are explicitly present in the provided context. "
+        "You must follow the JSON schema exactly. "
+        f"{JSON_ONLY_SUFFIX}"
+    )
+
+
+def _ground_truth_system_prompt() -> str:
+    return (
+        "You are an expert in Knowledge Graph and RAG evaluation. "
+        "Write a factual and concise ground truth answer anchored only in the provided context. "
+        "Use at most 3 sentences. "
+        f"{JSON_ONLY_SUFFIX}"
+    )
+
+
+def _format_question_prompt(
+    *,
+    context: str,
+    question_counts: dict[str, int],
+    source_label: str,
+) -> str:
+    schema = {
+        "questions": [
+            {
+                "question": "...",
+                "type": "fact_based",
+                "source_doc": source_label,
+                "source_docs": None,
+                "expected_entities": ["..."],
+            }
+        ]
+    }
+    return (
+        "Create test questions for GraphRAG evaluation.\n"
+        f"Requested counts: {json.dumps(question_counts, ensure_ascii=False)}\n"
+        "Allowed question types: fact_based, multi_hop, comparative, aggregation.\n"
+        "Rules:\n"
+        "- Generate only questions that can be answered from the context.\n"
+        "- Use concise, specific wording.\n"
+        "- Vary wording to avoid near-duplicates.\n"
+        "- expected_entities must contain the minimal set of key entities needed to answer.\n"
+        "- source_doc must be the provided document label.\n"
+        "- source_docs must be null for non-cross_doc items.\n"
+        "- Return only a JSON object with key 'questions'.\n\n"
+        f"Output schema example:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        f"Context:\n{context}"
+    )
+
+
+def _format_cross_doc_prompt(contexts: dict[str, str], count: int) -> str:
+    schema = {
+        "questions": [
+            {
+                "question": "...",
+                "type": "cross_doc",
+                "source_doc": None,
+                "source_docs": ["doc1.txt", "doc2.md"],
+                "expected_entities": ["..."],
+            }
+        ]
+    }
+    return (
+        "Create cross-document GraphRAG evaluation questions.\n"
+        f"Requested count: {count}\n"
+        "Rules:\n"
+        "- Every question must require information from more than one document.\n"
+        "- source_doc must be null.\n"
+        "- source_docs must list all contributing documents.\n"
+        "- expected_entities must contain the key entities needed to answer.\n"
+        "- Return only a JSON object with key 'questions'.\n\n"
+        f"Output schema example:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        "Document summaries:\n"
+        + "\n\n".join(f"### {name}\n{summary}" for name, summary in contexts.items())
+    )
+
+
+def _format_ground_truth_prompt(question: str, context: str, expected_entities: list[str]) -> str:
+    return (
+        "Write the ground truth answer for this GraphRAG question.\n"
+        "Rules:\n"
+        "- Answer only from the supplied context.\n"
+        "- Be factual and concise.\n"
+        "- Use at most 3 sentences.\n"
+        "- Do not add any external inference.\n"
+        "- Return only JSON with key 'ground_truth'.\n\n"
+        f"Question: {question}\n"
+        f"Expected entities: {json.dumps(expected_entities, ensure_ascii=False)}\n\n"
+        f"Context:\n{context}"
+    )
+
+
+def _normalize_question_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    question = str(item.get("question", "")).strip()
+    question_type = str(item.get("type", "")).strip()
+    if not question or question_type not in QUESTION_TYPES:
+        return None
+
+    if question_type == "cross_doc":
+        source_doc = None
+        source_docs = item.get("source_docs")
+        if not isinstance(source_docs, list):
+            return None
+        source_docs = [str(doc).strip() for doc in source_docs if str(doc).strip()]
+        if not source_docs:
+            return None
+    else:
+        source_doc = str(item.get("source_doc", "")).strip() or None
+        if not source_doc:
+            return None
+        source_docs = None
+
+    entities = item.get("expected_entities", [])
+    if not isinstance(entities, list):
+        entities = []
+    expected_entities = [str(entity).strip() for entity in entities if str(entity).strip()]
+
+    return {
+        "question": question,
+        "type": question_type,
+        "source_doc": source_doc,
+        "source_docs": source_docs,
+        "expected_entities": expected_entities,
+    }
+
+
+def _extract_question_items(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict):
+        items = payload.get("questions", [])
+    else:
+        items = payload
+    if not isinstance(items, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized_item = _normalize_question_item(item)
+        if normalized_item is not None:
+            normalized.append(normalized_item)
+    return normalized
+
+
+def _generate_doc_questions(
+    *,
+    vllm: VLLMConfig,
+    doc: DocumentRecord,
+    doc_chunks: list[ChunkRecord],
+    question_counts: dict[str, int],
+) -> list[dict[str, Any]]:
+    total_requested = sum(question_counts.values())
+    if total_requested <= 0:
+        return []
+
+    context = _build_doc_context(doc, doc_chunks)
+    prompt = _format_question_prompt(
+        context=context,
+        question_counts=question_counts,
+        source_label=doc.filename,
+    )
+    try:
+        payload = _call_json_llm(vllm, _question_generation_system_prompt(), prompt)
+    except Exception as exc:
+        LOGGER.warning("Question generation failed for doc=%s: %s", doc.filename, exc)
+        return []
+    items = [item for item in _extract_question_items(payload) if item["type"] in NON_CROSS_TYPES]
+    if not items:
+        LOGGER.warning("No valid questions produced for doc=%s", doc.filename)
+    for item in items:
+        item["source_doc"] = doc.filename
+        item["source_docs"] = None
+    return items
+
+
+def _generate_cross_doc_questions(
+    *,
+    vllm: VLLMConfig,
+    docs: list[DocumentRecord],
+    chunks_by_doc: dict[str, list[ChunkRecord]],
+    count: int,
+) -> list[dict[str, Any]]:
+    if count <= 0 or len(docs) < 2:
+        return []
+
+    summaries = {
+        doc.filename: _build_doc_summary(doc, chunks_by_doc[doc.doc_id])
+        for doc in docs
+    }
+    prompt = _format_cross_doc_prompt(summaries, count)
+    try:
+        payload = _call_json_llm(vllm, _question_generation_system_prompt(), prompt)
+    except Exception as exc:
+        LOGGER.warning("Cross-doc question generation failed: %s", exc)
+        return []
+    items = [item for item in _extract_question_items(payload) if item["type"] == "cross_doc"]
+    if not items:
+        LOGGER.warning("No valid cross-doc questions produced")
+    for item in items:
+        item["source_doc"] = None
+    return items
+
+
+def _generate_ground_truths(
+    *,
+    vllm: VLLMConfig,
+    questions: list[dict[str, Any]],
+    docs: list[DocumentRecord],
+    chunks_by_doc: dict[str, list[ChunkRecord]],
+    summaries_by_doc: dict[str, str],
+) -> None:
+    doc_by_name = {doc.filename: doc for doc in docs}
+    for item in questions:
+        context = ""
+        if item.get("type") == "cross_doc":
+            source_docs = [
+                str(name).strip()
+                for name in (item.get("source_docs") or [])
+                if str(name).strip() in summaries_by_doc
+            ]
+            if not source_docs:
+                LOGGER.warning("Skipping GT generation for cross_doc question with invalid source_docs")
+                item["ground_truth"] = ""
+                continue
+            item["source_docs"] = source_docs
+            context = "\n\n".join(f"### {name}\n{summaries_by_doc[name]}" for name in source_docs)
+        else:
+            doc_name = str(item.get("source_doc", ""))
+            doc = doc_by_name.get(doc_name)
+            if doc is None:
+                LOGGER.warning("Skipping GT generation for question with unknown source_doc=%s", doc_name)
+                item["ground_truth"] = ""
+                continue
+            doc_chunks = chunks_by_doc.get(doc.doc_id)
+            if not doc_chunks:
+                LOGGER.warning("Skipping GT generation for source_doc=%s due to missing chunks", doc_name)
+                item["ground_truth"] = ""
+                continue
+            context = _build_doc_context(doc, doc_chunks)
+
+        if not context.strip():
+            item["ground_truth"] = ""
+            continue
+
+        prompt = _format_ground_truth_prompt(
+            question=str(item["question"]),
+            context=context,
+            expected_entities=list(item.get("expected_entities", [])),
+        )
+        try:
+            payload = _call_json_llm(vllm, _ground_truth_system_prompt(), prompt)
+        except Exception as exc:
+            LOGGER.warning("Ground-truth generation failed for question '%s': %s", item.get("question", ""), exc)
+            item["ground_truth"] = ""
+            continue
+        if isinstance(payload, dict):
+            value = str(payload.get("ground_truth", "")).strip()
+        else:
+            value = ""
+        item["ground_truth"] = value
+
+
+def _build_question_set(
+    *,
+    vllm: VLLMConfig,
+    docs: list[DocumentRecord],
+    chunks: list[ChunkRecord],
+    run_dir: Path,
+    include_ground_truth: bool,
+    verbose: bool,
+) -> dict[str, Any]:
+    chunks_by_doc: dict[str, list[ChunkRecord]] = defaultdict(list)
+    for chunk in chunks:
+        chunks_by_doc[chunk.doc_id].append(chunk)
+    for chunk_list in chunks_by_doc.values():
+        chunk_list.sort(key=lambda item: item.chunk_index)
+
+    summaries_by_doc = {
+        doc.filename: _build_doc_summary(doc, chunks_by_doc[doc.doc_id]) for doc in docs
+    }
+
+    remaining = dict(TARGET_COUNTS)
+    remaining.pop("cross_doc", None)
+    questions: list[dict[str, Any]] = []
+    seen_questions: set[str] = set()
+
+    doc_totals = _distributed_counts(sum(remaining.values()), len(docs))
+    for doc_index, doc in enumerate(docs):
+        doc_target = doc_totals[doc_index]
+        if doc_target <= 0:
+            continue
+        allocation = _split_type_counts(doc_target, remaining, NON_CROSS_TYPES)
+        if sum(allocation.values()) <= 0:
+            continue
+
+        generated = _generate_doc_questions(
+            vllm=vllm,
+            doc=doc,
+            doc_chunks=chunks_by_doc[doc.doc_id],
+            question_counts=allocation,
+        )
+        for item in generated:
+            normalized = _normalize_text(item["question"])
+            if normalized in seen_questions:
+                continue
+            question_type = item["type"]
+            if remaining.get(question_type, 0) <= 0:
+                continue
+            seen_questions.add(normalized)
+            remaining[question_type] -= 1
+            questions.append(item)
+            if verbose:
+                print(f"[{question_type}] {item['question']}")
+
+    refill_order = sorted(docs, key=lambda doc: len(chunks_by_doc[doc.doc_id]), reverse=True)
+    while sum(remaining.values()) > 0:
+        progress_made = False
+        for doc in refill_order:
+            if sum(remaining.values()) <= 0:
+                break
+            target = min(2, sum(remaining.values()))
+            allocation = _split_type_counts(target, remaining, NON_CROSS_TYPES)
+            if sum(allocation.values()) <= 0:
+                continue
+            generated = _generate_doc_questions(
+                vllm=vllm,
+                doc=doc,
+                doc_chunks=chunks_by_doc[doc.doc_id],
+                question_counts=allocation,
+            )
+            for item in generated:
+                normalized = _normalize_text(item["question"])
+                if normalized in seen_questions:
+                    continue
+                question_type = item["type"]
+                if remaining.get(question_type, 0) <= 0:
+                    continue
+                seen_questions.add(normalized)
+                remaining[question_type] -= 1
+                questions.append(item)
+                progress_made = True
+                if verbose:
+                    print(f"[{question_type}] {item['question']}")
+        if not progress_made:
+            break
+
+    if len(docs) >= 2 and TARGET_COUNTS["cross_doc"] > 0:
+        generated = _generate_cross_doc_questions(
+            vllm=vllm,
+            docs=docs,
+            chunks_by_doc=chunks_by_doc,
+            count=TARGET_COUNTS["cross_doc"],
+        )
+        for item in generated:
+            normalized = _normalize_text(item["question"])
+            if normalized in seen_questions:
+                continue
+            seen_questions.add(normalized)
+            questions.append(item)
+            if verbose:
+                print(f"[cross_doc] {item['question']}")
+
+    if include_ground_truth:
+        _generate_ground_truths(
+            vllm=vllm,
+            questions=questions,
+            docs=docs,
+            chunks_by_doc=chunks_by_doc,
+            summaries_by_doc=summaries_by_doc,
+        )
+    else:
+        for item in questions:
+            item["ground_truth"] = ""
+
+    def _validate_grounding(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        doc_by_name = {doc.filename: doc for doc in docs}
+        kept: list[dict[str, Any]] = []
+        removed_count = 0
+        for item in items:
+            question_type = str(item.get("type", "")).strip()
+            if question_type == "cross_doc":
+                source_docs = [
+                    str(name).strip()
+                    for name in (item.get("source_docs") or [])
+                    if str(name).strip() in summaries_by_doc
+                ]
+                if not source_docs:
+                    removed_count += 1
+                    continue
+                item["source_docs"] = source_docs
+                item["source_doc"] = None
+            else:
+                source_doc = str(item.get("source_doc", "")).strip()
+                if source_doc not in doc_by_name:
+                    removed_count += 1
+                    continue
+                item["source_doc"] = source_doc
+                item["source_docs"] = None
+
+            if not include_ground_truth:
+                kept.append(item)
+                continue
+
+            gt = str(item.get("ground_truth", "")).strip()
+            expected = list(item.get("expected_entities", []) or [])
+
+            if not gt or _looks_like_refusal(gt):
+                removed_count += 1
+                continue
+
+            if expected:
+                gt_norm = _normalize_text(gt)
+                grounded = False
+                for ent in expected:
+                    ent_norm = _normalize_text(str(ent))
+                    if ent_norm and ent_norm in gt_norm:
+                        grounded = True
+                        break
+
+                if not grounded:
+                    removed_count += 1
+                    continue
+
+            kept.append(item)
+
+        if removed_count and getattr(LOGGER, "warning", None):
+            LOGGER.warning("Filtered out %d generated questions due to missing grounding", removed_count)
+        return kept
+
+    def _missing_targets(current: list[dict[str, Any]]) -> dict[str, int]:
+        counts = Counter(str(item.get("type", "")) for item in current)
+        missing = {
+            question_type: max(0, TARGET_COUNTS[question_type] - int(counts.get(question_type, 0)))
+            for question_type in QUESTION_TYPES
+        }
+        if len(docs) < 2:
+            missing["cross_doc"] = 0
+        return missing
+
+    questions = _validate_grounding(questions)
+
+    max_refill_rounds = 8
+    for round_idx in range(max_refill_rounds):
+        missing = _missing_targets(questions)
+        if sum(missing.values()) <= 0:
+            break
+
+        refill_batch: list[dict[str, Any]] = []
+        non_cross_remaining = {qtype: missing[qtype] for qtype in NON_CROSS_TYPES}
+
+        for doc in refill_order:
+            pending = sum(non_cross_remaining.values())
+            if pending <= 0:
+                break
+            allocation = _split_type_counts(min(2, pending), non_cross_remaining, NON_CROSS_TYPES)
+            if sum(allocation.values()) <= 0:
+                continue
+
+            generated = _generate_doc_questions(
+                vllm=vllm,
+                doc=doc,
+                doc_chunks=chunks_by_doc[doc.doc_id],
+                question_counts=allocation,
+            )
+            for item in generated:
+                normalized = _normalize_text(str(item.get("question", "")))
+                question_type = str(item.get("type", ""))
+                if not normalized or normalized in seen_questions:
+                    continue
+                if non_cross_remaining.get(question_type, 0) <= 0:
+                    continue
+                seen_questions.add(normalized)
+                non_cross_remaining[question_type] -= 1
+                refill_batch.append(item)
+
+        cross_remaining = int(missing.get("cross_doc", 0))
+        if cross_remaining > 0 and len(docs) >= 2:
+            generated_cross = _generate_cross_doc_questions(
+                vllm=vllm,
+                docs=docs,
+                chunks_by_doc=chunks_by_doc,
+                count=cross_remaining,
+            )
+            for item in generated_cross:
+                if cross_remaining <= 0:
+                    break
+                normalized = _normalize_text(str(item.get("question", "")))
+                if not normalized or normalized in seen_questions:
+                    continue
+                seen_questions.add(normalized)
+                cross_remaining -= 1
+                refill_batch.append(item)
+
+        if not refill_batch:
+            break
+
+        if include_ground_truth:
+            _generate_ground_truths(
+                vllm=vllm,
+                questions=refill_batch,
+                docs=docs,
+                chunks_by_doc=chunks_by_doc,
+                summaries_by_doc=summaries_by_doc,
+            )
+        else:
+            for item in refill_batch:
+                item["ground_truth"] = ""
+
+        accepted = _validate_grounding(refill_batch)
+        if accepted:
+            questions.extend(accepted)
+
+        if verbose:
+            pending_after_round = sum(_missing_targets(questions).values())
+            print(
+                f"[refill] round={round_idx + 1} generated={len(refill_batch)} accepted={len(accepted)} pending={pending_after_round}"
+            )
+
+    missing_after_refill = _missing_targets(questions)
+    if sum(missing_after_refill.values()) > 0:
+        LOGGER.warning("Could not fill all target counts after strict grounding: %s", missing_after_refill)
+
+    for index, item in enumerate(questions, start=1):
+        item["id"] = f"q_{index:03d}"
+
+    counts = Counter(item["type"] for item in questions)
+    return {
+        "metadata": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "total_questions": len(questions),
+            "docs_used": [doc.filename for doc in docs],
+            "doc_chunk_counts": {doc.filename: len(chunks_by_doc[doc.doc_id]) for doc in docs},
+            "source_run_dir": str(run_dir.resolve()),
+            "model": vllm.model_name,
+            "strict_grounding_enabled": bool(include_ground_truth),
+            "target_counts": dict(TARGET_COUNTS),
+            "missing_after_refill": missing_after_refill,
+            "by_type": {question_type: counts.get(question_type, 0) for question_type in QUESTION_TYPES},
+        },
+        "questions": questions,
+    }
+
+
+def _stats(path: Path) -> None:
+    payload = _load_json(path)
+    if not isinstance(payload, dict):
+        raise ValueError("Input JSON must be an object")
+
+    metadata = payload.get("metadata", {}) if isinstance(payload.get("metadata", {}), dict) else {}
+    questions = payload.get("questions", [])
+    if not isinstance(questions, list):
+        raise ValueError("questions must be a list")
+
+    counts = Counter()
+    docs = set()
+    for item in questions:
+        if not isinstance(item, dict):
+            continue
+        counts[str(item.get("type", ""))] += 1
+        source_doc = item.get("source_doc")
+        if isinstance(source_doc, str) and source_doc.strip():
+            docs.add(source_doc.strip())
+        source_docs = item.get("source_docs")
+        if isinstance(source_docs, list):
+            for doc in source_docs:
+                if isinstance(doc, str) and doc.strip():
+                    docs.add(doc.strip())
+
+    print(f"total_questions={len(questions)}")
+    for question_type in QUESTION_TYPES:
+        print(f"{question_type}={counts.get(question_type, 0)}")
+    print(f"docs_covered={len(docs)}")
+    print(f"model={metadata.get('model', '')}")
+    print(f"generated_at={metadata.get('generated_at', '')}")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="GraphRAG question suite generator")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    generate = subparsers.add_parser("generate", help="Generate a test suite JSON")
+    generate.add_argument("--run-dir", default="", help="Override the KG run directory to use")
+    generate.add_argument("--doc", default=None, help="Generate only for a specific document filename or doc_id")
+    generate.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output JSON path")
+    generate.add_argument("--no-ground-truth", action="store_true", help="Skip the ground truth generation step")
+    generate.add_argument("--verbose", action="store_true", help="Print each question as it is generated")
+
+    stats = subparsers.add_parser("stats", help="Print summary statistics for an existing suite")
+    stats.add_argument("--input", required=True, help="Input test suite JSON")
+
+    return parser
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
+    _setup_logging(getattr(args, "verbose", False))
+
+    if args.command == "stats":
+        _stats(Path(args.input))
+        return 0
+
+    run_dir = Path(args.run_dir).expanduser() if args.run_dir else _discover_latest_run_dir(DEFAULT_RUN_ROOT)
+    _, documents, chunks = _resolve_docs_and_chunks(run_dir, args.doc)
+    vllm = _resolve_vllm_config()
+    suite = _build_question_set(
+        vllm=vllm,
+        docs=documents,
+        chunks=chunks,
+        run_dir=run_dir,
+        include_ground_truth=not args.no_ground_truth,
+        verbose=bool(args.verbose),
+    )
+
+    output_path = Path(args.output).expanduser()
+    _save_json(output_path, suite)
+    print(f"saved={output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
