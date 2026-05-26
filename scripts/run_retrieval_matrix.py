@@ -51,7 +51,7 @@ _STANDARD_STRATEGY_PRESETS: dict[str, StandardStrategyPreset] = {
     "std_topk3": StandardStrategyPreset(top_k=3, chunk_size=1200, chunk_overlap=180),
     "std_topk5": StandardStrategyPreset(top_k=5, chunk_size=1200, chunk_overlap=180),
     "std_wide_context": StandardStrategyPreset(
-        top_k=6, chunk_size=1800, chunk_overlap=240
+        top_k=6, chunk_size=1800, chunk_overlap=180
     ),
     "std_fine_chunks": StandardStrategyPreset(
         top_k=5, chunk_size=800, chunk_overlap=140
