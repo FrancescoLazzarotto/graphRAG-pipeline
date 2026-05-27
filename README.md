@@ -166,12 +166,15 @@ Generate a JSON test suite from the latest KG pipeline run using the local vLLM 
 ```bash
 cd graphRAGPipelineExp1
 conda run -n graphllm python scripts/generate_questions.py generate
+conda run -n graphllm python scripts/generate_questions.py generate --question-language en
 conda run -n graphllm python scripts/generate_questions.py generate --doc mio_documento.txt
+conda run -n graphllm python scripts/generate_questions.py generate --question-language en --matrix-output artifacts/experiments/questions_food_grounded_en.txt --matrix-max-questions 10
 conda run -n graphllm python scripts/generate_questions.py generate --no-ground-truth
 conda run -n graphllm python scripts/generate_questions.py stats --input artifacts/tmp/graphrag_test_suite.json
 ```
 
 The generator defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to `artifacts/tmp/graphrag_test_suite.json` unless `--output` is provided.
+Use `--question-language en` when your corpus is primarily English. Use `--matrix-output` to export one-question-per-line text for matrix runs.
 
 ---
 
@@ -258,6 +261,8 @@ python scripts/run_retrieval_matrix.py \
   --graph-strategies default \
   --runs-per-strategy 1
 ```
+
+`--questions-file` accepts both plain text (one question per line) and JSON suites produced by `scripts/generate_questions.py`.
 
 ---
 
