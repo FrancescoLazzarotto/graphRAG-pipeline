@@ -48,7 +48,18 @@ REFUSAL_PATTERNS = [
     re.compile(r"(not\s+enough|insufficient)\s+context", re.IGNORECASE),
     re.compile(r"cannot\s+answer\s+from\s+the\s+provided\s+context", re.IGNORECASE),
 ]
+QUESTION_METADATA_PATTERNS = [
+    re.compile(r"\b(page|pages|page\s+range|issn|annex|table|figure)\b", re.IGNORECASE),
+    re.compile(r"\bchapter\s+\d+\b", re.IGNORECASE),
+    re.compile(r"\bsection\s+\d+(?:\.\d+)?\b", re.IGNORECASE),
+    re.compile(r"\bonline\s+issn\b", re.IGNORECASE),
+    re.compile(r"\btitle\s+of\s+the\s+report\b", re.IGNORECASE),
+]
 JSON_ONLY_SUFFIX = "Return only valid JSON. Do not use markdown, code fences, or backticks."
+QUESTION_LANGUAGES = {
+    "en": "English",
+    "it": "Italian",
+}
 
 
 @dataclass(frozen=True)
@@ -78,6 +89,13 @@ def _looks_like_refusal(text: str) -> bool:
     if not candidate:
         return True
     return any(pattern.search(candidate) for pattern in REFUSAL_PATTERNS)
+
+
+def _is_metadata_question(text: str) -> bool:
+    candidate = text.strip()
+    if not candidate:
+        return True
+    return any(pattern.search(candidate) for pattern in QUESTION_METADATA_PATTERNS)
 
 
 def _iter_json_candidates(raw: str) -> list[str]:
@@ -118,6 +136,46 @@ def _load_json(path: Path) -> Any:
 def _save_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _save_questions_txt(path: Path, questions: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(question.strip() for question in questions if question.strip())
+    path.write_text((body + "\n") if body else "", encoding="utf-8")
+
+
+def _question_language_label(question_language: str) -> str:
+    code = str(question_language or "en").strip().lower()
+    return QUESTION_LANGUAGES.get(code, QUESTION_LANGUAGES["en"])
+
+
+def _suite_to_matrix_questions(payload: dict[str, Any], max_questions: int = 0) -> list[str]:
+    raw_items = payload.get("questions", [])
+    if not isinstance(raw_items, list):
+        return []
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if isinstance(item, dict):
+            question = str(item.get("question", "")).strip()
+        else:
+            question = str(item).strip()
+
+        if not question:
+            continue
+
+        normalized = _normalize_text(question)
+        if not normalized or normalized in seen:
+            continue
+
+        seen.add(normalized)
+        lines.append(question)
+
+        if max_questions > 0 and len(lines) >= max_questions:
+            break
+
+    return lines
 
 
 def _discover_latest_run_dir(run_root: Path) -> Path:
@@ -315,19 +373,23 @@ def _split_type_counts(total: int, remaining: dict[str, int], allowed_types: lis
     return provisional
 
 
-def _question_generation_system_prompt() -> str:
+def _question_generation_system_prompt(question_language: str) -> str:
+    language_label = _question_language_label(question_language)
     return (
         "You are an expert in Knowledge Graph and RAG evaluation. "
         "Generate only questions whose answers are explicitly present in the provided context. "
+        f"Write every question in {language_label}. "
         "You must follow the JSON schema exactly. "
         f"{JSON_ONLY_SUFFIX}"
     )
 
 
-def _ground_truth_system_prompt() -> str:
+def _ground_truth_system_prompt(question_language: str) -> str:
+    language_label = _question_language_label(question_language)
     return (
         "You are an expert in Knowledge Graph and RAG evaluation. "
         "Write a factual and concise ground truth answer anchored only in the provided context. "
+        f"Write every answer in {language_label}. "
         "Use at most 3 sentences. "
         f"{JSON_ONLY_SUFFIX}"
     )
@@ -338,7 +400,9 @@ def _format_question_prompt(
     context: str,
     question_counts: dict[str, int],
     source_label: str,
+    question_language: str,
 ) -> str:
+    language_label = _question_language_label(question_language)
     schema = {
         "questions": [
             {
@@ -353,11 +417,17 @@ def _format_question_prompt(
     return (
         "Create test questions for GraphRAG evaluation.\n"
         f"Requested counts: {json.dumps(question_counts, ensure_ascii=False)}\n"
+        f"Required language: {language_label}\n"
         "Allowed question types: fact_based, multi_hop, comparative, aggregation.\n"
         "Rules:\n"
         "- Generate only questions that can be answered from the context.\n"
+        "- Each question must include at least one concrete entity, indicator, organization, location, policy, or time period from the context.\n"
+        "- Prefer answerable, evidence-grounded questions with explicit anchors (for example: entity + metric, or entity + year/time period).\n"
+        "- Avoid broad or generic prompts with no concrete anchors (for example: 'main relationships', 'role in...', 'how important...').\n"
+        "- Do NOT ask metadata/index questions about page numbers, chapter/annex labels, section numbering, ISSN, or document title lookup.\n"
         "- Use concise, specific wording.\n"
         "- Vary wording to avoid near-duplicates.\n"
+        f"- Write every question in {language_label}.\n"
         "- expected_entities must contain the minimal set of key entities needed to answer.\n"
         "- source_doc must be the provided document label.\n"
         "- source_docs must be null for non-cross_doc items.\n"
@@ -367,7 +437,12 @@ def _format_question_prompt(
     )
 
 
-def _format_cross_doc_prompt(contexts: dict[str, str], count: int) -> str:
+def _format_cross_doc_prompt(
+    contexts: dict[str, str],
+    count: int,
+    question_language: str,
+) -> str:
+    language_label = _question_language_label(question_language)
     schema = {
         "questions": [
             {
@@ -382,10 +457,14 @@ def _format_cross_doc_prompt(contexts: dict[str, str], count: int) -> str:
     return (
         "Create cross-document GraphRAG evaluation questions.\n"
         f"Requested count: {count}\n"
+        f"Required language: {language_label}\n"
         "Rules:\n"
         "- Every question must require information from more than one document.\n"
+        "- Each question must include concrete entities or measurable anchors from the supplied summaries.\n"
+        "- Do NOT ask metadata/index questions about page numbers, chapter/annex labels, section numbering, ISSN, or document title lookup.\n"
         "- source_doc must be null.\n"
         "- source_docs must list all contributing documents.\n"
+        f"- Write every question in {language_label}.\n"
         "- expected_entities must contain the key entities needed to answer.\n"
         "- Return only a JSON object with key 'questions'.\n\n"
         f"Output schema example:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
@@ -394,12 +473,19 @@ def _format_cross_doc_prompt(contexts: dict[str, str], count: int) -> str:
     )
 
 
-def _format_ground_truth_prompt(question: str, context: str, expected_entities: list[str]) -> str:
+def _format_ground_truth_prompt(
+    question: str,
+    context: str,
+    expected_entities: list[str],
+    question_language: str,
+) -> str:
+    language_label = _question_language_label(question_language)
     return (
         "Write the ground truth answer for this GraphRAG question.\n"
         "Rules:\n"
         "- Answer only from the supplied context.\n"
         "- Be factual and concise.\n"
+        f"- Write in {language_label}.\n"
         "- Use at most 3 sentences.\n"
         "- Do not add any external inference.\n"
         "- Return only JSON with key 'ground_truth'.\n\n"
@@ -413,6 +499,9 @@ def _normalize_question_item(item: dict[str, Any]) -> dict[str, Any] | None:
     question = str(item.get("question", "")).strip()
     question_type = str(item.get("type", "")).strip()
     if not question or question_type not in QUESTION_TYPES:
+        return None
+
+    if _is_metadata_question(question):
         return None
 
     if question_type == "cross_doc":
@@ -466,6 +555,7 @@ def _generate_doc_questions(
     doc: DocumentRecord,
     doc_chunks: list[ChunkRecord],
     question_counts: dict[str, int],
+    question_language: str,
 ) -> list[dict[str, Any]]:
     total_requested = sum(question_counts.values())
     if total_requested <= 0:
@@ -476,9 +566,14 @@ def _generate_doc_questions(
         context=context,
         question_counts=question_counts,
         source_label=doc.filename,
+        question_language=question_language,
     )
     try:
-        payload = _call_json_llm(vllm, _question_generation_system_prompt(), prompt)
+        payload = _call_json_llm(
+            vllm,
+            _question_generation_system_prompt(question_language),
+            prompt,
+        )
     except Exception as exc:
         LOGGER.warning("Question generation failed for doc=%s: %s", doc.filename, exc)
         return []
@@ -497,6 +592,7 @@ def _generate_cross_doc_questions(
     docs: list[DocumentRecord],
     chunks_by_doc: dict[str, list[ChunkRecord]],
     count: int,
+    question_language: str,
 ) -> list[dict[str, Any]]:
     if count <= 0 or len(docs) < 2:
         return []
@@ -505,9 +601,13 @@ def _generate_cross_doc_questions(
         doc.filename: _build_doc_summary(doc, chunks_by_doc[doc.doc_id])
         for doc in docs
     }
-    prompt = _format_cross_doc_prompt(summaries, count)
+    prompt = _format_cross_doc_prompt(summaries, count, question_language)
     try:
-        payload = _call_json_llm(vllm, _question_generation_system_prompt(), prompt)
+        payload = _call_json_llm(
+            vllm,
+            _question_generation_system_prompt(question_language),
+            prompt,
+        )
     except Exception as exc:
         LOGGER.warning("Cross-doc question generation failed: %s", exc)
         return []
@@ -526,6 +626,7 @@ def _generate_ground_truths(
     docs: list[DocumentRecord],
     chunks_by_doc: dict[str, list[ChunkRecord]],
     summaries_by_doc: dict[str, str],
+    question_language: str,
 ) -> None:
     doc_by_name = {doc.filename: doc for doc in docs}
     for item in questions:
@@ -564,9 +665,14 @@ def _generate_ground_truths(
             question=str(item["question"]),
             context=context,
             expected_entities=list(item.get("expected_entities", [])),
+            question_language=question_language,
         )
         try:
-            payload = _call_json_llm(vllm, _ground_truth_system_prompt(), prompt)
+            payload = _call_json_llm(
+                vllm,
+                _ground_truth_system_prompt(question_language),
+                prompt,
+            )
         except Exception as exc:
             LOGGER.warning("Ground-truth generation failed for question '%s': %s", item.get("question", ""), exc)
             item["ground_truth"] = ""
@@ -586,6 +692,7 @@ def _build_question_set(
     run_dir: Path,
     include_ground_truth: bool,
     verbose: bool,
+    question_language: str,
 ) -> dict[str, Any]:
     chunks_by_doc: dict[str, list[ChunkRecord]] = defaultdict(list)
     for chunk in chunks:
@@ -616,6 +723,7 @@ def _build_question_set(
             doc=doc,
             doc_chunks=chunks_by_doc[doc.doc_id],
             question_counts=allocation,
+            question_language=question_language,
         )
         for item in generated:
             normalized = _normalize_text(item["question"])
@@ -645,6 +753,7 @@ def _build_question_set(
                 doc=doc,
                 doc_chunks=chunks_by_doc[doc.doc_id],
                 question_counts=allocation,
+                question_language=question_language,
             )
             for item in generated:
                 normalized = _normalize_text(item["question"])
@@ -668,6 +777,7 @@ def _build_question_set(
             docs=docs,
             chunks_by_doc=chunks_by_doc,
             count=TARGET_COUNTS["cross_doc"],
+            question_language=question_language,
         )
         for item in generated:
             normalized = _normalize_text(item["question"])
@@ -685,6 +795,7 @@ def _build_question_set(
             docs=docs,
             chunks_by_doc=chunks_by_doc,
             summaries_by_doc=summaries_by_doc,
+            question_language=question_language,
         )
     else:
         for item in questions:
@@ -779,6 +890,7 @@ def _build_question_set(
                 doc=doc,
                 doc_chunks=chunks_by_doc[doc.doc_id],
                 question_counts=allocation,
+                question_language=question_language,
             )
             for item in generated:
                 normalized = _normalize_text(str(item.get("question", "")))
@@ -798,6 +910,7 @@ def _build_question_set(
                 docs=docs,
                 chunks_by_doc=chunks_by_doc,
                 count=cross_remaining,
+                question_language=question_language,
             )
             for item in generated_cross:
                 if cross_remaining <= 0:
@@ -819,6 +932,7 @@ def _build_question_set(
                 docs=docs,
                 chunks_by_doc=chunks_by_doc,
                 summaries_by_doc=summaries_by_doc,
+                question_language=question_language,
             )
         else:
             for item in refill_batch:
@@ -850,6 +964,7 @@ def _build_question_set(
             "doc_chunk_counts": {doc.filename: len(chunks_by_doc[doc.doc_id]) for doc in docs},
             "source_run_dir": str(run_dir.resolve()),
             "model": vllm.model_name,
+            "question_language": str(question_language),
             "strict_grounding_enabled": bool(include_ground_truth),
             "target_counts": dict(TARGET_COUNTS),
             "missing_after_refill": missing_after_refill,
@@ -900,6 +1015,23 @@ def _build_parser() -> argparse.ArgumentParser:
     generate.add_argument("--run-dir", default="", help="Override the KG run directory to use")
     generate.add_argument("--doc", default=None, help="Generate only for a specific document filename or doc_id")
     generate.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Output JSON path")
+    generate.add_argument(
+        "--question-language",
+        choices=tuple(sorted(QUESTION_LANGUAGES.keys())),
+        default="en",
+        help="Language for generated questions and ground-truth answers",
+    )
+    generate.add_argument(
+        "--matrix-output",
+        default="",
+        help="Optional output path for plain-text matrix questions (one per line)",
+    )
+    generate.add_argument(
+        "--matrix-max-questions",
+        type=int,
+        default=0,
+        help="Optional limit for matrix question export (0 keeps all)",
+    )
     generate.add_argument("--no-ground-truth", action="store_true", help="Skip the ground truth generation step")
     generate.add_argument("--verbose", action="store_true", help="Print each question as it is generated")
 
@@ -918,6 +1050,10 @@ def main() -> int:
         return 0
 
     run_dir = Path(args.run_dir).expanduser() if args.run_dir else _discover_latest_run_dir(DEFAULT_RUN_ROOT)
+
+    if int(args.matrix_max_questions) < 0:
+        raise ValueError("--matrix-max-questions must be >= 0")
+
     _, documents, chunks = _resolve_docs_and_chunks(run_dir, args.doc)
     vllm = _resolve_vllm_config()
     suite = _build_question_set(
@@ -927,11 +1063,23 @@ def main() -> int:
         run_dir=run_dir,
         include_ground_truth=not args.no_ground_truth,
         verbose=bool(args.verbose),
+        question_language=str(args.question_language),
     )
 
     output_path = Path(args.output).expanduser()
     _save_json(output_path, suite)
     print(f"saved={output_path}")
+
+    if args.matrix_output:
+        matrix_questions = _suite_to_matrix_questions(
+            suite,
+            max_questions=int(args.matrix_max_questions),
+        )
+        matrix_path = Path(args.matrix_output).expanduser()
+        _save_questions_txt(matrix_path, matrix_questions)
+        print(f"matrix_saved={matrix_path}")
+        print(f"matrix_questions={len(matrix_questions)}")
+
     return 0
 
 
