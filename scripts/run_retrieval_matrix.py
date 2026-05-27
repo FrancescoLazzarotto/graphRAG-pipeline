@@ -232,6 +232,43 @@ def _resource_summary_lines(resource_summary: dict[str, Any] | None) -> list[str
     return lines
 
 
+def _load_questions_from_json(path: Path) -> list[str]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    if isinstance(payload, dict):
+        raw_questions = payload.get("questions", [])
+    else:
+        raw_questions = payload
+
+    if not isinstance(raw_questions, list):
+        raise ValueError(
+            f"Unsupported JSON question payload in {path}. Expected a list or an object with 'questions'."
+        )
+
+    questions: list[str] = []
+    seen: set[str] = set()
+    for item in raw_questions:
+        if isinstance(item, dict):
+            value = str(item.get("question", "")).strip()
+        else:
+            value = str(item).strip()
+
+        if not value:
+            continue
+
+        key = value.lower()
+        if key in seen:
+            continue
+
+        seen.add(key)
+        questions.append(value)
+
+    if not questions:
+        raise ValueError(f"Questions JSON is empty: {path}")
+
+    return questions
+
+
 def _load_questions(args: argparse.Namespace) -> list[str]:
     if not args.questions_file:
         return [args.question]
@@ -240,11 +277,15 @@ def _load_questions(args: argparse.Namespace) -> list[str]:
     if not questions_path.exists():
         raise FileNotFoundError(f"Questions file not found: {questions_path}")
 
-    questions = [
-        line.strip()
-        for line in questions_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    if questions_path.suffix.lower() == ".json":
+        questions = _load_questions_from_json(questions_path)
+    else:
+        questions = [
+            line.strip()
+            for line in questions_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
     if not questions:
         raise ValueError(f"Questions file is empty: {questions_path}")
     return questions
