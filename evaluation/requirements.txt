@@ -7,3 +7,7 @@ pandas>=2.0
 datasets>=2.14
 bert-score>=0.3.13
 sentence-transformers>=2.2.2
+
+# evaluation only
+langchain-huggingface>=0.1,<0.2
+transformers>=4.45,<5.0
