@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from kg_pipeline.models.types import KGTriple
+
+_LOGGER = logging.getLogger("kg_pipeline")
 
 
 def normalize_json_text(raw_text: str) -> str:
@@ -32,6 +35,11 @@ def validate_triples(
     raw_items: list[dict[str, Any]],
     allowed_predicates: list[str] | None = None,
 ) -> list[KGTriple]:
+    """Validate and return KGTriple objects.
+
+    Off-vocabulary predicates are remapped to RELATED_TO and logged rather than
+    discarded, so no triple is silently lost due to an unexpected predicate name.
+    """
     triples: list[KGTriple] = []
     allowed_set = None
     if allowed_predicates:
@@ -39,7 +47,14 @@ def validate_triples(
     for item in raw_items:
         triple = KGTriple.model_validate(item)
         if allowed_set is not None and triple.predicate not in allowed_set:
-            raise ValueError(f"predicate '{triple.predicate}' not in canonical list")
+            _LOGGER.warning(
+                "Off-vocab predicate '%s' remapped to RELATED_TO "
+                "(subject=%r, object=%r)",
+                triple.predicate,
+                triple.subject,
+                triple.object,
+            )
+            triple.predicate = "RELATED_TO"
         triples.append(triple)
     return triples
 
