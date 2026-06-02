@@ -80,8 +80,6 @@ class KGTriple(BaseModel):
     subject_properties: dict[str, Any]
     object_properties: dict[str, Any]
     relationship_properties: dict[str, Any]
-    # optional top-level properties dict for additional extracted context
-    # da capire se llm lo utilizza
     properties: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("subject", "object")
