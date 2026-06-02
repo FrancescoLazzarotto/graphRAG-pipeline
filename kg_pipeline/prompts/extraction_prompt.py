@@ -54,23 +54,24 @@ def build_extraction_prompt(
     few_shot = [
         {
             "subject": "Europe",
-            "predicate": "HAS_TEMPERATURE_ANOMALY",
-            "object": "2.7 C",
+            "predicate": "HAS_VALUE",
+            "object": "2.7 C temperature anomaly",
             "subject_labels": ["Region"],
             "object_labels": ["DataValue"],
             "subject_properties": {"name": "Europe"},
-            "object_properties": {"name": "2.7 C", "value": 2.7, "unit": "C"},
+            "object_properties": {"name": "2.7 C temperature anomaly", "value": 2.7, "unit": "C"},
             "relationship_properties": {
                 "source_doc": "example_report.pdf",
                 "extraction_method": "llm",
                 "value": 2.7,
                 "unit": "C",
                 "year": 2025,
+                "confidence": 0.95,
             },
         },
         {
             "subject": "wheat",
-            "predicate": "PRODUCED_IN",
+            "predicate": "LOCATED_IN",
             "object": "France",
             "subject_labels": ["Commodity"],
             "object_labels": ["Region"],
@@ -79,6 +80,7 @@ def build_extraction_prompt(
             "relationship_properties": {
                 "source_doc": "example_report.pdf",
                 "extraction_method": "llm",
+                "confidence": 0.9,
             },
         },
     ]
@@ -134,11 +136,11 @@ Output schema note: each KGTriple object may include an optional top-level
 sentence context. Example triple schema:
 {{
     "subject": "...",
-    "subject_label": "...",
+    "subject_labels": ["..."],
     "predicate": "...",
     "object": "...",
-    "object_label": "...",
-    "properties": {{}},   // optional key-value pairs extracted from context
+    "object_labels": ["..."],
+    "properties": {{}},
     "subject_properties": {{...}},
     "object_properties": {{...}},
     "relationship_properties": {{...}}
