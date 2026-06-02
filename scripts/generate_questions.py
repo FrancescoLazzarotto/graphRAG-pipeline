@@ -47,19 +47,85 @@ REFUSAL_PATTERNS = [
     re.compile(r"non\s+ho\s+informazioni\s+sufficienti", re.IGNORECASE),
     re.compile(r"(not\s+enough|insufficient)\s+context", re.IGNORECASE),
     re.compile(r"cannot\s+answer\s+from\s+the\s+provided\s+context", re.IGNORECASE),
+    # LLM answers "the context does not provide/contain/mention..."
+    re.compile(r"(the\s+)?(context|provided\s+context)\s+(does\s+not|doesn'?t)\s+(provide|contain|mention|include|specify)", re.IGNORECASE),
+    re.compile(r"no\s+information\s+(is\s+)?(available|provided|found|given)\s+in\s+the\s+context", re.IGNORECASE),
+    re.compile(r"(the\s+)?context\s+provided\s+does\s+not", re.IGNORECASE),
+    re.compile(r"il\s+contesto\s+(fornito\s+)?(non\s+fornisce|non\s+contiene|non\s+menziona|non\s+specifica)", re.IGNORECASE),
+    re.compile(r"non\s+(fornisce|contiene|menziona)\s+informazioni", re.IGNORECASE),
 ]
 QUESTION_METADATA_PATTERNS = [
     re.compile(r"\b(page|pages|page\s+range|issn|annex|table|figure)\b", re.IGNORECASE),
     re.compile(r"\bchapter\s+\d+\b", re.IGNORECASE),
     re.compile(r"\bsection\s+\d+(?:\.\d+)?\b", re.IGNORECASE),
     re.compile(r"\bonline\s+issn\b", re.IGNORECASE),
-    re.compile(r"\btitle\s+of\s+the\s+report\b", re.IGNORECASE),
+    re.compile(r"\btitle\s+of\s+the\s+(report|document|publication)\b", re.IGNORECASE),
+    re.compile(r"^what\s+is\s+the\s+title\b", re.IGNORECASE),
+    re.compile(r"\bwhat\s+is\s+the\s+(name\s+of\s+the\s+)?(document|publication)\b", re.IGNORECASE),
+    re.compile(r"\bwhich\s+chapter\b", re.IGNORECASE),
+    re.compile(r"\bwhich\s+figure\b", re.IGNORECASE),
+    re.compile(r"\bwhich\s+table\b", re.IGNORECASE),
+    # Placeholder/generic questions (model hallucination artefacts)
+    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\b"),
+    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\s+or\s+[A-Z]\b"),
+    re.compile(r"\btechcorp\b", re.IGNORECASE),
+    re.compile(r"\binnovatech\b", re.IGNORECASE),
+    # Off-domain economic/demographic data not relevant to food safety/systems docs
+    re.compile(r"\bgdp\s+(growth|rate)\b", re.IGNORECASE),
+    re.compile(r"\bunemployment\s+rate\b", re.IGNORECASE),
+    re.compile(r"\btotal\s+(number\s+of\s+educational|population\s+of\s+the\s+countries)\b", re.IGNORECASE),
+    # Meta-questions about retrieval/evaluation methodology
+    re.compile(r"\b(graphrag|graph\s+rag|knowledge\s+graph\s+retrieval|rag\s+system|retrieval.augmented)\b", re.IGNORECASE),
+    re.compile(r"\b(multi.hop\s+questions|comparative\s+questions|evaluation\s+metric)\b", re.IGNORECASE),
 ]
 JSON_ONLY_SUFFIX = "Return only valid JSON. Do not use markdown, code fences, or backticks."
+
+# JSON Schema for guided/structured generation (vLLM response_format).
+# Ensures the model always returns a well-formed {"questions": [...]} envelope.
+_QUESTION_ITEM_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["question", "type", "source_doc", "source_docs", "expected_entities"],
+    "properties": {
+        "question": {"type": "string"},
+        "type": {"type": "string", "enum": QUESTION_TYPES},
+        "source_doc": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "source_docs": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]},
+        "expected_entities": {"type": "array", "items": {"type": "string"}},
+    },
+}
+_QUESTIONS_OUTPUT_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["questions"],
+    "properties": {"questions": {"type": "array", "items": _QUESTION_ITEM_SCHEMA}},
+}
+_GROUND_TRUTH_OUTPUT_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["ground_truth"],
+    "properties": {"ground_truth": {"type": "string"}},
+}
 QUESTION_LANGUAGES = {
     "en": "English",
     "it": "Italian",
 }
+
+# Markers that suggest an aggregation question (numeric/set operations).
+# Anchored at word-start only; no trailing \b so "totale", "quante" etc. match.
+_AGGREGATION_MARKERS_RE = re.compile(
+    r"\b(total|sum|average|mean|count|how many|how much|percentage|rate|"
+    r"totale|somma|media|quanti|quante|percentuale|tasso)",
+    re.IGNORECASE,
+)
+# Markers for comparative questions.
+# "compar" / "differ" are prefixes, so no trailing \b (matches "compare",
+# "comparison", "difference", etc.).
+_COMPARATIVE_MARKERS_RE = re.compile(
+    r"\b(compar|differ|versus|vs\.?|more than|less than|higher|lower|"
+    r"respect to|rispetto|confronto|maggiore|minore|superiore|inferiore)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -228,12 +294,22 @@ def _resolve_vllm_config() -> VLLMConfig:
     return VLLMConfig(base_url=base_url, model_name=model_name, api_key=api_key or "EMPTY")
 
 
-def _chat_completion(vllm: VLLMConfig, messages: list[dict[str, str]], temperature: float = 0.0) -> str:
-    payload = {
+def _chat_completion(
+    vllm: VLLMConfig,
+    messages: list[dict[str, str]],
+    temperature: float = 0.0,
+    guided_schema: dict | None = None,
+) -> str:
+    payload: dict = {
         "model": vllm.model_name,
         "messages": messages,
         "temperature": temperature,
     }
+    if guided_schema is not None:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "questions_output", "schema": guided_schema},
+        }
     request = urllib.request.Request(
         url=f"{vllm.base_url}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
@@ -275,12 +351,13 @@ def _call_json_llm(
     user_prompt: str,
     *,
     temperature: float = 0.0,
+    guided_schema: dict | None = None,
 ) -> Any:
     base_messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-    raw = _chat_completion(vllm, base_messages, temperature=temperature)
+    raw = _chat_completion(vllm, base_messages, temperature=temperature, guided_schema=guided_schema)
     current_response = raw
     parse_error: Exception | None = None
 
@@ -292,6 +369,9 @@ def _call_json_llm(
             if attempt == 2:
                 break
 
+            # Use non-zero temperature for repair attempts so repeated broken
+            # responses don't just reproduce the same malformed output.
+            repair_temperature = max(temperature, 0.3)
             repair_messages = [
                 {"role": "system", "content": system_prompt},
                 {
@@ -303,7 +383,9 @@ def _call_json_llm(
                     ),
                 },
             ]
-            current_response = _chat_completion(vllm, repair_messages, temperature=temperature)
+            # Repair fallback: drop guided_schema so we can accept any valid
+            # JSON the model produces rather than forcing the schema again.
+            current_response = _chat_completion(vllm, repair_messages, temperature=repair_temperature)
 
     preview = current_response[:400].replace("\n", " ")
     raise RuntimeError(f"Failed to parse JSON response after retries: {parse_error}; preview={preview}")
@@ -323,9 +405,52 @@ def _truncate(text: str, limit: int) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
-def _build_doc_context(doc: DocumentRecord, chunks: list[ChunkRecord], limit_chars: int = 12000) -> str:
-    ordered = sorted(chunks, key=lambda chunk: chunk.chunk_index)
-    return _truncate(_section_join(ordered), limit_chars)
+def _sample_chunks_for_context(
+    chunks: list[ChunkRecord],
+    limit_chars: int,
+    *,
+    seed_offset: int = 0,
+) -> list[ChunkRecord]:
+    """Return a subset of chunks that fits within limit_chars.
+
+    For small corpora (total text ≤ limit_chars) returns all chunks in order.
+    For large corpora, stratifies chunks into equally-spaced buckets so that
+    content from across the entire document is represented rather than only
+    the opening sections.  seed_offset shifts the starting position within
+    each bucket, enabling varied windows across refill rounds.
+    """
+    ordered = sorted(chunks, key=lambda c: c.chunk_index)
+    full_text = _section_join(ordered)
+    if len(full_text) <= limit_chars:
+        return ordered
+
+    # Estimate how many chunks fit in the budget.
+    avg_chars = len(full_text) / max(len(ordered), 1)
+    budget_chunks = max(1, int(limit_chars / avg_chars))
+
+    if budget_chunks >= len(ordered):
+        return ordered
+
+    # Stratified sampling: pick one chunk from each equally-spaced stratum.
+    selected: list[ChunkRecord] = []
+    stratum_size = len(ordered) / budget_chunks
+    for i in range(budget_chunks):
+        pos = int((i + 0.5 + (seed_offset % budget_chunks) / budget_chunks) * stratum_size)
+        pos = min(pos, len(ordered) - 1)
+        selected.append(ordered[pos])
+
+    return sorted(selected, key=lambda c: c.chunk_index)
+
+
+def _build_doc_context(
+    doc: DocumentRecord,
+    chunks: list[ChunkRecord],
+    limit_chars: int = 12000,
+    *,
+    seed_offset: int = 0,
+) -> str:
+    sampled = _sample_chunks_for_context(chunks, limit_chars, seed_offset=seed_offset)
+    return _truncate(_section_join(sampled), limit_chars)
 
 
 def _build_doc_summary(doc: DocumentRecord, chunks: list[ChunkRecord], limit_chars: int = 2400) -> str:
@@ -376,8 +501,10 @@ def _split_type_counts(total: int, remaining: dict[str, int], allowed_types: lis
 def _question_generation_system_prompt(question_language: str) -> str:
     language_label = _question_language_label(question_language)
     return (
-        "You are an expert in Knowledge Graph and RAG evaluation. "
+        "You are an expert at creating factual question-answer pairs from domain documents. "
         "Generate only questions whose answers are explicitly present in the provided context. "
+        "Questions must be about the CONTENT of the documents (regulations, organizations, data, policies), "
+        "not about the evaluation method, retrieval systems, or document structure. "
         f"Write every question in {language_label}. "
         "You must follow the JSON schema exactly. "
         f"{JSON_ONLY_SUFFIX}"
@@ -425,10 +552,16 @@ def _format_question_prompt(
         "- Prefer answerable, evidence-grounded questions with explicit anchors (for example: entity + metric, or entity + year/time period).\n"
         "- Avoid broad or generic prompts with no concrete anchors (for example: 'main relationships', 'role in...', 'how important...').\n"
         "- Do NOT ask metadata/index questions about page numbers, chapter/annex labels, section numbering, ISSN, or document title lookup.\n"
+        "- Do NOT ask 'What is the title of the document?' or similar bibliographic questions.\n"
+        "- Do NOT generate questions about general world knowledge NOT present in this document (e.g., capital cities, common definitions found in any encyclopedia).\n"
+        "- Do NOT generate questions about GraphRAG, Knowledge Graphs, RAG systems, or evaluation methodology — questions must be about the CONTENT of the documents.\n"
+        "- Do NOT use placeholder names like 'Organization A', 'Company B', 'Indicator A' — use the actual names from the context.\n"
         "- Use concise, specific wording.\n"
         "- Vary wording to avoid near-duplicates.\n"
         f"- Write every question in {language_label}.\n"
-        "- expected_entities must contain the minimal set of key entities needed to answer.\n"
+        "- expected_entities MUST be NAMED ENTITIES from the document text: organization names, regulation names, specific indicators, country/region names, person names, or domain-specific technical terms.\n"
+        "- Do NOT use common nouns (e.g., 'feed', 'production', 'transport', 'author') or bare numbers/years (e.g., '2023', '109') as the ONLY expected_entities.\n"
+        "- Every expected_entity must appear verbatim or near-verbatim in the context.\n"
         "- source_doc must be the provided document label.\n"
         "- source_docs must be null for non-cross_doc items.\n"
         "- Return only a JSON object with key 'questions'.\n\n"
@@ -462,10 +595,12 @@ def _format_cross_doc_prompt(
         "- Every question must require information from more than one document.\n"
         "- Each question must include concrete entities or measurable anchors from the supplied summaries.\n"
         "- Do NOT ask metadata/index questions about page numbers, chapter/annex labels, section numbering, ISSN, or document title lookup.\n"
+        "- Do NOT ask 'What is the title of the document?' or similar bibliographic questions.\n"
+        "- Do NOT generate questions about general world knowledge not specific to these documents.\n"
         "- source_doc must be null.\n"
         "- source_docs must list all contributing documents.\n"
         f"- Write every question in {language_label}.\n"
-        "- expected_entities must contain the key entities needed to answer.\n"
+        "- expected_entities MUST be NAMED ENTITIES (organization names, regulation names, specific indicators, country/region names, technical terms). Do NOT use bare numbers, years, or common nouns as the only entities.\n"
         "- Return only a JSON object with key 'questions'.\n\n"
         f"Output schema example:\n{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
         "Document summaries:\n"
@@ -495,6 +630,125 @@ def _format_ground_truth_prompt(
     )
 
 
+def _tokenize_for_jaccard(text: str) -> frozenset[str]:
+    """Return normalized token set for Jaccard similarity."""
+    return frozenset(t for t in _normalize_text(text).split() if len(t) > 2)
+
+
+def _jaccard_similarity(a: frozenset[str], b: frozenset[str]) -> float:
+    if not a and not b:
+        return 1.0
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
+
+
+def _deduplicate_near_questions(
+    questions: list[dict[str, Any]],
+    threshold: float = 0.75,
+) -> list[dict[str, Any]]:
+    """Remove near-duplicate questions using token Jaccard similarity.
+
+    Keeps the first occurrence when similarity ≥ threshold.
+    """
+    kept: list[dict[str, Any]] = []
+    kept_tokens: list[frozenset[str]] = []
+    for item in questions:
+        tokens = _tokenize_for_jaccard(str(item.get("question", "")))
+        if any(_jaccard_similarity(tokens, t) >= threshold for t in kept_tokens):
+            continue
+        kept.append(item)
+        kept_tokens.append(tokens)
+    return kept
+
+
+_INTERROGATIVE_RE = re.compile(
+    r"^(what|who|when|where|which|how|why|does|did|is|are|was|were|can|could|"
+    r"cosa|come|quando|dove|quale|quali|perché|chi)\b",
+    re.IGNORECASE,
+)
+
+def _is_self_answering(question: str, expected_entities: list[str]) -> bool:
+    """Return True if the question text embeds its own answer.
+
+    Only flags declarative statements (no question mark, no interrogative
+    word anywhere) where an expected entity appears verbatim in the text.
+    Phrases like "According to X, what..." or "Compared to Y, how..." are
+    real questions (contain interrogative words + end with ?) and are kept.
+    """
+    if not expected_entities:
+        return False
+    q_stripped = question.strip()
+    # Any sentence ending with "?" is treated as a question.
+    if q_stripped.endswith("?"):
+        return False
+    # Also pass if any interrogative word appears anywhere in the text.
+    if _INTERROGATIVE_RE.search(q_stripped):
+        return False
+    # Pure declarative statement that contains an expected entity → self-answering.
+    q_tokens = set(_normalize_text(q_stripped).split())
+    for ent in expected_entities:
+        ent_tokens = set(_normalize_text(str(ent)).split())
+        if ent_tokens and ent_tokens.issubset(q_tokens):
+            return True
+    return False
+
+
+_PURE_NUMBER_RE = re.compile(r"^\d+$")
+_CHAPTER_NUM_RE = re.compile(r"^\d+(\.\d+)+$")
+_GENERIC_WORDS = frozenset({
+    "feed", "food", "land", "fish", "water", "milk", "meat", "rice", "crop",
+    "farm", "data", "author", "document", "chapter", "section", "production",
+    "manufacture", "transport", "distribution", "context", "report", "text",
+    "figure", "table", "source", "result", "value", "level", "area", "rate",
+})
+
+
+def _is_quality_entity(entity: str) -> bool:
+    """Return True if entity is a named entity useful for KG node seeding.
+
+    Rejects: pure numbers/years, chapter-style decimals (5.1), single generic
+    lowercase words. Accepts: proper nouns, multi-word phrases, regulation
+    identifiers, technical terms with mixed case.
+    """
+    s = entity.strip()
+    if not s:
+        return False
+    if _PURE_NUMBER_RE.fullmatch(s):
+        return False
+    if _CHAPTER_NUM_RE.fullmatch(s):
+        return False
+    tokens = s.split()
+    if len(tokens) == 1:
+        word = tokens[0]
+        if word.lower() in _GENERIC_WORDS:
+            return False
+        # single short all-lowercase token with no digits → likely generic
+        if word.islower() and len(word) < 6 and not any(c.isdigit() for c in word):
+            return False
+    return True
+
+
+def _validate_question_type(
+    question_type: str,
+    question: str,
+    expected_entities: list[str],
+) -> str:
+    """Heuristically validate and downgrade implausible question type labels.
+
+    Does NOT discard questions — only adjusts the type when clear evidence
+    contradicts the LLM-assigned label. Falls back to 'fact_based'.
+    """
+    if question_type == "multi_hop" and len(expected_entities) < 2:
+        return "fact_based"
+    if question_type == "comparative" and not _COMPARATIVE_MARKERS_RE.search(question):
+        return "fact_based"
+    if question_type == "aggregation" and not _AGGREGATION_MARKERS_RE.search(question):
+        return "fact_based"
+    return question_type
+
+
 def _normalize_question_item(item: dict[str, Any]) -> dict[str, Any] | None:
     question = str(item.get("question", "")).strip()
     question_type = str(item.get("type", "")).strip()
@@ -522,6 +776,16 @@ def _normalize_question_item(item: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(entities, list):
         entities = []
     expected_entities = [str(entity).strip() for entity in entities if str(entity).strip()]
+
+    # Require at least one entity that KG retrieval can seed on.
+    # Questions with only years, chapter numbers, or generic words will
+    # consistently return zero triples, making them useless for KG evaluation.
+    if expected_entities and not any(_is_quality_entity(e) for e in expected_entities):
+        return None
+
+    # Light heuristic type sanity checks: downgrade implausible type labels
+    # rather than discarding the question entirely.
+    question_type = _validate_question_type(question_type, question, expected_entities)
 
     return {
         "question": question,
@@ -556,12 +820,15 @@ def _generate_doc_questions(
     doc_chunks: list[ChunkRecord],
     question_counts: dict[str, int],
     question_language: str,
+    temperature: float = 0.0,
+    seed_offset: int = 0,
+    failure_log: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     total_requested = sum(question_counts.values())
     if total_requested <= 0:
         return []
 
-    context = _build_doc_context(doc, doc_chunks)
+    context = _build_doc_context(doc, doc_chunks, seed_offset=seed_offset)
     prompt = _format_question_prompt(
         context=context,
         question_counts=question_counts,
@@ -573,13 +840,20 @@ def _generate_doc_questions(
             vllm,
             _question_generation_system_prompt(question_language),
             prompt,
+            temperature=temperature,
+            guided_schema=_QUESTIONS_OUTPUT_SCHEMA,
         )
     except Exception as exc:
-        LOGGER.warning("Question generation failed for doc=%s: %s", doc.filename, exc)
+        reason = str(exc)
+        LOGGER.warning("Question generation failed for doc=%s: %s", doc.filename, reason)
+        if failure_log is not None:
+            failure_log.append({"doc": doc.filename, "reason": reason})
         return []
     items = [item for item in _extract_question_items(payload) if item["type"] in NON_CROSS_TYPES]
     if not items:
         LOGGER.warning("No valid questions produced for doc=%s", doc.filename)
+        if failure_log is not None:
+            failure_log.append({"doc": doc.filename, "reason": "no_valid_items"})
     for item in items:
         item["source_doc"] = doc.filename
         item["source_docs"] = None
@@ -593,6 +867,8 @@ def _generate_cross_doc_questions(
     chunks_by_doc: dict[str, list[ChunkRecord]],
     count: int,
     question_language: str,
+    temperature: float = 0.0,
+    failure_log: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if count <= 0 or len(docs) < 2:
         return []
@@ -607,13 +883,20 @@ def _generate_cross_doc_questions(
             vllm,
             _question_generation_system_prompt(question_language),
             prompt,
+            temperature=temperature,
+            guided_schema=_QUESTIONS_OUTPUT_SCHEMA,
         )
     except Exception as exc:
-        LOGGER.warning("Cross-doc question generation failed: %s", exc)
+        reason = str(exc)
+        LOGGER.warning("Cross-doc question generation failed: %s", reason)
+        if failure_log is not None:
+            failure_log.append({"doc": "cross_doc", "reason": reason})
         return []
     items = [item for item in _extract_question_items(payload) if item["type"] == "cross_doc"]
     if not items:
         LOGGER.warning("No valid cross-doc questions produced")
+        if failure_log is not None:
+            failure_log.append({"doc": "cross_doc", "reason": "no_valid_items"})
     for item in items:
         item["source_doc"] = None
     return items
@@ -672,6 +955,7 @@ def _generate_ground_truths(
                 vllm,
                 _ground_truth_system_prompt(question_language),
                 prompt,
+                guided_schema=_GROUND_TRUTH_OUTPUT_SCHEMA,
             )
         except Exception as exc:
             LOGGER.warning("Ground-truth generation failed for question '%s': %s", item.get("question", ""), exc)
@@ -708,6 +992,7 @@ def _build_question_set(
     remaining.pop("cross_doc", None)
     questions: list[dict[str, Any]] = []
     seen_questions: set[str] = set()
+    generation_failures: list[dict[str, Any]] = []
 
     doc_totals = _distributed_counts(sum(remaining.values()), len(docs))
     for doc_index, doc in enumerate(docs):
@@ -724,6 +1009,7 @@ def _build_question_set(
             doc_chunks=chunks_by_doc[doc.doc_id],
             question_counts=allocation,
             question_language=question_language,
+            failure_log=generation_failures,
         )
         for item in generated:
             normalized = _normalize_text(item["question"])
@@ -748,12 +1034,16 @@ def _build_question_set(
             allocation = _split_type_counts(target, remaining, NON_CROSS_TYPES)
             if sum(allocation.values()) <= 0:
                 continue
+            # Use non-zero temperature so repeated refill calls don't produce
+            # identical questions that the dedup filter would discard.
             generated = _generate_doc_questions(
                 vllm=vllm,
                 doc=doc,
                 doc_chunks=chunks_by_doc[doc.doc_id],
                 question_counts=allocation,
                 question_language=question_language,
+                temperature=0.7,
+                failure_log=generation_failures,
             )
             for item in generated:
                 normalized = _normalize_text(item["question"])
@@ -778,6 +1068,7 @@ def _build_question_set(
             chunks_by_doc=chunks_by_doc,
             count=TARGET_COUNTS["cross_doc"],
             question_language=question_language,
+            failure_log=generation_failures,
         )
         for item in generated:
             normalized = _normalize_text(item["question"])
@@ -838,11 +1129,17 @@ def _build_question_set(
                 continue
 
             if expected:
-                gt_norm = _normalize_text(gt)
+                gt_tokens = set(QUESTION_TOKEN_RE.sub(" ", _normalize_text(gt)).split())
                 grounded = False
                 for ent in expected:
                     ent_norm = _normalize_text(str(ent))
-                    if ent_norm and ent_norm in gt_norm:
+                    if not ent_norm:
+                        continue
+                    ent_tokens = set(ent_norm.split())
+                    # Require all tokens of the entity to appear in the ground
+                    # truth (whole-word match), avoiding short-string false
+                    # positives from substring search.
+                    if ent_tokens and ent_tokens.issubset(gt_tokens):
                         grounded = True
                         break
 
@@ -891,6 +1188,9 @@ def _build_question_set(
                 doc_chunks=chunks_by_doc[doc.doc_id],
                 question_counts=allocation,
                 question_language=question_language,
+                temperature=0.7,
+                seed_offset=round_idx + 1,
+                failure_log=generation_failures,
             )
             for item in generated:
                 normalized = _normalize_text(str(item.get("question", "")))
@@ -911,6 +1211,8 @@ def _build_question_set(
                 chunks_by_doc=chunks_by_doc,
                 count=cross_remaining,
                 question_language=question_language,
+                temperature=0.7,
+                failure_log=generation_failures,
             )
             for item in generated_cross:
                 if cross_remaining <= 0:
@@ -952,6 +1254,26 @@ def _build_question_set(
     if sum(missing_after_refill.values()) > 0:
         LOGGER.warning("Could not fill all target counts after strict grounding: %s", missing_after_refill)
 
+    # Near-duplicate removal (token Jaccard ≥ 0.75) and anti-leakage filter.
+    before_dedup = len(questions)
+    questions = _deduplicate_near_questions(questions, threshold=0.75)
+    leakage_filtered: list[dict[str, Any]] = []
+    for item in questions:
+        if _is_self_answering(
+            str(item.get("question", "")),
+            list(item.get("expected_entities", []) or []),
+        ):
+            LOGGER.warning("Dropped self-answering question: %r", item.get("question", ""))
+        else:
+            leakage_filtered.append(item)
+    questions = leakage_filtered
+    if len(questions) < before_dedup:
+        LOGGER.warning(
+            "Post-processing removed %d questions (near-dup or leakage). Final count: %d",
+            before_dedup - len(questions),
+            len(questions),
+        )
+
     for index, item in enumerate(questions, start=1):
         item["id"] = f"q_{index:03d}"
 
@@ -969,6 +1291,7 @@ def _build_question_set(
             "target_counts": dict(TARGET_COUNTS),
             "missing_after_refill": missing_after_refill,
             "by_type": {question_type: counts.get(question_type, 0) for question_type in QUESTION_TYPES},
+            "generation_failures": generation_failures,
         },
         "questions": questions,
     }
