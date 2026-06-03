@@ -59,7 +59,7 @@ conda run -n graphllm python -m kg_pipeline.main \
 
 # Run experiment matrix
 python scripts/run_retrieval_matrix.py \
-  --questions-file questions.txt \
+  --questions-file evaluation/fixtures/questions.txt \
   --models "7b,32b" \
   --strategies "default,text_plus_triples" \
   --output-dir artifacts/experiments
