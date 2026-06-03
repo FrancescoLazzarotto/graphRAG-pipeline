@@ -51,8 +51,10 @@ REFUSAL_PATTERNS = [
     re.compile(r"(the\s+)?(context|provided\s+context)\s+(does\s+not|doesn'?t)\s+(provide|contain|mention|include|specify)", re.IGNORECASE),
     re.compile(r"no\s+information\s+(is\s+)?(available|provided|found|given)\s+in\s+the\s+context", re.IGNORECASE),
     re.compile(r"(the\s+)?context\s+provided\s+does\s+not", re.IGNORECASE),
+    re.compile(r"(the\s+)?(document|text|passage)\s+(does\s+not|doesn'?t)\s+(mention|contain|provide|specify|include)", re.IGNORECASE),
     re.compile(r"il\s+contesto\s+(fornito\s+)?(non\s+fornisce|non\s+contiene|non\s+menziona|non\s+specifica)", re.IGNORECASE),
     re.compile(r"non\s+(fornisce|contiene|menziona)\s+informazioni", re.IGNORECASE),
+    re.compile(r"il\s+documento\s+non\s+(menziona|contiene|fornisce)", re.IGNORECASE),
 ]
 QUESTION_METADATA_PATTERNS = [
     re.compile(r"\b(page|pages|page\s+range|issn|annex|table|figure)\b", re.IGNORECASE),
@@ -66,8 +68,8 @@ QUESTION_METADATA_PATTERNS = [
     re.compile(r"\bwhich\s+figure\b", re.IGNORECASE),
     re.compile(r"\bwhich\s+table\b", re.IGNORECASE),
     # Placeholder/generic questions (model hallucination artefacts)
-    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\b"),
-    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\s+or\s+[A-Z]\b"),
+    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\b", re.IGNORECASE),
+    re.compile(r"\b(organization|company|indicator|entity|region|country)\s+[A-Z]\s+or\s+[A-Z]\b", re.IGNORECASE),
     re.compile(r"\btechcorp\b", re.IGNORECASE),
     re.compile(r"\binnovatech\b", re.IGNORECASE),
     # Off-domain economic/demographic data not relevant to food safety/systems docs
@@ -1254,9 +1256,9 @@ def _build_question_set(
     if sum(missing_after_refill.values()) > 0:
         LOGGER.warning("Could not fill all target counts after strict grounding: %s", missing_after_refill)
 
-    # Near-duplicate removal (token Jaccard ≥ 0.75) and anti-leakage filter.
+    # Near-duplicate removal (token Jaccard ≥ 0.65) and anti-leakage filter.
     before_dedup = len(questions)
-    questions = _deduplicate_near_questions(questions, threshold=0.75)
+    questions = _deduplicate_near_questions(questions, threshold=0.65)
     leakage_filtered: list[dict[str, Any]] = []
     for item in questions:
         if _is_self_answering(
