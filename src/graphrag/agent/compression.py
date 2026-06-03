@@ -6,7 +6,10 @@ logger = logging.getLogger("graphrag")
 
 
 class ContextCompressor:
-    def __init__(self, max_tokens: int, ratio: float = 0.75) -> None:
+    def __init__(self, max_tokens: int, ratio: float = 0.25) -> None:
+        # ``ratio`` is tokens-per-character. Real subword tokenizers average
+        # ~4 chars/token, so ~0.25 is the correct estimate. A larger value
+        # over-estimates tokens and trims the context far too aggressively.
         self.max_tokens = max_tokens
         self.ratio = ratio
 
