@@ -9,10 +9,6 @@ from statistics import mean
 from typing import Any
 
 
-def _parse_bool(value: str) -> bool:
-    return value.strip().lower() in {"1", "true", "yes", "y"}
-
-
 def _safe_float(value: str, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -79,10 +75,6 @@ def _load_rows(csv_files: list[Path]) -> list[dict[str, Any]]:
                         "strategy": row.get("strategy", ""),
                         "question": row.get("question", ""),
                         "latency_ms": _safe_float(row.get("latency_ms", "0")),
-                        "confidence": _safe_float(row.get("confidence", "0")),
-                        "reflection_passed": _parse_bool(
-                            row.get("reflection_passed", "false")
-                        ),
                         "kg_triples_used": _safe_int(
                             row.get("kg_triples_used", "0"), default=0
                         ),
@@ -120,10 +112,6 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int | 
     summary: dict[str, dict[str, float | int | str]] = {}
     for (model_id, strategy), items in grouped.items():
         latencies = [float(item["latency_ms"]) for item in items]
-        confidences = [float(item["confidence"]) for item in items]
-        pass_rate = sum(1 for item in items if bool(item["reflection_passed"])) / len(
-            items
-        )
         avg_triples = mean(int(item["kg_triples_used"]) for item in items)
         avg_neighbors = mean(int(item["kg_neighbors_used"]) for item in items)
         avg_subgraph = mean(int(item["kg_subgraph_triples_used"]) for item in items)
@@ -140,8 +128,6 @@ def _aggregate(rows: list[dict[str, Any]]) -> dict[str, dict[str, float | int | 
             "questions": len({str(item["question"]) for item in items}),
             "avg_latency_ms": mean(latencies),
             "p95_latency_ms": _p95(latencies),
-            "avg_confidence": mean(confidences),
-            "reflection_pass_rate": pass_rate,
             "avg_kg_triples_used": avg_triples,
             "avg_kg_neighbors_used": avg_neighbors,
             "avg_kg_subgraph_triples_used": avg_subgraph,
@@ -164,7 +150,7 @@ def _print_table(summary: dict[str, dict[str, float | int | str]]) -> None:
 
     header = (
         f"{'model_id':<38} {'strategy':<18} {'runs':>6} {'q':>4} {'avg_ms':>10} {'p95_ms':>10} "
-        f"{'pass_rate':>11} {'avg_conf':>10} {'avg_triples':>12} {'avg_neigh':>10} {'avg_subg':>10} {'avg_sp':>10} {'avg_subq':>10}"
+        f"{'avg_triples':>12} {'avg_neigh':>10} {'avg_subg':>10} {'avg_sp':>10} {'avg_subq':>10}"
     )
     print(header)
     print("-" * len(header))
@@ -177,8 +163,6 @@ def _print_table(summary: dict[str, dict[str, float | int | str]]) -> None:
             f" {int(item['questions']):>4}"
             f" {float(item['avg_latency_ms']):>10.2f}"
             f" {float(item['p95_latency_ms']):>10.2f}"
-            f" {float(item['reflection_pass_rate']) * 100:>10.2f}%"
-            f" {float(item['avg_confidence']):>10.3f}"
             f" {float(item['avg_kg_triples_used']):>12.2f}"
             f" {float(item['avg_kg_neighbors_used']):>10.2f}"
             f" {float(item['avg_kg_subgraph_triples_used']):>10.2f}"
@@ -252,8 +236,6 @@ def main() -> None:
                     "questions",
                     "avg_latency_ms",
                     "p95_latency_ms",
-                    "reflection_pass_rate",
-                    "avg_confidence",
                     "avg_kg_triples_used",
                     "avg_kg_neighbors_used",
                     "avg_kg_subgraph_triples_used",
@@ -272,8 +254,6 @@ def main() -> None:
                         int(item["questions"]),
                         f"{float(item['avg_latency_ms']):.6f}",
                         f"{float(item['p95_latency_ms']):.6f}",
-                        f"{float(item['reflection_pass_rate']):.6f}",
-                        f"{float(item['avg_confidence']):.6f}",
                         f"{float(item['avg_kg_triples_used']):.6f}",
                         f"{float(item['avg_kg_neighbors_used']):.6f}",
                         f"{float(item['avg_kg_subgraph_triples_used']):.6f}",
