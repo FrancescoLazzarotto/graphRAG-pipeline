@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import logging
 import time
@@ -19,17 +18,11 @@ from graphrag.experiments.resource_monitor import ResourceMonitor
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
+from graphrag.strategies import STRATEGY_PRESETS, apply_strategy
 from graphrag.text_rag.agent import StandardRAGAgent
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 
-_GRAPH_STRATEGIES_DEFAULT = (
-    "default",
-    "text_only",
-    "text_plus_triples",
-    "neighbors_focus",
-    "subgraph_2hop",
-    "shortest_path",
-)
+_GRAPH_STRATEGIES_DEFAULT = STRATEGY_PRESETS
 _GRAPH_STRATEGIES_SMOKE = ("default", "text_plus_triples")
 
 _DEFAULT_MAX_NEW_TOKENS = 256
@@ -306,49 +299,6 @@ def _base_graph_config(args: argparse.Namespace, default_question: str) -> Agent
     )
 
 
-def _graph_strategy_config(base: AgentConfig, label: str) -> AgentConfig:
-    config = copy.deepcopy(base)
-
-    if label == "default":
-        return config
-
-    if label == "text_only":
-        config.include_nodes = False
-        config.include_triples = False
-        config.include_neighbors = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "text_plus_triples":
-        config.include_neighbors = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "neighbors_focus":
-        config.include_nodes = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "subgraph_2hop":
-        config.hops = max(2, int(config.hops))
-        config.include_nodes = False
-        config.include_neighbors = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "shortest_path":
-        config.include_nodes = False
-        config.include_neighbors = False
-        config.include_subgraph = False
-        return config
-
-    allowed = ",".join(_GRAPH_STRATEGIES_DEFAULT)
-    raise ValueError(f"Unknown graph strategy '{label}'. Allowed: {allowed}")
-
-
 def _resolve_standard_labels(raw_labels: list[str]) -> list[str]:
     invalid = [label for label in raw_labels if label not in _STANDARD_STRATEGY_PRESETS]
     if invalid:
@@ -461,7 +411,7 @@ def _run_graph_matrix(
                 f"questions={len(questions)} start"
             )
             started_at = time.perf_counter()
-            config = _graph_strategy_config(base=base_config, label=label)
+            config = apply_strategy(base_config, label)
             retriever = KGRetriever(kg_store=kg_manager, config=config)
             agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
             runner.run_agent(
