@@ -1,90 +1,104 @@
-# COMMANDS.md — Guida ai comandi del progetto
+# COMMANDS.md — Project Command Reference
 
-Riferimento rapido a tutti i comandi eseguibili nella repo. Organizzato per area funzionale.
+Quick reference for all executable commands in this repository, organised by functional area.
 
 ---
 
-## 1. GraphRAG CLI — `graphrag-demo`
+## 1. GraphRAG CLI — `graphrag.cli`
 
-Entry point principale per retrieval e generazione su singola domanda o batch.
+Main entry point for single-question retrieval/generation and batch experiments.
 
-> Se `graphrag-demo` restituisce exit code 126 (shim stantio), sostituire con  
-> `conda run -n graphllm python -m graphrag.cli`.
+> If `graphrag-demo` returns exit code 126 (stale shim), use `conda run -n graphllm python -m graphrag.cli` instead.
 
-### Domanda singola — solo retrieval
+### Single question — retrieval only
 
 ```bash
 conda run -n graphllm python -m graphrag.cli \
-  --question "Qual è la relazione tra X e Y?" \
+  --question "What is the relationship between X and Y?" \
   --entity "X" \
   --strategies default
 ```
 
-### Domanda singola con generazione LLM locale
+### Single question with local LLM
 
 ```bash
 conda run -n graphllm python -m graphrag.cli \
-  --question "Qual è la relazione tra X e Y?" \
+  --question "What is the relationship between X and Y?" \
   --entity "X" \
   --llm \
   --model-id meta-llama/Meta-Llama-3-8B-Instruct
 ```
 
-### Domanda singola con vLLM (endpoint OpenAI-compatible)
+### Single question with vLLM (OpenAI-compatible endpoint)
 
 ```bash
 conda run -n graphllm python -m graphrag.cli \
-  --question "Qual è la relazione tra X e Y?" \
+  --question "What is the relationship between X and Y?" \
   --llm \
   --vllm \
-  --vllm-base-url http://localhost:8000/v1
+  --vllm-base-url http://localhost:8000/v1 \
+  --model-id "Qwen/Qwen2.5-32B-Instruct-AWQ"
 ```
 
-### Batch experiment su file di domande
+### Batch experiment over a question file
 
 ```bash
 conda run -n graphllm python -m graphrag.cli \
   --experiment \
-  --questions-file questions.txt \
-  --strategies "default,text_plus_triples" \
+  --questions-file artifacts/tmp/graphrag_test_suite_questions.txt \
+  --strategies "default,text_only,no_retrieval,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
   --llm \
   --vllm \
+  --vllm-base-url http://localhost:8000/v1 \
+  --model-id "Qwen/Qwen2.5-32B-Instruct-AWQ" \
   --output-dir artifacts/experiments \
-  --experiment-tag mio_test
+  --experiment-tag my_run
 ```
 
-### Parametri principali
+To monitor progress while running in background:
 
-| Flag | Effetto |
-|------|---------|
-| `--question` | Domanda da porre (default: placeholder italiano) |
-| `--entity` | Entità seed per la traversal del grafo (vuoto = auto) |
-| `--llm` | Abilita la generazione LLM; senza di esso gira solo il retrieval |
-| `--vllm` | Usa un endpoint vLLM invece di caricare il modello HF localmente |
-| `--vllm-base-url` | URL base dell'API vLLM (default: `http://localhost:8000/v1`) |
-| `--model-id` | ID modello HuggingFace o vLLM |
-| `--llm-warmup` | Pre-carica il modello all'avvio |
-| `--strategies` | Strategie di retrieval separate da virgola (v. §7) |
-| `--enable-decomposition-step` | Aggiunge un LLM call prima del retrieval (più latenza) |
-| `--enable-adaptive-routing-step` | Aggiunge routing adattivo prima del retrieval (più latenza) |
-| `--max-new-tokens` | Token massimi generati (default: 256) |
-| `--max-context-tokens` | Token massimi del contesto compresso (default: 1000) |
-| `--gpu-memory-fraction` | Frazione GPU riservata al modello (default: 0.92) |
-| `--allow-large-model-fp16-fallback` | Fallback fp16 per modelli grandi se il caricamento 4-bit fallisce |
-| `--experiment` | Modalità batch; scrive artifact strutturati |
-| `--questions-file` | File UTF-8 con una domanda per riga |
-| `--runs-per-strategy` | Ripetizioni per strategia (default: 1) |
-| `--output-dir` | Directory output esperimenti (default: `artifacts/experiments`) |
-| `--experiment-tag` | Tag identificativo del run |
-| `--recursion-limit` | Passi massimi LangGraph prima di abortire (default: 50) |
+```bash
+conda run -n graphllm python -m graphrag.cli ... \
+  --experiment-tag my_run 2>&1 | tee artifacts/experiments/run_my_run.log &
+
+tail -f artifacts/experiments/run_my_run.log
+```
+
+> **Note on log visibility**: stdout is buffered until the first LLM call completes (typically 5–10 s). The log will appear empty at first — this is normal.
+
+### CLI flags reference
+
+| Flag | Effect |
+|------|--------|
+| `--question` | Question to answer (default: Italian placeholder) |
+| `--entity` | Seed entity for graph traversal (empty = auto-detected) |
+| `--llm` | Enable LLM generation; without it, only retrieval runs |
+| `--vllm` | Use a vLLM OpenAI-compatible endpoint instead of loading a local HF model |
+| `--vllm-base-url` | vLLM API base URL (default: `http://localhost:8000/v1`) |
+| `--model-id` | HuggingFace or vLLM model identifier |
+| `--llm-warmup` | Pre-load model at startup |
+| `--strategies` | Comma-separated retrieval strategy presets (see §14) |
+| `--text-docs-dir` | Document directory for `text_only` BM25 indexing (PDF/txt/md). If omitted, auto-discovers from the latest KG pipeline `stage0` artifacts |
+| `--enable-decomposition-step` | Add an LLM call before retrieval (higher latency) |
+| `--enable-adaptive-routing-step` | Add adaptive routing before retrieval (higher latency) |
+| `--max-new-tokens` | Maximum generated tokens per response (default: 256) |
+| `--max-context-tokens` | Maximum tokens for compressed context before generation (default: 1000) |
+| `--gpu-memory-fraction` | Fraction of GPU memory reserved for the model (default: 0.92) |
+| `--allow-large-model-fp16-fallback` | Allow fp16 fallback for large models when 4-bit loading fails |
+| `--experiment` | Batch mode: writes structured output artifacts |
+| `--questions-file` | UTF-8 text file with one question per line |
+| `--runs-per-strategy` | Repetitions per strategy (default: 1) |
+| `--output-dir` | Experiment output directory (default: `artifacts/experiments`) |
+| `--experiment-tag` | Identifier tag for the run |
+| `--recursion-limit` | Maximum LangGraph recursion steps before aborting (default: 50) |
 
 ---
 
 ## 2. KG Pipeline — `kg_pipeline/main.py`
 
-Costruisce il knowledge graph da documenti e lo inserisce in Neo4j. Gira in 7 stage sequenziali con checkpoint JSON (si può riprendere da dove si è interrotto).
+Builds the knowledge graph from source documents and ingests it into Neo4j. Runs across 7 sequential stages with JSON checkpoint recovery — the pipeline can be resumed from any stage.
 
-### Pipeline completa
+### Full pipeline
 
 ```bash
 conda run -n graphllm python -m kg_pipeline.main \
@@ -93,7 +107,7 @@ conda run -n graphllm python -m kg_pipeline.main \
   --log-level INFO
 ```
 
-### Singolo stage
+### Single stage
 
 ```bash
 conda run -n graphllm python -m kg_pipeline.main \
@@ -102,7 +116,7 @@ conda run -n graphllm python -m kg_pipeline.main \
   --stage ner
 ```
 
-### Solo un documento
+### Single document
 
 ```bash
 conda run -n graphllm python -m kg_pipeline.main \
@@ -111,7 +125,7 @@ conda run -n graphllm python -m kg_pipeline.main \
   --single-doc documento.pdf
 ```
 
-### Dry-run (nessuna scrittura)
+### Dry-run (no writes)
 
 ```bash
 conda run -n graphllm python -m kg_pipeline.main \
@@ -119,38 +133,39 @@ conda run -n graphllm python -m kg_pipeline.main \
   --dry-run
 ```
 
-### Parametri principali
+### Parameters
 
-| Flag | Effetto |
-|------|---------|
-| `--config` | Path al file di configurazione (default: `kg_pipeline/config.yaml`) |
-| `--env-file` | File `.env` con credenziali Neo4j e altri segreti |
-| `--run-dir` | Directory run specifica; se vuota ne crea una con timestamp |
-| `--single-doc` | Processa un solo documento (filename o doc_id) |
-| `--stage` | Esegue solo lo stage indicato: `all` `ingestion` `chunking` `ner` `llm` `resolution` `linking` `neo4j` |
-| `--dry-run` | Simula l'esecuzione senza scrivere output |
-| `--log-level` | Livello di log: `DEBUG` `INFO` `WARNING` (default: `INFO`) |
+| Flag | Effect |
+|------|--------|
+| `--config` | Path to configuration file (default: `kg_pipeline/config.yaml`) |
+| `--env-file` | `.env` file with Neo4j credentials and other secrets |
+| `--run-dir` | Specific run directory; if empty, a timestamped one is created |
+| `--single-doc` | Process a single document (filename or doc_id) |
+| `--stage` | Run only the specified stage: `all` `ingestion` `chunking` `ner` `llm` `resolution` `linking` `neo4j` |
+| `--dry-run` | Simulate execution without writing output |
+| `--log-level` | Log verbosity: `DEBUG` `INFO` `WARNING` (default: `INFO`) |
 
-### Stage e artifact prodotti
+### Stages and produced artifacts
 
-| Stage | Cosa fa | Artifact |
-|-------|---------|----------|
+| Stage | Description | Artifact |
+|-------|-------------|----------|
 | 0 — ingestion | PDF → markdown | `stage0_documents.json` |
-| 1 — chunking | Suddivisione in chunk token-windowed | `stage1_chunks.json` |
-| 2 — ner | Named entity recognition con GLiNER | `stage2_ner.json` |
-| 3 — llm | Estrazione triple con LLM | `stage3_triples_raw.json`, `stage3_acronyms.json` |
+| 1 — chunking | Token-windowed paragraph splitting | `stage1_chunks.json` |
+| 2 — ner | Named entity recognition (GLiNER) | `stage2_ner.json` |
+| 3 — llm | Triple extraction with LLM | `stage3_triples_raw.json`, `stage3_acronyms.json` |
 | 4 — resolution | Entity resolution (embedding + Jaccard) | `stage4_triples_resolved.json`, `stage4_registry.json` |
-| 5 — linking | Collegamento triple | `stage5_triples_linked.json` |
-| 6 — neo4j | Inserimento in Neo4j | `stage6_neo4j_summary.json` |
+| 5 — linking | Triple linking | `stage5_triples_linked.json` |
+| 6 — neo4j | Neo4j ingestion | `stage6_neo4j_summary.json` |
 
-Prodotti aggiuntivi: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`.  
-**Nota**: lo stage 3 fa checkpoint ogni N chunk in `stage3_checkpoint.json`; rilanciare senza cancellarlo riprende dall'ultimo chunk salvato.
+Additional outputs: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`.
+
+> **Stage 3 checkpoint**: progress is saved every N chunks to `stage3_checkpoint.json`. Re-running without deleting this file resumes from the last saved chunk.
 
 ---
 
-## 3. Experiment matrix — `scripts/run_retrieval_matrix.py`
+## 3. Experiment Matrix — `scripts/run_retrieval_matrix.py`
 
-Confronta strategie di retrieval e configurazioni LLM su un set di domande. Scrive i risultati in `artifacts/experiments/<timestamp>_<tag>/`.
+Compares retrieval strategies and LLM configurations across a question set. Results are written to `artifacts/experiments/<timestamp>_<tag>/`.
 
 ```bash
 python scripts/run_retrieval_matrix.py \
@@ -160,7 +175,7 @@ python scripts/run_retrieval_matrix.py \
   --output-dir artifacts/experiments
 ```
 
-### Con vLLM e tag
+### With vLLM and tag
 
 ```bash
 python scripts/run_retrieval_matrix.py \
@@ -170,10 +185,10 @@ python scripts/run_retrieval_matrix.py \
   --vllm \
   --model-id Qwen/Qwen2.5-32B-Instruct \
   --output-dir artifacts/experiments \
-  --experiment-tag confronto_strategie
+  --experiment-tag strategy_comparison
 ```
 
-### Solo retrieval grafico (skip standard RAG)
+### Graph-only (skip standard RAG)
 
 ```bash
 python scripts/run_retrieval_matrix.py \
@@ -182,32 +197,32 @@ python scripts/run_retrieval_matrix.py \
   --strategies "neighbors_focus,subgraph_2hop,shortest_path"
 ```
 
-### Parametri principali
+### Parameters
 
-| Flag | Effetto |
-|------|---------|
-| `--questions-file` | File con una domanda per riga |
-| `--strategies` | Strategie separate da virgola |
-| `--models` | Preset di modelli (`7b`, `32b`, ecc.) |
-| `--llm` | Abilita generazione LLM |
-| `--vllm` | Usa endpoint vLLM |
-| `--model-id` | Modello specifico (override) |
-| `--runs-per-strategy` | Ripetizioni per strategia |
-| `--output-dir` | Directory output |
-| `--experiment-tag` | Tag identificativo |
-| `--skip-standard` | Salta standard RAG, gira solo GraphRAG |
-| `--skip-graph` | Salta GraphRAG, gira solo standard RAG |
+| Flag | Effect |
+|------|--------|
+| `--questions-file` | File with one question per line |
+| `--strategies` | Comma-separated strategy presets |
+| `--models` | Model presets (`7b`, `32b`, etc.) |
+| `--llm` | Enable LLM generation |
+| `--vllm` | Use vLLM endpoint |
+| `--model-id` | Specific model override |
+| `--runs-per-strategy` | Repetitions per strategy |
+| `--output-dir` | Output directory |
+| `--experiment-tag` | Identifier tag |
+| `--skip-standard` | Skip standard RAG, run GraphRAG only |
+| `--skip-graph` | Skip GraphRAG, run standard RAG only |
 | `--performance-profile` | `auto` / `default` / `production_fast` |
-| `--enable-decomposition-step` | Aggiunge decomposizione LLM |
-| `--enable-adaptive-routing-step` | Aggiunge routing adattivo |
-| `--max-new-tokens` | Token massimi per risposta |
-| `--gpu-memory-fraction` | Frazione GPU riservata |
-| `--allow-large-model-fp16-fallback` | Fallback fp16 per modelli grandi |
-| `--llm-warmup` | Pre-carica il modello prima dei run |
-| `--smoke` | Test rapido su N domande ridotte |
-| `--smoke-questions` | Numero domande in smoke mode (default: 2) |
+| `--enable-decomposition-step` | Add LLM decomposition step |
+| `--enable-adaptive-routing-step` | Add adaptive routing step |
+| `--max-new-tokens` | Maximum tokens per response |
+| `--gpu-memory-fraction` | GPU memory fraction reserved |
+| `--allow-large-model-fp16-fallback` | fp16 fallback for large models |
+| `--llm-warmup` | Pre-load model before runs |
+| `--smoke` | Quick test on a reduced question set |
+| `--smoke-questions` | Number of questions in smoke mode (default: 2) |
 
-### Output prodotti
+### Output artifacts
 
 ```
 artifacts/experiments/<timestamp>_<tag>/
@@ -221,9 +236,9 @@ artifacts/experiments/<timestamp>_<tag>/
 
 ---
 
-## 4. A/B test fast profile — `scripts/run_ab_fast_profile.py`
+## 4. A/B Fast Profile — `scripts/run_ab_fast_profile.py`
 
-Confronta il profilo `default` vs `production_fast` per il modello 32B e riporta delta di latenza e qualità.
+Compares `default` vs `production_fast` profile for the 32B model and reports latency and quality delta.
 
 ```bash
 python scripts/run_ab_fast_profile.py \
@@ -238,9 +253,9 @@ python scripts/run_ab_fast_profile.py \
 
 ---
 
-## 5. Analisi risultati — `scripts/analyze_experiments.py`
+## 5. Results Analysis — `scripts/analyze_experiments.py`
 
-Analizza gli artifact di un run e produce una classifica per metrica.
+Analyses run artifacts and produces a ranked metric report.
 
 ```bash
 python scripts/analyze_experiments.py \
@@ -249,14 +264,14 @@ python scripts/analyze_experiments.py \
 ```
 
 ```bash
-python scripts/analyze_experiments.py artifacts/experiments/20240601_120000_mio_test
+python scripts/analyze_experiments.py artifacts/experiments/20240601_120000_my_run
 ```
 
 ---
 
-## 6. Analisi resource usage — `scripts/analyze_resource_usage.py`
+## 6. Resource Usage Analysis — `scripts/analyze_resource_usage.py`
 
-Aggrega telemetria GPU/CPU da più run.
+Aggregates GPU/CPU telemetry from multiple runs.
 
 ```bash
 python scripts/analyze_resource_usage.py artifacts/experiments \
@@ -266,23 +281,23 @@ python scripts/analyze_resource_usage.py artifacts/experiments \
 
 ---
 
-## 7. Analisi matrix — `scripts/analyze_matrix.py`
+## 7. Matrix Analysis — `scripts/analyze_matrix.py`
 
-Analisi comparativa aggregata tra più run/folder di esperimenti.
+Aggregated comparative analysis across multiple experiment runs/folders.
 
 ```bash
 python scripts/analyze_matrix.py \
   --root artifacts/experiments \
-  --tag-contains confronto_strategie \
+  --tag-contains strategy_comparison \
   --output-csv matrix_summary.csv
 ```
 
 ---
 
-## 8. Re-merge entità — `scripts/remerge_entities.py`
+## 8. Entity Re-merge — `scripts/remerge_entities.py`
 
-Ri-esegue entity resolution e linking su output stage 3 esistenti, senza rifare NER o estrazione LLM.  
-Utile per regolare soglie di similarità senza rigirare tutta la pipeline.
+Re-runs entity resolution and linking on existing stage 3 output without redoing NER or LLM extraction.  
+Useful for tuning similarity thresholds without re-running the full pipeline.
 
 ```bash
 python scripts/remerge_entities.py \
@@ -291,23 +306,23 @@ python scripts/remerge_entities.py \
   --context-jaccard-floor 0.15
 ```
 
-| Flag | Effetto |
-|------|---------|
-| `--run-dir` | Directory del run con output stage 3 (obbligatorio) |
-| `--output-dir` | Directory alternativa per stage 4/5 (opzionale) |
-| `--embedding-model` | Modello SentenceTransformer per resolution |
-| `--similarity-threshold` | Soglia similarità coseno (default: 0.88) |
-| `--context-jaccard-floor` | Soglia minima Jaccard di contesto (default: 0.15) |
-| `--base-url` | URL endpoint vLLM |
-| `--model-name` | Nome modello vLLM |
+| Flag | Effect |
+|------|--------|
+| `--run-dir` | Run directory containing stage 3 output (required) |
+| `--output-dir` | Alternative output directory for stages 4/5 (optional) |
+| `--embedding-model` | SentenceTransformer model for resolution |
+| `--similarity-threshold` | Cosine similarity threshold (default: 0.88) |
+| `--context-jaccard-floor` | Minimum context Jaccard threshold (default: 0.15) |
+| `--base-url` | vLLM endpoint URL |
+| `--model-name` | vLLM model name |
 
 ---
 
-## 9. Generazione domande test — `scripts/generate_questions.py`
+## 9. Question Generation — `scripts/generate_questions.py`
 
-Genera automaticamente un test suite di domande dai chunk/documenti della pipeline.
+Automatically generates a test question suite from pipeline chunks/documents.
 
-### Genera suite da run esistente
+### Generate suite from an existing run
 
 ```bash
 python scripts/generate_questions.py generate \
@@ -315,16 +330,30 @@ python scripts/generate_questions.py generate \
   --output artifacts/tmp/graphrag_test_suite.json
 ```
 
-### Solo per un documento specifico
+### Extract questions to plain text (one per line)
+
+```python
+import json
+from pathlib import Path
+
+data = json.loads(Path("artifacts/tmp/graphrag_test_suite.json").read_text())
+questions = [q["question"] for q in data if q.get("question", "").strip()]
+Path("artifacts/tmp/graphrag_test_suite_questions.txt").write_text(
+    "\n".join(questions), encoding="utf-8"
+)
+print(f"{len(questions)} questions written")
+```
+
+### For a specific document
 
 ```bash
 python scripts/generate_questions.py generate \
   --run-dir kg_pipeline/artifacts/run_20240601_120000 \
-  --doc mio_documento.pdf \
+  --doc my_document.pdf \
   --output artifacts/tmp/suite_doc.json
 ```
 
-### Statistiche su suite esistente
+### Statistics on an existing suite
 
 ```bash
 python scripts/generate_questions.py stats \
@@ -333,24 +362,24 @@ python scripts/generate_questions.py stats \
 
 ---
 
-## 10. Visualizzazione KG — `scripts/visualize_kg.py`
+## 10. KG Visualisation — `scripts/visualize_kg.py`
 
-Genera un HTML interattivo del knowledge graph da Neo4j.
+Generates an interactive HTML view of the knowledge graph from Neo4j.
 
 ```bash
 python scripts/visualize_kg.py \
   --output artifacts/tmp/kg_viz.html
 ```
 
-Richiede le variabili d'ambiente `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`.
+Requires `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` to be set.
 
 ---
 
 ## 11. Evaluation — `evaluation/`
 
-### Build dataset di valutazione
+### Build evaluation dataset
 
-Unisce i risultati dei run con le label gold.
+Joins experiment results with gold-standard labels.
 
 ```bash
 python evaluation/build_eval_dataset.py \
@@ -359,15 +388,15 @@ python evaluation/build_eval_dataset.py \
   --output artifacts/evaluation/eval_dataset.csv
 ```
 
-| Flag | Effetto |
-|------|---------|
-| `--input` | Root esperimenti, singolo run folder, o `results.csv` |
-| `--gold-file` | CSV gold con almeno colonne `question` e `ground_truth` |
-| `--tag-contains` | Filtro opzionale sul nome del run folder |
-| `--output` | Output CSV del dataset unificato |
-| `--smoke` | Modalità smoke su fixture locali |
+| Flag | Effect |
+|------|--------|
+| `--input` | Experiments root, single run folder, or `results.csv` |
+| `--gold-file` | Gold CSV with at least `question` and `ground_truth` columns |
+| `--tag-contains` | Optional filter on run folder name |
+| `--output` | Output CSV path |
+| `--smoke` | Smoke mode on local fixtures |
 
-### Metriche di retrieval
+### Retrieval metrics
 
 ```bash
 python evaluation/retrieval_metrics.py \
@@ -377,16 +406,16 @@ python evaluation/retrieval_metrics.py \
   --save-json artifacts/evaluation/metrics.json
 ```
 
-| Flag | Effetto |
-|------|---------|
-| `--input` | CSV prodotto da `build_eval_dataset.py` |
-| `--k` | Top-k per precision/recall/hit/NDCG |
-| `--n-bootstrap` | Numero di resample bootstrap (default: 1000) |
-| `--ci` | Livello confidence interval (default: 0.95) |
-| `--save-csv` / `--save-json` | Path output metriche aggregate |
-| `--save-row-csv` | Path output metriche riga per riga |
+| Flag | Effect |
+|------|--------|
+| `--input` | CSV produced by `build_eval_dataset.py` |
+| `--k` | Top-k for precision/recall/hit/NDCG |
+| `--n-bootstrap` | Bootstrap resamples (default: 1000) |
+| `--ci` | Confidence interval level (default: 0.95) |
+| `--save-csv` / `--save-json` | Aggregate metrics output path |
+| `--save-row-csv` | Per-row metrics output path |
 
-### Valutazione RAGAS (opzionale)
+### RAGAS evaluation (optional)
 
 ```bash
 python evaluation/run_ragas_eval.py \
@@ -397,59 +426,104 @@ python evaluation/run_ragas_eval.py \
 
 ---
 
-## 12. Smoke test e health check
+## 12. Smoke tests and health checks
 
-| Comando | Cosa verifica |
-|---------|---------------|
-| `python scripts/smoke_check.py` | Connettività Neo4j + LLM (legge env vars esportate, non `.env`) |
-| `python scripts/smoke_text_rag.py docs/ --query "..." --top-k 4` | Retrieval testuale su directory di documenti |
-| `python scripts/smoke_kg_retriever.py` | Retrieval sul knowledge graph in Neo4j |
-| `python scripts/smoke_test_pipeline.py` | Smoke rapido sulla pipeline KG |
-| `python scripts/run_pipeline_smoke_full.py` | Smoke end-to-end completo della pipeline |
-| `pytest kg_pipeline/tests/test_pipeline.py -v` | Test unitari/integrazione pipeline |
-| `pytest evaluation/tests/test_metrics.py -v` | Test delle metriche di valutazione |
-
----
-
-## 13. SLURM — esecuzione su cluster
-
-| Script | Cosa lancia |
-|--------|-------------|
-| `sbatch scripts/run_kg_pipeline.sbatch` | Pipeline KG in background (evita hang su disconnessione notebook) |
-| `sbatch scripts/run_graphrag.sbatch` | GraphRAG demo su cluster GPU |
-| `sbatch scripts/run_graphrag_cpu.sbatch` | GraphRAG demo su cluster CPU |
-| `sbatch scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix su GPU cluster |
-| `bash scripts/submit_matrix_from_env.sh` | Submette la matrix leggendo parametri da env vars |
+| Command | What it checks |
+|---------|----------------|
+| `python scripts/smoke_check.py` | Neo4j + LLM connectivity (reads exported env vars, does not auto-load `.env`) |
+| `python scripts/smoke_text_rag.py docs/ --query "..." --top-k 4` | BM25 text retrieval on a document directory |
+| `python scripts/smoke_kg_retriever.py` | KG retrieval against Neo4j |
+| `python scripts/smoke_test_pipeline.py` | Quick smoke run of the KG pipeline |
+| `python scripts/run_pipeline_smoke_full.py` | Full end-to-end pipeline smoke |
+| `pytest kg_pipeline/tests/test_pipeline.py -v` | KG pipeline unit/integration tests |
+| `pytest evaluation/tests/test_metrics.py -v` | Evaluation metric tests |
 
 ---
 
-## 14. Strategie di retrieval disponibili
+## 13. SLURM — cluster execution
 
-Da passare a `--strategies` (singola o lista separata da virgola):
-
-| Strategia | Descrizione |
-|-----------|-------------|
-| `default` | Bilanciamento testo + grafo |
-| `text_only` | Solo retrieval testuale (standard RAG) |
-| `text_plus_triples` | Testo + triple del KG |
-| `neighbors_focus` | Vicini diretti dell'entità seed |
-| `subgraph_2hop` | Sottografo a 2 hop dall'entità seed |
-| `shortest_path` | Cammino minimo tra entità |
+| Script | What it launches |
+|--------|-----------------|
+| `sbatch scripts/run_kg_pipeline.sbatch` | KG pipeline in background (avoids hang on notebook disconnect) |
+| `sbatch scripts/run_graphrag.sbatch` | GraphRAG demo on GPU cluster |
+| `sbatch scripts/run_graphrag_cpu.sbatch` | GraphRAG demo on CPU cluster |
+| `sbatch scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix on GPU cluster |
+| `bash scripts/submit_matrix_from_env.sh` | Submit matrix reading parameters from env vars |
 
 ---
 
-## 15. Variabili d'ambiente richieste
+## 14. Retrieval strategies
+
+Pass to `--strategies` as a single value or comma-separated list:
+
+| Strategy | Description | KG used | Text used |
+|----------|-------------|---------|-----------|
+| `default` | Full GraphRAG — nodes, triples, neighbors, subgraph (1-hop), shortest path | yes | no |
+| `text_only` | Standard RAG — BM25/TF-IDF over indexed documents (no KG) | no | yes |
+| `no_retrieval` | Zero-shot LLM — no retrieval at all (baseline) | no | no |
+| `text_plus_triples` | KG direct triples only (nodes + triples, no subgraph/neighbors/path) | triples only | no |
+| `neighbors_focus` | KG triples + direct entity neighbors (no subgraph/path) | yes | no |
+| `subgraph_2hop` | KG triples + 2-hop subgraph (larger context than default) | yes | no |
+| `shortest_path` | KG triples + shortest path between entity pairs | yes | no |
+
+> **Paper note**: `text_only` is the BM25 sparse-retrieval baseline; `no_retrieval` is the zero-shot LLM baseline. All other strategies are GraphRAG variants.
+
+---
+
+## 15. Required environment variables
 
 ```bash
 NEO4J_URL="bolt://localhost:7687"
 NEO4J_USERNAME="neo4j"
 NEO4J_PASSWORD="..."
-NEO4J_DATABASE="..."          # opzionale
-HF_TOKEN="..."                # per modelli gated su HuggingFace
+NEO4J_DATABASE="..."          # optional
+HF_TOKEN="..."                # for gated HuggingFace models
 VLLM_BASE_URL="http://localhost:8000/v1"
-VLLM_MODEL_NAME="Qwen/Qwen2.5-32B-Instruct"
-VLLM_API_KEY="..."            # oppure OPENAI_API_KEY
+VLLM_MODEL_NAME="Qwen/Qwen2.5-32B-Instruct-AWQ"
+VLLM_API_KEY="..."            # or OPENAI_API_KEY
 ```
 
-> `scripts/smoke_check.py` legge le env var esportate nella shell — **non** carica `.env` automaticamente.  
-> Per la pipeline KG usare sempre `--env-file kg_pipeline/.env`.
+> `scripts/smoke_check.py` reads exported shell env vars — it does **not** auto-load `.env`.  
+> Always pass `--env-file kg_pipeline/.env` when running the KG pipeline.
+
+---
+
+## 16. Typical end-to-end workflow
+
+```bash
+# 1. Build KG from documents
+conda run -n graphllm python -m kg_pipeline.main \
+  --config kg_pipeline/config.yaml \
+  --env-file kg_pipeline/.env
+
+# 2. Generate test questions from the KG artifacts
+python scripts/generate_questions.py generate \
+  --run-dir kg_pipeline/artifacts/run_<timestamp> \
+  --output artifacts/tmp/graphrag_test_suite.json
+
+# 3. Extract to plain text
+python -c "
+import json; from pathlib import Path
+d = json.loads(Path('artifacts/tmp/graphrag_test_suite.json').read_text())
+qs = [q['question'] for q in d if q.get('question','').strip()]
+Path('artifacts/tmp/graphrag_test_suite_questions.txt').write_text('\n'.join(qs))
+print(len(qs), 'questions')
+"
+
+# 4. Check vLLM is running
+curl -s http://localhost:8000/v1/models | python -m json.tool
+
+# 5. Run the full strategy comparison
+conda run -n graphllm python -m graphrag.cli \
+  --experiment \
+  --questions-file artifacts/tmp/graphrag_test_suite_questions.txt \
+  --strategies "text_only,no_retrieval,default,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
+  --llm --vllm \
+  --vllm-base-url http://localhost:8000/v1 \
+  --model-id "Qwen/Qwen2.5-32B-Instruct-AWQ" \
+  --output-dir artifacts/experiments \
+  --experiment-tag strategy_comparison_v1
+
+# 6. Inspect results
+cat artifacts/experiments/<timestamp>_strategy_comparison_v1/summary.txt
+```
