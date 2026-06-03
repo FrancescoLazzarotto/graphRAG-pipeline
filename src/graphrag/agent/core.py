@@ -16,6 +16,7 @@ from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.llm.prompts import PromptLibrary
+from graphrag.llm.refusal import looks_like_refusal
 from graphrag.types import RAGState
 
 logger = logging.getLogger("graphrag")
@@ -608,6 +609,7 @@ class KGRAGAgent:
                     query=query,
                     context=context,
                     triples=state.get("kg_triples", []) or [],
+                    language=LLMManager._detect_query_language(query),
                 )
             verification_section = self._build_verification_section(
                 triples=state.get("kg_triples", []) or [],
@@ -620,35 +622,6 @@ class KGRAGAgent:
 
         return {"answer": "LLM not available."}
 
-    @staticmethod
-    def _looks_like_generic_refusal(answer: str) -> bool:
-        if not answer.strip():
-            return True
-
-        lowered = answer.lower()
-        refusal_markers = (
-            "context is insufficient",
-            "provide additional context",
-            "specific details regarding the question",
-            "specific details regarding the context",
-            "without a specific question",
-            "without a specific question or detailed context",
-            "detailed context",
-            "without these elements",
-            "could you specify the question",
-            "serve specific details",
-            "non ho abbastanza contesto",
-            "contesto fornito e insufficiente",
-            "contesto insufficiente",
-            "ho bisogno di ulteriori informazioni",
-            "crucial to first establish",
-            "not feasible",
-            "challenging to construct",
-            "without these elements, crafting",
-            "the current context does not provide sufficient information",
-        )
-        return any(marker in lowered for marker in refusal_markers)
-
     def _should_replace_with_fallback(
         self,
         answer: str,
@@ -657,68 +630,77 @@ class KGRAGAgent:
         triples: list[dict[str, object]],
         sparse_context: bool,
     ) -> bool:
-        if self._looks_like_generic_refusal(answer):
+        # A genuine refusal / empty answer is always replaced with the evidence
+        # block; this is the only unconditional trigger.
+        if looks_like_refusal(answer):
             return True
 
+        # Otherwise only intervene when the context was sparse AND the answer is
+        # ungrounded. A well-formed answer that references a salient query/context
+        # term or a retrieved triple is kept as-is. We deliberately avoid the old
+        # "meta-marker" heuristic, which fired on common words (context,
+        # information, analysis, ...) and replaced perfectly good answers.
         if not sparse_context:
             return False
 
-        salient_terms = self._extract_salient_terms(query=query, context=context)
-        if not salient_terms:
-            return False
-
         answer_lower = answer.lower()
-        has_salient_reference = any(term in answer_lower for term in salient_terms)
-        if has_salient_reference:
+        salient_terms = self._extract_salient_terms(query=query, context=context)
+        triple_terms = self._extract_salient_terms_from_triples(triples)
+
+        # Nothing to judge groundedness against: trust the model's answer.
+        if not salient_terms and not triple_terms:
             return False
 
-        if self._triple_summaries(triples, query=query):
-            triple_terms = self._extract_salient_terms_from_triples(triples)
-            if triple_terms and any(term in answer_lower for term in triple_terms):
-                return False
+        if any(term in answer_lower for term in salient_terms):
+            return False
+        if triple_terms and any(term in answer_lower for term in triple_terms):
+            return False
 
-        meta_markers = (
-            "context",
-            "question",
-            "details",
-            "specific",
-            "grounded",
-            "information",
-            "analysis",
-            "technical",
-            "factual basis",
-        )
-        meta_hits = sum(1 for marker in meta_markers if marker in answer_lower)
-
-        # Balanced fallback: intercept meta-discussions but allow short answers.
-        # Trigger when sparse context AND high meta-marker signal (3+).
-        return meta_hits >= 3
+        return True
 
     @staticmethod
     def _build_sparse_fallback_answer(
-        query: str, context: str, triples: list[dict[str, object]]
+        query: str,
+        context: str,
+        triples: list[dict[str, object]],
+        language: str = "en",
     ) -> str:
         triple_summaries = KGRAGAgent._triple_summaries(triples, query=query)
         highlights = KGRAGAgent._extract_context_highlights(
             query=query, context=context
         )
+        is_it = language == "it"
 
         if triple_summaries or highlights:
             evidence_block = "\n".join(
                 f"- {line}" for line in (triple_summaries or highlights)
             )
+            if is_it:
+                return (
+                    "Dal contesto disponibile emergono i seguenti elementi rilevanti. "
+                    "La risposta e quindi parziale, ma contiene le evidenze trovate nel grafo.\n\n"
+                    "Limiti e fiducia:\n"
+                    "Il contesto e limitato, quindi non posso inferire l'intero perimetro tematico con alta fiducia.\n\n"
+                    "Evidenze rilevanti:\n"
+                    f"{evidence_block}"
+                )
             return (
-                "Dal contesto disponibile emergono i seguenti elementi rilevanti. "
-                "La risposta e quindi parziale, ma contiene le evidenze trovate nel grafo.\n\n"
-                "Limiti e fiducia:\n"
-                "Il contesto e limitato, quindi non posso inferire l'intero perimetro tematico con alta fiducia.\n\n"
-                "Evidenze rilevanti:\n"
+                "The available context surfaces the following relevant elements. "
+                "The answer is therefore partial, but it reports the evidence found in the graph.\n\n"
+                "Limits and confidence:\n"
+                "The context is limited, so the full thematic scope cannot be inferred with high confidence.\n\n"
+                "Relevant evidence:\n"
                 f"{evidence_block}"
             )
 
+        if is_it:
+            return (
+                "Il contesto disponibile e troppo scarno per costruire una risposta affidabile. "
+                "Serve un recupero piu specifico o piu evidenza dal grafo."
+            )
         return (
-            "Il contesto disponibile e troppo scarno per costruire una risposta affidabile. "
-            "Serve un recupero piu specifico o piu evidenza dal grafo."
+            "The available context is too sparse to build a reliable answer. "
+            "A more specific retrieval or more graph evidence is needed."
         )
 
     @staticmethod
