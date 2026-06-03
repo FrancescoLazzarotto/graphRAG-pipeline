@@ -17,8 +17,6 @@ class ExperimentResult:
     question: str
     answer: str
     latency_ms: float
-    confidence: float = 0.0
-    reflection_passed: bool = True
     kg_triples_used: int = 0
     kg_neighbors_used: int = 0
     kg_subgraph_triples_used: int = 0
@@ -60,8 +58,6 @@ class ExperimentRunner:
                 question=question,
                 answer=state.get("answer", ""),
                 latency_ms=float(state.get("latency_ms", 0.0)),
-                confidence=float(state.get("confidence", 0.0)),
-                reflection_passed=bool(state.get("reflection_passed", True)),
                 kg_triples_used=len(state.get("kg_triples", []))
                 if isinstance(state.get("kg_triples", []), list)
                 else 0,
@@ -211,8 +207,6 @@ class ExperimentRunner:
                     "question",
                     "answer",
                     "latency_ms",
-                    "confidence",
-                    "reflection_passed",
                     "kg_triples_used",
                     "kg_neighbors_used",
                     "kg_subgraph_triples_used",
@@ -231,8 +225,6 @@ class ExperimentRunner:
                         result.question,
                         result.answer,
                         f"{result.latency_ms:.6f}",
-                        f"{result.confidence:.6f}",
-                        str(result.reflection_passed),
                         result.kg_triples_used,
                         result.kg_neighbors_used,
                         result.kg_subgraph_triples_used,
@@ -255,11 +247,6 @@ class ExperimentRunner:
             summary[strategy] = {
                 "runs": count,
                 "avg_latency_ms": sum(item.latency_ms for item in results) / count,
-                "avg_confidence": sum(item.confidence for item in results) / count,
-                "reflection_pass_rate": sum(
-                    1 for item in results if item.reflection_passed
-                )
-                / count,
                 "avg_kg_triples_used": sum(item.kg_triples_used for item in results)
                 / count,
                 "avg_kg_neighbors_used": sum(item.kg_neighbors_used for item in results)
@@ -283,7 +270,6 @@ class ExperimentRunner:
             lines.append(
                 f"{strategy}: runs={int(stats['runs'])}, "
                 f"avg_latency_ms={float(stats['avg_latency_ms']):.2f}, "
-                f"reflection_pass_rate={float(stats['reflection_pass_rate']):.2%}, "
                 f"avg_kg_triples_used={float(stats['avg_kg_triples_used']):.2f}, "
                 f"avg_kg_neighbors_used={float(stats['avg_kg_neighbors_used']):.2f}, "
                 f"avg_kg_subgraph_triples_used={float(stats['avg_kg_subgraph_triples_used']):.2f}, "
