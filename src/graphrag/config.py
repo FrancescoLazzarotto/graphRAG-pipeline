@@ -52,15 +52,18 @@ class AgentConfig:
     cache_maxsize: int = 128
     recursion_limit: int = 50
     max_content_tokens: int = 1000
-    token_estimator_ratio: float = 0.75
+    token_estimator_ratio: float = 0.25  # tokens-per-char (~4 chars/token)
     tone: OUTPUT_TONE = OUTPUT_TONE.TECHNICAL
     complexity: OUTPUT_COMPLEXITY = OUTPUT_COMPLEXITY.MEDIUM
     target_audience: str = "domain_expert"
     use_structured_response: bool = False
     rank_triples: bool = True
-    ranker_weight_lexical: float = 0.55
-    ranker_weight_mention: float = 0.25
-    ranker_weight_confidence: float = 0.20
+    # Triples carry no per-edge confidence yet (see KG-side item B8), so the
+    # confidence weight is 0.0 and lexical/mention absorb it. Keeping the field
+    # lets a future confidence signal be re-enabled without code changes.
+    ranker_weight_lexical: float = 0.70
+    ranker_weight_mention: float = 0.30
+    ranker_weight_confidence: float = 0.0
     ranker_system_link_penalty: float = 0.5
     adaptive_hops: bool = True
     min_subgraph_triples: int = 10
