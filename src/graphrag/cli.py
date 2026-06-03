@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import logging
 from datetime import datetime
@@ -15,6 +14,7 @@ from graphrag.experiments import ExperimentRunner
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
+from graphrag.strategies import apply_strategy
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -130,52 +130,6 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
     )
 
 
-def _strategy_config(base: AgentConfig, label: str) -> AgentConfig:
-    config = copy.deepcopy(base)
-
-    if label == "default":
-        return config
-
-    if label == "text_only":
-        config.include_nodes = False
-        config.include_triples = False
-        config.include_neighbors = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "text_plus_triples":
-        config.include_neighbors = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "neighbors_focus":
-        config.include_nodes = False
-        config.include_subgraph = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "subgraph_2hop":
-        config.hops = max(2, int(config.hops))
-        config.include_nodes = False
-        config.include_neighbors = False
-        config.include_shortest_path = False
-        return config
-
-    if label == "shortest_path":
-        config.include_nodes = False
-        config.include_neighbors = False
-        config.include_subgraph = False
-        return config
-
-    raise ValueError(
-        "Unknown strategy '"
-        + label
-        + "'. Allowed: default,text_only,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path"
-    )
-
-
 def _load_questions(args: argparse.Namespace) -> list[str]:
     if not args.questions_file:
         return [args.question]
@@ -211,7 +165,7 @@ def _run_experiments(
 
     for strategy in strategies:
         for run_index in range(1, args.runs_per_strategy + 1):
-            config = _strategy_config(base=base_config, label=strategy)
+            config = apply_strategy(base_config, strategy)
             retriever = KGRetriever(kg_store=kg_manager, config=config)
             agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
             runner.run_agent(
