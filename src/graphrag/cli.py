@@ -15,6 +15,7 @@ from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.strategies import apply_strategy
+from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -95,6 +96,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runs-per-strategy", type=int, default=1)
     parser.add_argument("--output-dir", default="artifacts/experiments")
     parser.add_argument("--experiment-tag", default="")
+    parser.add_argument(
+        "--text-docs-dir",
+        default="",
+        help="Directory of documents (PDF/txt/md) to index for text_only standard RAG. "
+             "If omitted, auto-discovers from the latest KG pipeline stage0 artifacts.",
+    )
     return parser
 
 
@@ -130,6 +137,69 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
     )
 
 
+def _build_text_pipeline(args: argparse.Namespace) -> StandardTextRAGPipeline | None:
+    logger = logging.getLogger("graphrag.cli")
+    pipeline = StandardTextRAGPipeline()
+
+    docs_dir = (args.text_docs_dir or "").strip()
+    if docs_dir:
+        target = Path(docs_dir)
+        if not target.exists():
+            logger.warning("--text-docs-dir %s not found; text retrieval disabled", docs_dir)
+            return None
+        n = pipeline.index_directory(target)
+        logger.info("Text pipeline: indexed %d chunks from %s", n, docs_dir)
+        return pipeline
+
+    # Auto-discover from the latest KG stage0 artifacts.
+    kg_artifacts = Path("kg_pipeline/artifacts")
+    if kg_artifacts.exists():
+        run_dirs = sorted(
+            [p for p in kg_artifacts.iterdir() if p.is_dir() and p.name.startswith("run_")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for run_dir in run_dirs:
+            stage0 = run_dir / "stage0_documents.json"
+            if not stage0.exists():
+                continue
+            try:
+                import json as _json
+                from graphrag.text_rag.manager import TextChunk
+                docs = _json.loads(stage0.read_text(encoding="utf-8"))
+                if not isinstance(docs, list):
+                    docs = []
+                chunks: list[TextChunk] = []
+                for doc_idx, doc in enumerate(docs, start=1):
+                    text = str(doc.get("markdown_text", "") or "").strip()
+                    filename = str(doc.get("filename", f"doc_{doc_idx}"))
+                    if not text:
+                        continue
+                    # Split into ~1200-char chunks with 180-char overlap.
+                    step = 1200 - 180
+                    for c_idx, start in enumerate(range(0, len(text), step), start=1):
+                        fragment = text[start : start + 1200].strip()
+                        if len(fragment) >= 80:
+                            chunks.append(TextChunk(
+                                chunk_id=f"d{doc_idx:04d}-c{c_idx:04d}",
+                                content=fragment,
+                                source=filename,
+                            ))
+                if chunks:
+                    pipeline.retriever.add_chunks(chunks)
+                    logger.info(
+                        "Text pipeline: indexed %d chunks from %s (stage0)",
+                        len(chunks), run_dir.name,
+                    )
+                    return pipeline
+            except Exception as exc:
+                logger.warning("Failed to load stage0 from %s: %s", run_dir, exc)
+                continue
+
+    logger.warning("No text documents found; text_only strategy will have empty context")
+    return None
+
+
 def _load_questions(args: argparse.Namespace) -> list[str]:
     if not args.questions_file:
         return [args.question]
@@ -163,10 +233,17 @@ def _run_experiments(
     llm_manager = _build_llm_manager(args=args, warmup=args.llm_warmup)
     runner = ExperimentRunner(questions=questions)
 
+    needs_text = any(s in ("text_only",) for s in strategies)
+    text_pipeline = _build_text_pipeline(args) if needs_text else None
+
     for strategy in strategies:
         for run_index in range(1, args.runs_per_strategy + 1):
             config = apply_strategy(base_config, strategy)
-            retriever = KGRetriever(kg_store=kg_manager, config=config)
+            retriever = KGRetriever(
+                kg_store=kg_manager,
+                config=config,
+                text_pipeline=text_pipeline if config.use_text_retriever else None,
+            )
             agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
             runner.run_agent(
                 agent=agent,
@@ -282,7 +359,8 @@ def main() -> None:
 
     config = _build_base_config(args)
 
-    retriever = KGRetriever(kg_store=kg_manager, config=config)
+    text_pipeline = _build_text_pipeline(args) if config.use_text_retriever else None
+    retriever = KGRetriever(kg_store=kg_manager, config=config, text_pipeline=text_pipeline)
     llm_manager = _build_llm_manager(args=args, warmup=False)
 
     agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
