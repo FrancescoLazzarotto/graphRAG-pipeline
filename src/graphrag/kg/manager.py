@@ -368,6 +368,9 @@ class KnowledgeGraphManager:
         entity_b: str,
         max_depth: int = 6,
     ) -> list[KGTriple]:
+        # max_depth is interpolated into a variable-length pattern, so force it
+        # to a safe positive integer (defence-in-depth; mirrors extract_subgraph).
+        max_depth = max(1, int(max_depth))
         cypher_exact = f"""
         MATCH (a)
         WHERE {self._node_text_match_clause("a", "entity_a", exact=True)}
