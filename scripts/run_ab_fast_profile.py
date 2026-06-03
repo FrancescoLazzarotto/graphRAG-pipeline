@@ -255,8 +255,6 @@ def _aggregate_stats(
     stats_by_strategy: dict[str, Any], target_strategies: list[str]
 ) -> dict[str, float]:
     weighted_latency = 0.0
-    weighted_pass_rate = 0.0
-    weighted_confidence = 0.0
     weighted_sub_questions = 0.0
     total_runs = 0.0
 
@@ -271,10 +269,6 @@ def _aggregate_stats(
 
         total_runs += runs
         weighted_latency += float(payload.get("avg_latency_ms", 0.0) or 0.0) * runs
-        weighted_pass_rate += (
-            float(payload.get("reflection_pass_rate", 0.0) or 0.0) * runs
-        )
-        weighted_confidence += float(payload.get("avg_confidence", 0.0) or 0.0) * runs
         weighted_sub_questions += (
             float(payload.get("avg_sub_questions", 0.0) or 0.0) * runs
         )
@@ -283,16 +277,12 @@ def _aggregate_stats(
         return {
             "runs": 0.0,
             "avg_latency_ms": 0.0,
-            "reflection_pass_rate": 0.0,
-            "avg_confidence": 0.0,
             "avg_sub_questions": 0.0,
         }
 
     return {
         "runs": total_runs,
         "avg_latency_ms": weighted_latency / total_runs,
-        "reflection_pass_rate": weighted_pass_rate / total_runs,
-        "avg_confidence": weighted_confidence / total_runs,
         "avg_sub_questions": weighted_sub_questions / total_runs,
     }
 
@@ -435,7 +425,7 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run baseline vs production_fast A/B for 32B GraphRAG and report latency/quality deltas",
     )
     parser.add_argument("--model-id", default="Qwen/Qwen2.5-32B-Instruct")
-    parser.add_argument("--questions-file", default="questions_matrix_long.txt")
+    parser.add_argument("--questions-file", default="evaluation/fixtures/questions_matrix_long.txt")
     parser.add_argument("--questions-count", type=int, default=10)
     parser.add_argument("--graph-strategies", default="default")
     parser.add_argument("--runs-per-strategy", type=int, default=1)
@@ -626,12 +616,6 @@ def main() -> int:
         "delta": {
             "latency_ms": latency_delta_ms,
             "latency_speedup_pct": speedup_pct,
-            "reflection_pass_rate": float(
-                fast_agg.get("reflection_pass_rate", 0.0) or 0.0
-            )
-            - float(baseline_agg.get("reflection_pass_rate", 0.0) or 0.0),
-            "avg_confidence": float(fast_agg.get("avg_confidence", 0.0) or 0.0)
-            - float(baseline_agg.get("avg_confidence", 0.0) or 0.0),
             "avg_sub_questions": float(fast_agg.get("avg_sub_questions", 0.0) or 0.0)
             - float(baseline_agg.get("avg_sub_questions", 0.0) or 0.0),
             "gold_avg_token_f1": float(fast_gold.get("avg_token_f1", 0.0) or 0.0)
@@ -668,8 +652,6 @@ def main() -> int:
                 f"production_fast_avg_latency_ms={fast_avg_latency:.2f}",
                 f"latency_delta_ms={latency_delta_ms:.2f}",
                 f"latency_speedup_pct={speedup_pct:.2f}",
-                f"delta_reflection_pass_rate={report['delta']['reflection_pass_rate']:.6f}",
-                f"delta_avg_confidence={report['delta']['avg_confidence']:.6f}",
                 f"delta_gold_avg_token_f1={report['delta']['gold_avg_token_f1']:.6f}",
                 f"delta_gold_exact_match_rate={report['delta']['gold_exact_match_rate']:.6f}",
                 f"answer_agreement_avg_token_f1={agreement['avg_token_f1']:.6f}",
@@ -687,10 +669,6 @@ def main() -> int:
     print(f"- production_fast_avg_latency_ms: {fast_avg_latency:.2f}")
     print(f"- latency_delta_ms: {latency_delta_ms:.2f}")
     print(f"- latency_speedup_pct: {speedup_pct:.2f}")
-    print(
-        f"- delta_reflection_pass_rate: {report['delta']['reflection_pass_rate']:.6f}"
-    )
-    print(f"- delta_avg_confidence: {report['delta']['avg_confidence']:.6f}")
     print(f"- delta_gold_avg_token_f1: {report['delta']['gold_avg_token_f1']:.6f}")
     print(
         f"- delta_gold_exact_match_rate: {report['delta']['gold_exact_match_rate']:.6f}"
