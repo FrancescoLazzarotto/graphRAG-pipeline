@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
+from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 from graphrag.types import KGNode, KGTriple
 
 _QUOTED_ENTITY_RE = re.compile(r"[\"']([^\"']{2,})[\"']")
@@ -46,9 +47,15 @@ _PLACEHOLDER_ENTITIES = {
 
 
 class KGRetriever:
-    def __init__(self, kg_store: KnowledgeGraphManager, config: AgentConfig) -> None:
+    def __init__(
+        self,
+        kg_store: KnowledgeGraphManager,
+        config: AgentConfig,
+        text_pipeline: StandardTextRAGPipeline | None = None,
+    ) -> None:
         self.kg_store = kg_store
         self.config = config
+        self.text_pipeline = text_pipeline
 
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
@@ -123,6 +130,14 @@ class KGRetriever:
             triples = self._rank_triples(triples, query_text)
             subgraph = self._rank_triples(subgraph, query_text)
 
+        text_chunks: list[str] = []
+        if self.config.use_text_retriever and self.text_pipeline is not None:
+            retrieved = self.text_pipeline.retrieve(
+                query=query_text,
+                top_k=self.config.text_retriever_top_k,
+            )
+            text_chunks = [chunk.content for chunk in retrieved if chunk.content.strip()]
+
         context_sections = self._build_context_sections(
             query_text=query_text,
             nodes=nodes,
@@ -130,6 +145,7 @@ class KGRetriever:
             neighbors=neighbors,
             subgraph=subgraph,
             shortest_path=shortest_path,
+            text_chunks=text_chunks,
         )
 
         return {
@@ -513,11 +529,15 @@ class KGRetriever:
         neighbors: Sequence[KGNode],
         subgraph: Sequence[KGTriple],
         shortest_path: Sequence[KGTriple],
+        text_chunks: Sequence[str] = (),
     ) -> list[str]:
         sections: list[str] = []
 
         if query_text:
             sections.append(f"Query: {query_text}")
+
+        if text_chunks:
+            sections.append("Retrieved text:\n" + "\n\n---\n\n".join(text_chunks))
 
         if nodes:
             sections.append("Matched nodes:\n" + self.kg_store.nodes_to_text(nodes))
