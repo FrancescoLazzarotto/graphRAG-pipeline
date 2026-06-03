@@ -69,6 +69,8 @@ class AgentConfig:
     min_subgraph_triples: int = 10
     max_hops: int = 4
     include_triple_metadata: bool = True
+    use_text_retriever: bool = False
+    text_retriever_top_k: int = 5
 
 
 @dataclass(slots=True)
