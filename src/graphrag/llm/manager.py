@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,7 @@ import torch
 
 from graphrag.config import AgentConfig, DEFAULT_MODEL_ID
 from graphrag.llm.prompts import PromptLibrary
+from graphrag.llm.refusal import looks_like_refusal
 
 logger = logging.getLogger("graphrag")
 
@@ -66,6 +68,19 @@ class LLMManager:
         self._cached_model_id: str | None = None
         self._load_lock = threading.Lock()
         self._vllm_endpoint_checked = False
+
+        try:
+            self.generate_retry_attempts = max(
+                1, int(os.getenv("GRAPHRAG_LLM_GENERATE_RETRIES", "2"))
+            )
+        except ValueError:
+            self.generate_retry_attempts = 2
+        try:
+            self.generate_retry_backoff_sec = max(
+                0.0, float(os.getenv("GRAPHRAG_LLM_GENERATE_RETRY_BACKOFF_SEC", "1.0"))
+            )
+        except ValueError:
+            self.generate_retry_backoff_sec = 1.0
 
         if self.use_vllm:
             logger.info(
@@ -404,6 +419,46 @@ class LLMManager:
     def warmup(self) -> None:
         self.load_llm()
 
+    @staticmethod
+    def _is_transient_error(exc: BaseException) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        markers = (
+            "timeout",
+            "timed out",
+            "connection",
+            "temporarily unavailable",
+            "service unavailable",
+            "serviceunavailable",
+            "bad gateway",
+            "gateway timeout",
+            "rate limit",
+            "ratelimiterror",
+            "apiconnectionerror",
+            "apitimeouterror",
+            "internalservererror",
+        )
+        return any(marker in text for marker in markers)
+
+    def _invoke_with_retry(self, model: Any, payload: Any) -> Any:
+        """Invoke the model, retrying only on transient network/server errors."""
+        attempts = max(1, self.generate_retry_attempts)
+        for attempt in range(1, attempts + 1):
+            try:
+                return model.invoke(payload)
+            except Exception as exc:
+                if attempt >= attempts or not self._is_transient_error(exc):
+                    raise
+                backoff_sec = self.generate_retry_backoff_sec * attempt
+                logger.warning(
+                    "LLM invoke transient failure. retry=%d/%d backoff_sec=%.2f error=%s",
+                    attempt,
+                    attempts,
+                    backoff_sec,
+                    exc,
+                )
+                if backoff_sec > 0:
+                    time.sleep(backoff_sec)
+
     def generate(self, query: str, context: str, config: AgentConfig) -> dict[str, str]:
         response_language = self._detect_query_language(query)
 
@@ -445,7 +500,7 @@ class LLMManager:
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_prompt),
             ]
-            output = model.invoke(messages)
+            output = self._invoke_with_retry(model, messages)
         else:
             # For local HF models, use the PromptLibrary template
             prompt = PromptLibrary.answer_prompt(config)
@@ -455,26 +510,13 @@ class LLMManager:
                     "context": context,
                 }
             )
-            output = model.invoke(rendered)
+            output = self._invoke_with_retry(model, rendered)
 
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.info("LLM raw output (first 800 chars): %s", answer[:800])
 
         # If model returned empty or a generic refusal, try a stricter fallback prompt once.
-        def _looks_like_refusal(text: str) -> bool:
-            if not text or not str(text).strip():
-                return True
-            lowered = str(text).lower()
-            markers = (
-                "context is insufficient",
-                "provide additional context",
-                "non ho abbastanza contesto",
-                "contesto insufficiente",
-                "provide additional context",
-            )
-            return any(m in lowered for m in markers)
-
-        if _looks_like_refusal(answer) and context and str(context).strip():
+        if looks_like_refusal(answer) and context and str(context).strip():
             try:
                 logger.info("LLM refusal detected; attempting fallback retry...")
                 fallback_prompt = self._build_refusal_retry_prompt(
@@ -571,70 +613,3 @@ class LLMManager:
             + str(query)
             + "\n\nAnswer:"
         )
-
-    @staticmethod
-    def _extract_programs_from_context(context: str) -> list[str]:
-        if not context:
-            return []
-        keywords = (
-            "program",
-            "programma",
-            "programmi",
-            "programme",
-            "resilience",
-            "resilienza",
-            "shock",
-            "climate",
-            "clima",
-        )
-        # Skip obvious metadata/artifacts
-        skip_terms = {
-            "query",
-            "context",
-            "includes",
-            "analyzes",
-            "contains",
-            "located",
-            "region",
-            "based",
-            "type",
-            "component",
-            "value",
-            "data",
-            "source_doc",
-            "page_range",
-        }
-        candidates: list[str] = []
-        seen: set[str] = set()
-
-        # Look for lines containing any keyword and extract title-like phrases
-        for raw_line in context.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            # Skip lines that look like query metadata or very short fragments
-            if line.lower().startswith("query:"):
-                continue
-            if len(line) < 5:
-                continue
-
-            lowered = line.lower()
-            if not any(k in lowered for k in keywords):
-                continue
-
-            # find capitalized sequences (simple heuristic for program names)
-            for match in re.findall(
-                r"\b[A-Z][A-Za-z0-9/&.\- ]{2,}(?:\s+[A-Z][A-Za-z0-9/&.\-]{2,})*\b", line
-            ):
-                norm = match.strip()
-                # Filter: skip if it's a stopword, too short, or already seen
-                if (
-                    norm
-                    and norm not in seen
-                    and norm.lower() not in skip_terms
-                    and len(norm) > 4
-                ):
-                    seen.add(norm)
-                    candidates.append(norm)
-
-        return candidates[:12]
