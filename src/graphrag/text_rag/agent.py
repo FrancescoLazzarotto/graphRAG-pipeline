@@ -65,6 +65,5 @@ class StandardRAGAgent:
             "retrieved_subgraph_count": 0,
             "retrieved_shortest_path_count": 0,
             "sub_questions": [question],
-            "reflection_passed": True,
             "latency_ms": latency_ms,
         }
