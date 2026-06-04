@@ -71,6 +71,13 @@ class AgentConfig:
     include_triple_metadata: bool = True
     use_text_retriever: bool = False
     text_retriever_top_k: int = 5
+    text_retriever_backend: str = "tfidf"  # "tfidf" | "dense"
+    dense_embedding_model: str = "intfloat/multilingual-e5-base"
+    dense_query_prefix: str = "query: "
+    dense_passage_prefix: str = "passage: "
+    dense_normalize: bool = True
+    dense_device: str = "auto"  # "auto" | "cpu" | "cuda"
+    vector_index_dir: str = "artifacts/vector_index"
 
 
 @dataclass(slots=True)
