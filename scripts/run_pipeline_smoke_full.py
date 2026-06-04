@@ -4,7 +4,7 @@
 This script:
 - creates a single ChunkRecord with sample text
 - provides a mocked LLM response (no external LLM calls)
-- runs stage 3 extraction (using mocked _llm_call)
+- runs stage 3 extraction (using mocked _llm_call_async)
 - runs entity resolution (cross-label merging enabled, logs to file)
 - performs local quality checks equivalent to the Neo4j queries and
   writes a local `kg_quality_report_local.json` (no Neo4j ingestion)
@@ -162,13 +162,13 @@ def main():
         }
     )
 
-    # monkeypatch llm call to return mocked response
-    orig_llm_call = llm_extraction._llm_call
+    # monkeypatch async llm call to return mocked response
+    orig_llm_call_async = llm_extraction._llm_call_async
 
-    def _mock_llm_call(*args, **kwargs):
+    async def _mock_llm_call_async(*args, **kwargs):
         return build_mock_response()
 
-    llm_extraction._llm_call = _mock_llm_call
+    llm_extraction._llm_call_async = _mock_llm_call_async
 
     try:
         triples, acr = llm_extraction.extract_triples(
@@ -262,7 +262,7 @@ def main():
         pprint(report)
 
     finally:
-        llm_extraction._llm_call = orig_llm_call
+        llm_extraction._llm_call_async = orig_llm_call_async
 
 
 if __name__ == "__main__":
