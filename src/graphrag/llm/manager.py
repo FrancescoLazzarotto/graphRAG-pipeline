@@ -150,6 +150,10 @@ class LLMManager:
         size_b = cls._model_size_billions(model_id)
         return size_b is not None and size_b >= cls._LARGE_MODEL_THRESHOLD_B
 
+    @staticmethod
+    def _is_awq_model(model_id: str) -> bool:
+        return bool(re.search(r"[-_/]awq(?:[-_/]|$)", model_id, re.IGNORECASE))
+
     def _build_max_memory(self) -> dict[int | str, str] | None:
         if not torch.cuda.is_available():
             return None
@@ -254,57 +258,106 @@ class LLMManager:
                 common_load_kwargs["max_memory"] = max_memory
                 common_load_kwargs["offload_folder"] = self._offload_folder()
 
+            # Enable Flash Attention 2 if flash-attn package is installed (A40/Ampere+ supported)
+            try:
+                importlib.metadata.version("flash-attn")
+                common_load_kwargs["attn_implementation"] = "flash_attention_2"
+                logger.info("Flash Attention 2 enabled.")
+            except importlib.metadata.PackageNotFoundError:
+                pass
+
+        torch_compile = (
+            os.getenv("GRAPHRAG_TORCH_COMPILE", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
+
+        def _load_model_fa2_safe(**kw: Any) -> Any:
+            """Load model; strip flash_attention_2 and retry if architecture doesn't support it."""
+            try:
+                return AutoModelForCausalLM.from_pretrained(model_id, **kw)
+            except (ValueError, NotImplementedError) as exc:
+                if "attn_implementation" in kw and "flash" in str(exc).lower():
+                    kw.pop("attn_implementation")
+                    logger.warning(
+                        "Flash Attention 2 not supported for '%s', retrying without it: %s",
+                        model_id,
+                        exc,
+                    )
+                    return AutoModelForCausalLM.from_pretrained(model_id, **kw)
+                raise
+
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_id, token=hf_token)
             if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
                 tokenizer.pad_token_id = tokenizer.eos_token_id
 
             if torch.cuda.is_available():
-                try:
-                    importlib.metadata.version("bitsandbytes")
-                    base_model = AutoModelForCausalLM.from_pretrained(
-                        model_id,
-                        quantization_config=BitsAndBytesConfig(
-                            load_in_4bit=True,
-                            bnb_4bit_quant_type="nf4",
-                            bnb_4bit_compute_dtype=torch.float16,
-                            bnb_4bit_use_double_quant=True,
-                        ),
-                        **common_load_kwargs,
-                    )
-                except importlib.metadata.PackageNotFoundError:
-                    if model_is_large and not self.allow_large_model_fp16_fallback:
+                if self._is_awq_model(model_id):
+                    try:
+                        importlib.metadata.version("autoawq")
+                    except importlib.metadata.PackageNotFoundError:
                         raise RuntimeError(
-                            "bitsandbytes is required for large models (>=30B) in this production profile. "
-                            "Install bitsandbytes or use a smaller model, or explicitly allow fp16 fallback."
+                            "autoawq is required to load AWQ models. "
+                            "Install it with: pip install autoawq>=0.2"
+                        ) from None
+                    # AWQ model: weights already quantized on HuggingFace; skip bitsandbytes
+                    logger.info("AWQ model detected; loading in fp16 (skipping bitsandbytes).")
+                    base_model = _load_model_fa2_safe(
+                        torch_dtype=torch.float16,
+                        **common_load_kwargs,
+                    )
+                    if torch_compile:
+                        logger.info("Applying torch.compile(mode='reduce-overhead') to AWQ model.")
+                        base_model = torch.compile(base_model, mode="reduce-overhead")
+                else:
+                    try:
+                        importlib.metadata.version("bitsandbytes")
+                        base_model = _load_model_fa2_safe(
+                            quantization_config=BitsAndBytesConfig(
+                                load_in_4bit=True,
+                                bnb_4bit_quant_type="nf4",
+                                bnb_4bit_compute_dtype=torch.float16,
+                                bnb_4bit_use_double_quant=True,
+                            ),
+                            **common_load_kwargs,
                         )
-                    logger.warning(
-                        "bitsandbytes not installed: loading model on GPU without 4-bit quantization."
-                    )
-                    base_model = AutoModelForCausalLM.from_pretrained(
-                        model_id,
-                        torch_dtype=torch.float16,
-                        **common_load_kwargs,
-                    )
-                except (
-                    Exception
-                ) as exc:  # pragma: no cover - depends on GPU/runtime setup
-                    if self._is_hf_auth_error(exc):
-                        raise
-                    if model_is_large and not self.allow_large_model_fp16_fallback:
-                        raise self._fp16_fallback_message(
-                            model_id=model_id, root_exc=exc
-                        ) from exc
-                    logger.warning(
-                        "bitsandbytes is installed, but 4-bit loading failed (%s). "
-                        "Falling back to standard fp16 GPU loading.",
-                        exc,
-                    )
-                    base_model = AutoModelForCausalLM.from_pretrained(
-                        model_id,
-                        torch_dtype=torch.float16,
-                        **common_load_kwargs,
-                    )
+                    except importlib.metadata.PackageNotFoundError:
+                        if model_is_large and not self.allow_large_model_fp16_fallback:
+                            raise RuntimeError(
+                                "bitsandbytes is required for large models (>=30B) in this production profile. "
+                                "Install bitsandbytes or use a smaller model, or explicitly allow fp16 fallback."
+                            )
+                        logger.warning(
+                            "bitsandbytes not installed: loading model on GPU without 4-bit quantization."
+                        )
+                        base_model = _load_model_fa2_safe(
+                            torch_dtype=torch.float16,
+                            **common_load_kwargs,
+                        )
+                        if torch_compile:
+                            logger.info("Applying torch.compile(mode='reduce-overhead').")
+                            base_model = torch.compile(base_model, mode="reduce-overhead")
+                    except (
+                        Exception
+                    ) as exc:  # pragma: no cover - depends on GPU/runtime setup
+                        if self._is_hf_auth_error(exc):
+                            raise
+                        if model_is_large and not self.allow_large_model_fp16_fallback:
+                            raise self._fp16_fallback_message(
+                                model_id=model_id, root_exc=exc
+                            ) from exc
+                        logger.warning(
+                            "bitsandbytes is installed, but 4-bit loading failed (%s). "
+                            "Falling back to standard fp16 GPU loading.",
+                            exc,
+                        )
+                        base_model = _load_model_fa2_safe(
+                            torch_dtype=torch.float16,
+                            **common_load_kwargs,
+                        )
+                        if torch_compile:
+                            logger.info("Applying torch.compile(mode='reduce-overhead').")
+                            base_model = torch.compile(base_model, mode="reduce-overhead")
             else:
                 base_model = AutoModelForCausalLM.from_pretrained(
                     model_id,
