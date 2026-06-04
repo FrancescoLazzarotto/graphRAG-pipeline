@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from tqdm import tqdm
 
 from kg_pipeline.models.types import (
@@ -54,8 +57,6 @@ _SECTION_PREFIX_RE = re.compile(
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
     """Build OpenAI client with optimized timeout and retry configuration."""
-    import os
-
     http_client_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
     return OpenAI(
         base_url=base_url.rstrip("/"),
@@ -169,6 +170,231 @@ def _llm_call(
     return response.choices[0].message.content or ""
 
 
+_DEFAULT_CONCURRENT_REQUESTS = 8
+
+
+async def _llm_call_async(
+    client: AsyncOpenAI,
+    model_name: str,
+    prompt: str,
+    temperature: float,
+    seed: int,
+    use_structured_output: bool,
+    semaphore: asyncio.Semaphore,
+) -> str:
+    kwargs: dict[str, Any] = {
+        "model": model_name,
+        "temperature": temperature,
+        "seed": seed,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if use_structured_output:
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "kg_triples",
+                "schema": kg_triple_array_schema(),
+            },
+        }
+    async with semaphore:
+        response = await client.chat.completions.create(**kwargs)
+    return response.choices[0].message.content or ""
+
+
+async def _extract_chunk_async(
+    client: AsyncOpenAI,
+    semaphore: asyncio.Semaphore,
+    chunk_idx: int,
+    chunk: ChunkRecord,
+    prompt: str,
+    model_name: str,
+    temperature: float,
+    seed: int,
+    use_structured_output: bool,
+    max_retries: int,
+    allowed_label_set: set[str],
+    failed_chunks_path: Path,
+    new_label_log_path: Path,
+    allowed_predicates: list[str] | None,
+) -> tuple[int, list[KGTriple], bool]:
+    raw = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            raw = await _llm_call_async(
+                client=client,
+                model_name=model_name,
+                prompt=prompt,
+                temperature=temperature,
+                seed=seed,
+                use_structured_output=use_structured_output,
+                semaphore=semaphore,
+            )
+            parsed = parse_json_array(raw)
+            validated = _validate_raw_triples(
+                raw_items=parsed,
+                chunk=chunk,
+                failed_chunks_path=failed_chunks_path,
+                raw_response=raw,
+                allowed_predicates=allowed_predicates,
+            )
+            cleaned: list[KGTriple] = []
+            for triple in validated:
+                triple = _enforce_labels(
+                    triple, allowed_label_set, new_label_log_path, chunk.section_title
+                )
+                rel = dict(triple.relationship_properties)
+                rel.setdefault("source_doc", chunk.filename)
+                rel.setdefault("extraction_method", "llm")
+                rel.setdefault("chunk_id", chunk.chunk_id)
+                rel.setdefault("page_range", chunk.page_range)
+                triple.relationship_properties = rel
+                cleaned.append(triple)
+            return chunk_idx, cleaned, True
+        except Exception as exc:
+            write_failed_chunk(
+                failed_path=failed_chunks_path,
+                chunk_metadata=chunk.model_dump(),
+                attempt=attempt,
+                error=str(exc),
+                raw_response=raw,
+            )
+    return chunk_idx, [], False
+
+
+async def _run_batch_async(
+    batch_tasks: list[tuple[int, ChunkRecord, str]],
+    client: AsyncOpenAI,
+    concurrent_requests: int,
+    model_name: str,
+    temperature: float,
+    seed: int,
+    use_structured_output: bool,
+    max_retries: int,
+    allowed_label_set: set[str],
+    failed_chunks_path: Path,
+    new_label_log_path: Path,
+    allowed_predicates: list[str] | None,
+) -> list[tuple[int, list[KGTriple], bool]]:
+    semaphore = asyncio.Semaphore(concurrent_requests)
+    coros = [
+        _extract_chunk_async(
+            client=client,
+            semaphore=semaphore,
+            chunk_idx=idx,
+            chunk=ch,
+            prompt=pr,
+            model_name=model_name,
+            temperature=temperature,
+            seed=seed,
+            use_structured_output=use_structured_output,
+            max_retries=max_retries,
+            allowed_label_set=allowed_label_set,
+            failed_chunks_path=failed_chunks_path,
+            new_label_log_path=new_label_log_path,
+            allowed_predicates=allowed_predicates,
+        )
+        for idx, ch, pr in batch_tasks
+    ]
+    return list(await asyncio.gather(*coros))
+
+
+async def _extract_all_batches_async(
+    *,
+    chunks_remaining: list[ChunkRecord],
+    start_chunk_idx: int,
+    batch_size: int,
+    base_url: str,
+    api_key: str,
+    http_timeout: float,
+    concurrent_requests: int,
+    model_name: str,
+    temperature: float,
+    seed: int,
+    use_structured_output: bool,
+    max_retries: int,
+    allowed_label_set: set[str],
+    ner_map: dict[str, list[NEREntityCandidate]],
+    allowed_labels: list[str],
+    relation_vocab: list[str] | None,
+    all_triples: list[KGTriple],
+    acronym_map: dict[str, str],
+    checkpoint_every: int,
+    checkpoint_path: Path,
+    checkpoint_info_path: Path,
+    total_chunks: int,
+    failed_chunks_path: Path,
+    new_label_log_path: Path,
+) -> tuple[list[KGTriple], dict[str, str]]:
+    _log = logging.getLogger("kg_pipeline")
+    async with AsyncOpenAI(
+        base_url=base_url.rstrip("/"),
+        api_key=api_key or "EMPTY",
+        timeout=http_timeout,
+    ) as client:
+        with tqdm(
+            total=total_chunks,
+            initial=start_chunk_idx,
+            desc="Stage 3 LLM Extraction",
+            unit="chunk",
+        ) as progress:
+            for batch_offset in range(0, len(chunks_remaining), batch_size):
+                batch = chunks_remaining[batch_offset : batch_offset + batch_size]
+                batch_abs_start = start_chunk_idx + batch_offset
+
+                batch_tasks: list[tuple[int, ChunkRecord, str]] = []
+                for i, chunk in enumerate(batch):
+                    candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
+                    prompt = build_extraction_prompt(chunk, candidates, allowed_labels, relation_vocab=relation_vocab)
+                    update_acronym_map(acronym_map, chunk.text)
+                    for entity in candidates:
+                        update_acronym_map(acronym_map, entity.get("text_span", ""))
+                    batch_tasks.append((batch_abs_start + i, chunk, prompt))
+
+                results = await _run_batch_async(
+                    batch_tasks=batch_tasks,
+                    client=client,
+                    concurrent_requests=concurrent_requests,
+                    model_name=model_name,
+                    temperature=temperature,
+                    seed=seed,
+                    use_structured_output=use_structured_output,
+                    max_retries=max_retries,
+                    allowed_label_set=allowed_label_set,
+                    failed_chunks_path=failed_chunks_path,
+                    new_label_log_path=new_label_log_path,
+                    allowed_predicates=relation_vocab,
+                )
+
+                for _chunk_idx, triples, success in results:
+                    if success:
+                        all_triples.extend(triples)
+
+                progress.update(len(batch))
+
+                if checkpoint_every > 0:
+                    last_chunk_idx = batch_abs_start + len(batch) - 1
+                    try:
+                        save_triples(checkpoint_path, all_triples)
+                        _save_json(
+                            checkpoint_info_path,
+                            {
+                                "last_completed_chunk_idx": last_chunk_idx,
+                                "total_chunks": total_chunks,
+                                "triples_count": len(all_triples),
+                                "acronym_map": acronym_map,
+                                "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+                            },
+                        )
+                        _log.info(
+                            f"Checkpoint saved at chunk {last_chunk_idx + 1}/{total_chunks}: "
+                            f"{len(all_triples)} triples"
+                        )
+                    except Exception as e:
+                        _log.warning(f"Failed to save checkpoint: {e}")
+
+    return all_triples, acronym_map
+
+
 def _validate_raw_triples(
     raw_items: list[dict[str, Any]],
     chunk: ChunkRecord,
@@ -220,8 +446,7 @@ def extract_triples(
     Args:
         checkpoint_every: Save checkpoint every N chunks (default 50). Set to 0 to disable.
     """
-
-    client = _build_client(base_url=base_url, api_key=api_key)
+    _log = logging.getLogger("kg_pipeline")
     allowed_label_set = set(allowed_labels)
 
     all_triples: list[KGTriple] = []
@@ -239,118 +464,54 @@ def extract_triples(
             checkpoint_info = _load_json(checkpoint_info_path)
             start_chunk_idx = checkpoint_info.get("last_completed_chunk_idx", 0) + 1
             acronym_map = checkpoint_info.get("acronym_map", {})
-            import logging
-
-            logging.getLogger("kg_pipeline").info(
+            _log.info(
                 f"Resuming from checkpoint: chunk {start_chunk_idx}/{len(chunks)}, "
                 f"triples so far: {len(all_triples)}"
             )
         except Exception as e:
-            import logging
-
-            logging.getLogger("kg_pipeline").warning(f"Could not load checkpoint: {e}")
+            _log.warning(f"Could not load checkpoint: {e}")
             all_triples = []
             acronym_map = {}
             start_chunk_idx = 0
 
-    for chunk_idx in tqdm(
-        range(start_chunk_idx, len(chunks)),
-        desc="Stage 3 LLM Extraction",
-        unit="chunk",
-        initial=start_chunk_idx,
-        total=len(chunks),
-    ):
-        chunk = chunks[chunk_idx]
+    try:
+        concurrent_requests = int(os.getenv("GRAPHRAG_LLM_CONCURRENT_REQUESTS", str(_DEFAULT_CONCURRENT_REQUESTS)))
+    except ValueError:
+        concurrent_requests = _DEFAULT_CONCURRENT_REQUESTS
+    concurrent_requests = max(1, concurrent_requests)
 
-        candidates = [entity.model_dump() for entity in ner_map.get(chunk.chunk_id, [])]
-        prompt = build_extraction_prompt(
-            chunk,
-            candidates,
-            allowed_labels,
+    http_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
+    batch_size = checkpoint_every if checkpoint_every > 0 else max(1, len(chunks))
+    chunks_remaining = chunks[start_chunk_idx:]
+
+    all_triples, acronym_map = asyncio.run(
+        _extract_all_batches_async(
+            chunks_remaining=chunks_remaining,
+            start_chunk_idx=start_chunk_idx,
+            batch_size=batch_size,
+            base_url=base_url,
+            api_key=api_key,
+            http_timeout=http_timeout,
+            concurrent_requests=concurrent_requests,
+            model_name=model_name,
+            temperature=temperature,
+            seed=seed,
+            use_structured_output=use_structured_output,
+            max_retries=max_retries_per_chunk,
+            allowed_label_set=allowed_label_set,
+            ner_map=ner_map,
+            allowed_labels=allowed_labels,
             relation_vocab=relation_vocab,
+            all_triples=all_triples,
+            acronym_map=acronym_map,
+            checkpoint_every=checkpoint_every,
+            checkpoint_path=checkpoint_path,
+            checkpoint_info_path=checkpoint_info_path,
+            total_chunks=len(chunks),
+            failed_chunks_path=failed_chunks_path,
+            new_label_log_path=new_label_log_path,
         )
-
-        update_acronym_map(acronym_map, chunk.text)
-        for entity in candidates:
-            update_acronym_map(acronym_map, entity.get("text_span", ""))
-
-        success = False
-        for attempt in range(1, max_retries_per_chunk + 1):
-            try:
-                raw = _llm_call(
-                    client=client,
-                    model_name=model_name,
-                    prompt=prompt,
-                    temperature=temperature,
-                    seed=seed,
-                    use_structured_output=use_structured_output,
-                )
-
-                parsed = parse_json_array(raw)
-                validated = _validate_raw_triples(
-                    raw_items=parsed,
-                    chunk=chunk,
-                    failed_chunks_path=failed_chunks_path,
-                    raw_response=raw,
-                    allowed_predicates=relation_vocab,
-                )
-                cleaned_triples: list[KGTriple] = []
-
-                for triple in validated:
-                    triple = _enforce_labels(
-                        triple,
-                        allowed_label_set,
-                        new_label_log_path,
-                        section_title=chunk.section_title,
-                    )
-                    rel = dict(triple.relationship_properties)
-                    rel.setdefault("source_doc", chunk.filename)
-                    rel.setdefault("extraction_method", "llm")
-                    rel.setdefault("chunk_id", chunk.chunk_id)
-                    rel.setdefault("page_range", chunk.page_range)
-                    triple.relationship_properties = rel
-                    cleaned_triples.append(triple)
-
-                all_triples.extend(cleaned_triples)
-                success = True
-                break
-
-            except Exception as exc:
-                write_failed_chunk(
-                    failed_path=failed_chunks_path,
-                    chunk_metadata=chunk.model_dump(),
-                    attempt=attempt,
-                    error=str(exc),
-                    raw_response=locals().get("raw", ""),
-                )
-
-        if not success:
-            continue
-
-        # Save checkpoint periodically
-        if checkpoint_every > 0 and (chunk_idx + 1) % checkpoint_every == 0:
-            try:
-                save_triples(checkpoint_path, all_triples)
-                checkpoint_info = {
-                    "last_completed_chunk_idx": chunk_idx,
-                    "total_chunks": len(chunks),
-                    "triples_count": len(all_triples),
-                    "acronym_map": acronym_map,
-                    "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                _save_json(checkpoint_info_path, checkpoint_info)
-                import logging
-
-                logging.getLogger("kg_pipeline").info(
-                    f"Checkpoint saved at chunk {chunk_idx + 1}/{len(chunks)}: "
-                    f"{len(all_triples)} triples"
-                )
-            except Exception as e:
-                import logging
-
-                logging.getLogger("kg_pipeline").warning(
-                    f"Failed to save checkpoint: {e}"
-                )
+    )
 
     return all_triples, acronym_map
 
