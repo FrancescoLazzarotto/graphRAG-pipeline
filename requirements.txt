@@ -11,6 +11,8 @@ neo4j
 python-dotenv
 pymupdf
 psutil
+faiss-cpu
+sentence-transformers
 
 # Optional GPU quantization dependency:
 # bitsandbytes
