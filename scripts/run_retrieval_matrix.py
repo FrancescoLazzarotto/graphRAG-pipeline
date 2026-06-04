@@ -20,6 +20,7 @@ from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.strategies import STRATEGY_PRESETS, apply_strategy
 from graphrag.text_rag.agent import StandardRAGAgent
+from graphrag.text_rag.factory import make_text_pipeline
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 
 _GRAPH_STRATEGIES_DEFAULT = STRATEGY_PRESETS
@@ -38,9 +39,12 @@ class StandardStrategyPreset:
     chunk_overlap: int
     min_chunk_chars: int = 80
     include_sources: bool = True
+    backend: str = "tfidf"  # "tfidf" | "dense"
+    embedding_model: str | None = None  # None = factory default
 
 
 _STANDARD_STRATEGY_PRESETS: dict[str, StandardStrategyPreset] = {
+    # --- TF-IDF (lexical) baselines ---
     "std_topk3": StandardStrategyPreset(top_k=3, chunk_size=1200, chunk_overlap=180),
     "std_topk5": StandardStrategyPreset(top_k=5, chunk_size=1200, chunk_overlap=180),
     "std_wide_context": StandardStrategyPreset(
@@ -48,6 +52,16 @@ _STANDARD_STRATEGY_PRESETS: dict[str, StandardStrategyPreset] = {
     ),
     "std_fine_chunks": StandardStrategyPreset(
         top_k=5, chunk_size=800, chunk_overlap=140
+    ),
+    # --- Dense (cosine similarity) variants ---
+    "std_dense_topk3": StandardStrategyPreset(
+        top_k=3, chunk_size=1200, chunk_overlap=180, backend="dense"
+    ),
+    "std_dense_topk5": StandardStrategyPreset(
+        top_k=5, chunk_size=1200, chunk_overlap=180, backend="dense"
+    ),
+    "std_dense_wide": StandardStrategyPreset(
+        top_k=6, chunk_size=1800, chunk_overlap=180, backend="dense"
     ),
 }
 _STANDARD_STRATEGIES_DEFAULT = tuple(_STANDARD_STRATEGY_PRESETS.keys())
@@ -138,6 +152,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-large-model-fp16-fallback", action="store_true")
     parser.add_argument("--enable-decomposition-step", action="store_true")
     parser.add_argument("--enable-adaptive-routing-step", action="store_true")
+
+    parser.add_argument(
+        "--dense-embedding-model",
+        default="intfloat/multilingual-e5-base",
+        help="HuggingFace model ID for dense retrieval (multilingual-e5-base by default)",
+    )
+    parser.add_argument(
+        "--vector-index-dir",
+        default="artifacts/vector_index",
+        help="Directory for persisted FAISS index cache (used by dense strategies)",
+    )
+    parser.add_argument(
+        "--dense-device",
+        default="auto",
+        choices=("auto", "cpu", "cuda"),
+        help="Device for dense embedding model: auto, cpu, or cuda",
+    )
 
     parser.add_argument("--skip-standard", action="store_true")
     parser.add_argument("--skip-graph", action="store_true")
@@ -325,10 +356,15 @@ def _run_standard_matrix(
 
     for label in labels:
         preset = _STANDARD_STRATEGY_PRESETS[label]
-        pipeline = StandardTextRAGPipeline(
+        effective_embedding_model = preset.embedding_model or args.dense_embedding_model
+        pipeline = make_text_pipeline(
+            backend=preset.backend,
             chunk_size=preset.chunk_size,
             chunk_overlap=preset.chunk_overlap,
             min_chunk_chars=preset.min_chunk_chars,
+            embedding_model=effective_embedding_model,
+            vector_index_dir=args.vector_index_dir,
+            device=args.dense_device,
         )
         indexed_chunks = pipeline.index_paths(
             args.documents, discovery_patterns=discovery_patterns
@@ -376,6 +412,8 @@ def _run_standard_matrix(
                     "top_k": preset.top_k,
                     "chunk_size": preset.chunk_size,
                     "chunk_overlap": preset.chunk_overlap,
+                    "backend": preset.backend,
+                    "embedding_model": effective_embedding_model if preset.backend == "dense" else "",
                     "documents": [
                         str(Path(item).expanduser()) for item in args.documents
                     ],
