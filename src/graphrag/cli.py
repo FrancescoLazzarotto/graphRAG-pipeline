@@ -15,6 +15,7 @@ from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.strategies import apply_strategy
+from graphrag.text_rag.factory import make_text_pipeline
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 
 
@@ -102,6 +103,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Directory of documents (PDF/txt/md) to index for text_only standard RAG. "
              "If omitted, auto-discovers from the latest KG pipeline stage0 artifacts.",
     )
+    parser.add_argument(
+        "--text-retriever-backend",
+        default="tfidf",
+        choices=("tfidf", "dense"),
+        help="Retrieval backend for standard RAG: 'tfidf' (lexical, default) or 'dense' (cosine/FAISS).",
+    )
+    parser.add_argument(
+        "--dense-embedding-model",
+        default="intfloat/multilingual-e5-base",
+        help="HuggingFace model ID for dense retrieval (ignored for tfidf).",
+    )
+    parser.add_argument(
+        "--vector-index-dir",
+        default="artifacts/vector_index",
+        help="Directory for persisted FAISS index cache (ignored for tfidf).",
+    )
     return parser
 
 
@@ -139,7 +156,12 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
 
 def _build_text_pipeline(args: argparse.Namespace) -> StandardTextRAGPipeline | None:
     logger = logging.getLogger("graphrag.cli")
-    pipeline = StandardTextRAGPipeline()
+    backend = getattr(args, "text_retriever_backend", "tfidf")
+    pipeline = make_text_pipeline(
+        backend=backend,
+        embedding_model=getattr(args, "dense_embedding_model", "intfloat/multilingual-e5-base"),
+        vector_index_dir=getattr(args, "vector_index_dir", "artifacts/vector_index"),
+    )
 
     docs_dir = (args.text_docs_dir or "").strip()
     if docs_dir:
