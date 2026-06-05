@@ -6,6 +6,25 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+# Case-insensitive substrings that signal an LLM fallback / empty-context response.
+INSUFFICIENT_PHRASES: tuple[str, ...] = (
+    "the provided context does not contain",
+    "the context does not contain",
+    "does not contain enough information",
+    "does not contain information",
+    "non ho informazioni",
+    "non posso rispondere",
+    "i don't have enough information",
+    "i cannot find",
+    "cannot answer",
+    "unable to answer",
+    "not enough information",
+    "il contesto fornito non contiene",
+    "il contesto non contiene",
+    "no information available",
+    "no relevant information",
+)
+
 
 class SupportsInvoke(Protocol):
     def invoke(self, question: str) -> dict[str, Any]: ...
@@ -22,6 +41,7 @@ class ExperimentResult:
     kg_subgraph_triples_used: int = 0
     kg_shortest_path_triples_used: int = 0
     sub_questions: int = 0
+    insufficient_answer: bool = False
     contexts: list[str] = field(default_factory=list)
     retrieved_triples: list[dict[str, Any]] = field(default_factory=list)
     retrieved_entities: list[dict[str, Any] | str] = field(default_factory=list)
@@ -53,10 +73,11 @@ class ExperimentRunner:
                 triples=retrieved_triples,
             )
 
+            answer = state.get("answer", "")
             result = ExperimentResult(
                 strategy=label,
                 question=question,
-                answer=state.get("answer", ""),
+                answer=answer,
                 latency_ms=float(state.get("latency_ms", 0.0)),
                 kg_triples_used=len(state.get("kg_triples", []))
                 if isinstance(state.get("kg_triples", []), list)
@@ -71,6 +92,7 @@ class ExperimentRunner:
                 sub_questions=len(state.get("sub_questions", []))
                 if isinstance(state.get("sub_questions", []), list)
                 else 0,
+                insufficient_answer=self._is_insufficient(answer),
                 contexts=contexts,
                 retrieved_triples=retrieved_triples,
                 retrieved_entities=retrieved_entities,
@@ -185,6 +207,13 @@ class ExperimentRunner:
 
         return entities
 
+    @staticmethod
+    def _is_insufficient(answer: str) -> bool:
+        if not answer.strip():
+            return True
+        lower = answer.lower()
+        return any(phrase in lower for phrase in INSUFFICIENT_PHRASES)
+
     def compare(self) -> dict[str, list[ExperimentResult]]:
         grouped: dict[str, list[ExperimentResult]] = {}
         for result in self.results:
@@ -244,6 +273,7 @@ class ExperimentRunner:
             if not results:
                 continue
             count = len(results)
+            insufficient_count = sum(1 for item in results if item.insufficient_answer)
             summary[strategy] = {
                 "runs": count,
                 "avg_latency_ms": sum(item.latency_ms for item in results) / count,
@@ -261,6 +291,8 @@ class ExperimentRunner:
                 / count,
                 "avg_sub_questions": sum(item.sub_questions for item in results)
                 / count,
+                "insufficient_count": insufficient_count,
+                "insufficient_rate": insufficient_count / count,
             }
         return summary
 
@@ -274,6 +306,8 @@ class ExperimentRunner:
                 f"avg_kg_neighbors_used={float(stats['avg_kg_neighbors_used']):.2f}, "
                 f"avg_kg_subgraph_triples_used={float(stats['avg_kg_subgraph_triples_used']):.2f}, "
                 f"avg_kg_shortest_path_triples_used={float(stats['avg_kg_shortest_path_triples_used']):.2f}, "
-                f"avg_sub_questions={float(stats['avg_sub_questions']):.2f}"
+                f"avg_sub_questions={float(stats['avg_sub_questions']):.2f}, "
+                f"insufficient_count={int(stats['insufficient_count'])}, "
+                f"insufficient_rate={float(stats['insufficient_rate']):.1%}"
             )
         return "\n".join(lines)
