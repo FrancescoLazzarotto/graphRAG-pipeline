@@ -34,12 +34,15 @@ class StandardRAGAgent:
     def invoke(self, question: str) -> dict:
         start = time.perf_counter()
 
-        context = self.pipeline.build_context(
-            query=question,
-            top_k=self.top_k,
-            include_sources=self.include_sources,
-        )
         retrieved = self.pipeline.retrieve(query=question, top_k=self.top_k)
+        if self.include_sources:
+            parts = [
+                f"Source: {c.source}\n{c.content}" if c.source else c.content
+                for c in retrieved
+            ]
+        else:
+            parts = [c.content for c in retrieved]
+        context = "\n\n---\n\n".join(parts)
 
         if self.llm is not None:
             generated = self.llm.generate(
