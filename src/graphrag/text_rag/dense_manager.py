@@ -126,6 +126,7 @@ class DenseTextRAGManager:
                 device=self._device,
             )
         return self._embeddings
+    
 
     def add_chunks(self, chunks: Iterable[TextChunk]) -> int:
         from langchain_community.vectorstores import FAISS
@@ -149,6 +150,7 @@ class DenseTextRAGManager:
                 distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
             )
         else:
+            
             logger.info(
                 "DenseTextRAGManager: building FAISS index for %d chunks", len(self._chunks)
             )
@@ -188,11 +190,27 @@ class DenseTextRAGManager:
             )
             result.append((chunk, float(score)))
 
-        result.sort(key=lambda x: x[1], reverse=True)
         return result
 
     def retrieve(self, query: str, top_k: int = 5) -> list[TextChunk]:
         return [chunk for chunk, _ in self.retrieve_with_scores(query=query, top_k=top_k)]
+
+    def add_documents(
+        self, documents: Iterable[str], source_prefix: str = "doc"
+    ) -> int:
+        prepared_chunks: list[TextChunk] = []
+        for index, content in enumerate(documents, start=1):
+            text = content.strip()
+            if not text:
+                continue
+            prepared_chunks.append(
+                TextChunk(
+                    chunk_id=f"{source_prefix}-{index}",
+                    content=text,
+                    source=source_prefix,
+                )
+            )
+        return self.add_chunks(prepared_chunks)
 
     def build_context(
         self, query: str, top_k: int = 4, separator: str = "\n\n---\n\n"
