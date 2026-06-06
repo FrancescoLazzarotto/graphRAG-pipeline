@@ -13,6 +13,12 @@ _QUOTED_ENTITY_RE = re.compile(r"[\"']([^\"']{2,})[\"']")
 _TITLE_ENTITY_RE = re.compile(r"\b(?:[A-Z][\w'-]*)(?:\s+[A-Z][\w'-]*)+\b")
 _SINGLE_TOKEN_ENTITY_RE = re.compile(r"\b[A-Z][\w'-]{2,}\b")
 _TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
+# Matches years (1900-2099) and quantities with explicit units so factual/numerical
+# questions can seed KG lookup on DataValue nodes.
+_NUMERIC_TERM_RE = re.compile(
+    r"\b(?:(?:19|20)\d{2}|\d+(?:[.,]\d+)?\s*(?:%|kg|Mt|Gt|million|billion|tonnes|°C))(?!\w)",
+    re.IGNORECASE,
+)
 
 _QUESTION_STOPWORDS = {
     "chi",
@@ -238,6 +244,10 @@ class KGRetriever:
                 meta.append(f"mentions={mention_count}")
             if confidence > 0:
                 meta.append(f"conf={confidence:.2f}")
+            for key in ("year", "value", "unit"):
+                v = rel_props.get(key)
+                if v is not None:
+                    meta.append(f"{key}={v}")
 
             suffix = f" [{', '.join(meta)}]" if meta else ""
             lines.append(f"({subject}, {predicate}, {obj}){suffix}")
@@ -467,6 +477,11 @@ class KGRetriever:
         for token in _SINGLE_TOKEN_ENTITY_RE.findall(text):
             if token.lower() not in _QUESTION_STOPWORDS:
                 candidates.append(token)
+
+        for term in _NUMERIC_TERM_RE.findall(text):
+            value = term.strip()
+            if value:
+                candidates.append(value)
 
         return self._unique_values(candidates)
 
