@@ -38,6 +38,8 @@ _DEFAULT_RELATION_VOCAB = [
     "RELATED_TO",
     "GOVERNS",
     "EXCHANGES_INFO_WITH",
+    "DECREASED_FROM",
+    "INCREASED_FROM",
 ]
 
 
@@ -83,6 +85,58 @@ def build_extraction_prompt(
                 "confidence": 0.9,
             },
         },
+        # Temporal comparison: text says "GHG fell from 5.6 Gt in 1990 to 4.5 Gt in 2017"
+        # → emit two HAS_VALUE triples + one DECREASED_FROM comparison triple
+        {
+            "subject": "EU GHG emissions 1990",
+            "predicate": "HAS_VALUE",
+            "object": "5.6 Gt CO2eq",
+            "subject_labels": ["Indicator"],
+            "object_labels": ["DataValue"],
+            "subject_properties": {"name": "EU GHG emissions 1990"},
+            "object_properties": {"name": "5.6 Gt CO2eq", "value": 5.6, "unit": "Gt CO2eq", "year": 1990},
+            "relationship_properties": {
+                "source_doc": "example_report.pdf",
+                "extraction_method": "llm",
+                "value": 5.6,
+                "unit": "Gt CO2eq",
+                "year": 1990,
+                "confidence": 0.9,
+            },
+        },
+        {
+            "subject": "EU GHG emissions 2017",
+            "predicate": "HAS_VALUE",
+            "object": "4.5 Gt CO2eq",
+            "subject_labels": ["Indicator"],
+            "object_labels": ["DataValue"],
+            "subject_properties": {"name": "EU GHG emissions 2017"},
+            "object_properties": {"name": "4.5 Gt CO2eq", "value": 4.5, "unit": "Gt CO2eq", "year": 2017},
+            "relationship_properties": {
+                "source_doc": "example_report.pdf",
+                "extraction_method": "llm",
+                "value": 4.5,
+                "unit": "Gt CO2eq",
+                "year": 2017,
+                "confidence": 0.9,
+            },
+        },
+        {
+            "subject": "EU GHG emissions 2017",
+            "predicate": "DECREASED_FROM",
+            "object": "EU GHG emissions 1990",
+            "subject_labels": ["Indicator"],
+            "object_labels": ["Indicator"],
+            "subject_properties": {"name": "EU GHG emissions 2017"},
+            "object_properties": {"name": "EU GHG emissions 1990"},
+            "relationship_properties": {
+                "source_doc": "example_report.pdf",
+                "extraction_method": "llm",
+                "absolute_change": -1.1,
+                "unit": "Gt CO2eq",
+                "confidence": 0.9,
+            },
+        },
     ]
 
     prompt = f"""
@@ -123,6 +177,25 @@ Predicate guidance:
 - Use PUBLISHED for all publish variants (PUBLISHED_REPORT, PUBLISHER_OF, etc.).
 - Use ENSURES for all ENSURES_HIGH_LEVEL_OF_* variants.
 - Use RELATED_TO only if no other canonical predicate fits.
+
+Temporal and quantitative facts — CRITICAL:
+- Use HAS_VALUE ONLY for numeric, measurable quantities: numbers, percentages, counts, physical
+  units (kg, Mt, Gt, %, °C, million tonnes, etc.). Do NOT use HAS_VALUE for qualitative
+  statements, descriptions, goals, or trends without a concrete number.
+  BAD: (pesticides, HAS_VALUE, dependency needs to be reduced)
+  GOOD: (pesticide use 2030, HAS_VALUE, 50% reduction)
+- When the text states a NUMERIC value for a specific year or time period, create a DISTINCT
+  subject node that includes the year: e.g. subject="EU GHG emissions 2017",
+  object_labels=["DataValue"], subject_labels=["Indicator"], predicate="HAS_VALUE".
+- Always set object_properties.year, object_properties.value (numeric), object_properties.unit
+  on DataValue nodes. Skip HAS_VALUE if you cannot populate a numeric value field.
+- Also set relationship_properties.year, relationship_properties.value, relationship_properties.unit.
+- For temporal comparisons ("decreased from X in 1990 to Y in 2017"), emit TWO HAS_VALUE triples
+  (one per year) AND one comparison triple using DECREASED_FROM or INCREASED_FROM:
+    ("GHG emissions 2017", "DECREASED_FROM", "GHG emissions 1990") with
+    relationship_properties.percent_change and relationship_properties.absolute_change when available.
+- For counts and statistics ("227 million households"), always capture value and unit as both
+  object text and object_properties fields.
 
 PROPERTY RULES — the following must NEVER become relationships. 
 Encode them as properties of the subject node instead:
