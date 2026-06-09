@@ -87,8 +87,7 @@ class DenseTextRAGManager:
     The FAISS index is persisted to ``vector_index_dir`` keyed by a fingerprint
     of the model name and chunk contents; subsequent runs with the same corpus
     skip re-encoding and load from cache.
-    """
-
+    """    
     def __init__(
         self,
         embedding_model: str = "intfloat/multilingual-e5-base",
