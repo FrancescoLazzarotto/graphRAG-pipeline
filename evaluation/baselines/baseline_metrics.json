@@ -1,0 +1,14 @@
+{
+  "description": "Placeholder baseline metrics for evaluation-regression workflow. Replace with validated production baselines.",
+  "main_metrics": [
+    "precision_at_k",
+    "recall_at_k",
+    "mrr"
+  ],
+  "global": {
+    "precision_at_k_mean": 0.50,
+    "recall_at_k_mean": 0.50,
+    "mrr_mean": 0.50
+  },
+  "regression_relative_threshold": 0.05
+}
