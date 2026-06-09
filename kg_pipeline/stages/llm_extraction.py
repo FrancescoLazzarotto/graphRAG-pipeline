@@ -402,6 +402,10 @@ def _validate_raw_triples(
     raw_response: str,
     allowed_predicates: list[str] | None,
 ) -> list[KGTriple]:
+    # Empty LLM response is worth retrying; individual item failures are not.
+    if not raw_items:
+        raise ValueError("LLM returned an empty items array for this chunk")
+
     valid_triples: list[KGTriple] = []
 
     for item in raw_items:
@@ -417,9 +421,6 @@ def _validate_raw_triples(
                 error=str(exc),
                 raw_response=json.dumps(item, ensure_ascii=False),
             )
-
-    if not valid_triples:
-        raise ValueError("No valid triples were produced for the chunk")
 
     return valid_triples
 
