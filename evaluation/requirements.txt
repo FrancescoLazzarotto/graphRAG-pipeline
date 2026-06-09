@@ -2,12 +2,27 @@
 # Install with:
 # conda run -n graphllm python -m pip install -r evaluation/requirements.txt
 
+# Core evaluation pipeline
 ragas>=0.1.10
 pandas>=2.0
 datasets>=2.14
-bert-score>=0.3.13
 sentence-transformers>=2.2.2
 
-# evaluation only
+# LLM backends
 langchain-huggingface>=0.1,<0.2
 transformers>=4.45,<5.0
+
+# Text metrics
+rouge-score>=0.1.2
+sacrebleu>=2.3
+
+# Plotting
+matplotlib>=3.7
+numpy>=1.24
+
+# Optional: BERTScore (heavy, off by default — enable with --bertscore)
+# bert-score>=0.3.13
+
+# Optional: external judge API backends
+# anthropic>=0.20
+# openai>=1.0
