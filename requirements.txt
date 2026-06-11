@@ -1,18 +1,20 @@
-# Base dependencies (CPU-friendly)
-torch
-langchain-community
+# Base dependencies (CPU-friendly, loose bounds for development).
+# For pinned installs use requirements-cpu.txt (CPU nodes) or
+# requirements-gpu.txt (GPU nodes, CUDA 12.4); see README "Installation".
+torch>=2.3,<3.0
+langchain-community>=0.3,<0.4
 langchain-neo4j
-langchain-huggingface
-langchain-core
-langgraph
-transformers
-accelerate
-neo4j
-python-dotenv
-pymupdf
-psutil
-faiss-cpu
-sentence-transformers
+langchain-huggingface>=0.1,<0.2
+langchain-core>=0.3,<0.4
+langgraph>=0.2,<0.4
+transformers>=4.45,<5.0
+accelerate>=1.0,<2.0
+neo4j>=5.20,<6.0
+python-dotenv>=1.0,<2.0
+pymupdf>=1.24,<2.0
+psutil>=5.9,<7.0
+faiss-cpu>=1.7,<2.0
+sentence-transformers>=3.0,<4.0
 
 # Optional GPU quantization dependency:
 # bitsandbytes
