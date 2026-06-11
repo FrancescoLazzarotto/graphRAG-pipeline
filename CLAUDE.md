@@ -114,9 +114,11 @@ Stages run sequentially with JSON checkpoint recovery — downstream stages read
 | 5: Triple linking | `stage5_triples_linked.json` |
 | 6: Neo4j ingestion | `stage6_neo4j_summary.json` |
 
-Also produced: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`.
+Also produced: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`, and a reproducibility bundle: `run_metadata.json` (seed, models, git commit) plus snapshots of `config.yaml` and the relation vocab.
 
-Stage 3 checkpoints every N chunks to `stage3_checkpoint.json` — re-running without clearing this file resumes from the last saved chunk.
+Stage 3 checkpoints every N chunks to `stage3_checkpoint.json` (atomic writes) — re-running without clearing this file resumes from the last saved chunk; triples past the last completed checkpoint are dropped on resume to prevent duplicates.
+
+After Stage 6, Neo4j post-processing passes are run via `scripts/kg_postprocess.py` (`--passes 1,2,3,4`), which wraps `kg_repair.py`..`kg_repair4.py` — distinct repair rounds, not script versions.
 
 ### GraphRAG agent (`src/graphrag/agent/core.py`)
 
@@ -148,9 +150,16 @@ Do not reintroduce decomposition or routing steps unless the task explicitly req
 
 ### Experiment outputs (`artifacts/experiments/<timestamp>_<tag>/`)
 
-`results.jsonl` · `results.csv` · `summary.txt` · `summary.json` · `resource_samples.jsonl` · `resource_summary.json`
+`results.jsonl` · `results.csv` · `summary.txt` · `summary.json` · `config.json` · `resource_samples.jsonl` · `resource_summary.json`
 
-If you touch experiment code, confirm output names still match the analysis scripts.
+`config.json` records the CLI args and the fully resolved `AgentConfig` per strategy — every metric is traceable to its exact configuration. If you touch experiment code, confirm output names still match the analysis scripts.
+
+### Reproducibility
+
+- KG pipeline seeds `random`, `numpy`, `PYTHONHASHSEED`, and `torch` (`_set_seed` in `kg_pipeline/main.py`); GLiNER/SentenceTransformer outputs are reproducible at fixed seed and library versions.
+- Generation is deterministic by construction: local HF uses `do_sample=False`, vLLM uses `temperature=0`.
+- Both LLM backends render prompts from `PromptLibrary` (`src/graphrag/llm/prompts.py`) — the single source of truth; never hardcode prompt strings in backends.
+- Evaluation bootstrap CIs are seeded (`seed=42`).
 
 ## Data models
 
