@@ -79,14 +79,18 @@ conda create -n graphllm python=3.10 -y
 conda activate graphllm
 ```
 
-**2. Install dependencies** — pick the right set for your node:
+**2. Install dependencies** — pick ONE file for your target:
 
 ```bash
-pip install -r requirements.txt        # base dependencies
-pip install -r requirements-cpu.txt    # CPU-only nodes
-pip install -r requirements-gpu.txt    # GPU nodes (if available)
+pip install -r requirements.txt        # development (loose bounds)
+pip install -r requirements-cpu.txt    # CPU-only nodes (bounded versions)
+pip install -r requirements-gpu.txt    # GPU nodes, CUDA 12.4 (pinned torch/torchvision + vLLM)
 pip install -e .
 ```
+
+The three files form a hierarchy, not a sequence: `requirements.txt` is for local
+development, `-cpu`/`-gpu` are the reproducible cluster installs. Evaluation
+extras (RAGAS, ROUGE, plotting) live in `evaluation/requirements.txt`.
 
 ---
 
