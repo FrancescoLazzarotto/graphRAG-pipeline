@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import enum
+import logging
 import os
 from dataclasses import dataclass
 
 
 DEFAULT_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
+
+logger = logging.getLogger("graphrag")
 
 
 class OUTPUT_TONE(enum.Enum):
@@ -58,6 +61,10 @@ class AgentConfig:
     target_audience: str = "domain_expert"
     use_structured_response: bool = False
     rank_triples: bool = True
+    # When decomposition produces multiple retrieval queries, merged results
+    # preserve arrival order by default; enable to re-rank them globally by
+    # score. Off by default to keep existing baselines unchanged.
+    rerank_merged_results: bool = False
     # Triples carry no per-edge confidence yet (see KG-side item B8), so the
     # confidence weight is 0.0 and lexical/mention absorb it. Keeping the field
     # lets a future confidence signal be re-enabled without code changes.
@@ -78,6 +85,24 @@ class AgentConfig:
     dense_normalize: bool = True
     dense_device: str = "auto"  # "auto" | "cpu" | "cuda"
     vector_index_dir: str = "artifacts/vector_index"
+
+    def __post_init__(self) -> None:
+        if self.rank_triples:
+            weight_sum = (
+                self.ranker_weight_lexical
+                + self.ranker_weight_mention
+                + self.ranker_weight_confidence
+            )
+            if abs(weight_sum - 1.0) > 0.01:
+                logger.warning(
+                    "Ranker weights sum to %.3f instead of 1.0 "
+                    "(lexical=%.2f mention=%.2f confidence=%.2f): triple scores "
+                    "will not be comparable across configurations",
+                    weight_sum,
+                    self.ranker_weight_lexical,
+                    self.ranker_weight_mention,
+                    self.ranker_weight_confidence,
+                )
 
 
 @dataclass(slots=True)
