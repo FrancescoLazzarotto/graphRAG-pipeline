@@ -515,55 +515,22 @@ class LLMManager:
     def generate(self, query: str, context: str, config: AgentConfig) -> dict[str, str]:
         response_language = self._detect_query_language(query)
 
-        # Build prompt directly to avoid templating issues
-        system_prompt = (
-            "You are a knowledge graph assistant. Answer using ONLY the provided context. "
-            "If context does not answer the question, state this plainly. "
-            "Do not invent or generate content outside the context. "
-            "Preserve all entity names exactly as given. "
-            "Respond in the same language as the question (English or Italian). "
-            "Prefer a natural, human explanation over a mechanical list. "
-            "If you mention a fact, tie it to an exact node, triple, or other "
-            "explicit evidence from the context."
+        # PromptLibrary is the single source of truth for prompts: both the
+        # vLLM and local HF backends must see the same prompt so their answers
+        # stay comparable across experiments.
+        prompt = PromptLibrary.answer_prompt(config)
+        rendered = prompt.invoke(
+            {
+                "question": query,
+                "context": context,
+            }
         )
 
-        user_prompt = (
-            f"Question:\n{query}\n\n"
-            f"Context:\n{context}\n\n"
-            "Write a concise answer in 1-2 short paragraphs unless the user "
-            "explicitly asked for a list. "
-            "If the context is sparse, add a short 'Limits and confidence' "
-            "section. "
-            "When possible, add a short 'Evidence in graph' section naming the "
-            "exact nodes or triples that support the answer.\n\n"
-            f"Answer:"
-        )
-
-        logger.info("System prompt: %s", system_prompt[:300])
-        logger.info("User prompt (first 500 chars): %s", user_prompt[:500])
+        logger.info("Rendered prompt (first 500 chars): %s", str(rendered)[:500])
         logger.info("Context length (chars): %d", len(context))
 
         model = self.load_llm()
-
-        # For vLLM (ChatOpenAI), use the Langchain-style invocation with messages
-        if self.use_vllm:
-            from langchain_core.messages import HumanMessage, SystemMessage
-
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_prompt),
-            ]
-            output = self._invoke_with_retry(model, messages)
-        else:
-            # For local HF models, use the PromptLibrary template
-            prompt = PromptLibrary.answer_prompt(config)
-            rendered = prompt.invoke(
-                {
-                    "question": query,
-                    "context": context,
-                }
-            )
-            output = self._invoke_with_retry(model, rendered)
+        output = self._invoke_with_retry(model, rendered)
 
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.info("LLM raw output (first 800 chars): %s", answer[:800])
@@ -577,12 +544,7 @@ class LLMManager:
                     context=context,
                     language=response_language,
                 )
-                if self.use_vllm:
-                    from langchain_core.messages import HumanMessage
-
-                    output2 = model.invoke([HumanMessage(content=fallback_prompt)])
-                else:
-                    output2 = model.invoke(fallback_prompt)
+                output2 = model.invoke(fallback_prompt)
                 answer2 = str(
                     output2.content if hasattr(output2, "content") else output2
                 ).strip()
