@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import logging
 from pathlib import Path
 from typing import Iterable
@@ -64,12 +65,33 @@ def _build_embeddings(
     return _PrefixedEmbeddings(inner, query_prefix=query_prefix, passage_prefix=passage_prefix)
 
 
-def _corpus_fingerprint(model_name: str, chunks: list[TextChunk]) -> str:
+def _embedding_env_signature(model_name: str) -> str:
+    """Model name plus embedding-stack versions: a library upgrade can change
+    the embedding space, so it must invalidate cached FAISS indices."""
+    parts = [model_name]
+    for pkg in ("sentence-transformers", "transformers"):
+        try:
+            parts.append(f"{pkg}={importlib.metadata.version(pkg)}")
+        except importlib.metadata.PackageNotFoundError:
+            parts.append(f"{pkg}=none")
+    return "|".join(parts)
+
+
+def _fingerprint_hasher(model_name: str) -> "hashlib._Hash":
     h = hashlib.sha256()
-    h.update(model_name.encode())
+    h.update(_embedding_env_signature(model_name).encode())
+    return h
+
+
+def _update_fingerprint(h: "hashlib._Hash", chunks: Iterable[TextChunk]) -> None:
     for c in chunks:
         h.update(c.chunk_id.encode())
         h.update(c.content.encode())
+
+
+def _corpus_fingerprint(model_name: str, chunks: list[TextChunk]) -> str:
+    h = _fingerprint_hasher(model_name)
+    _update_fingerprint(h, chunks)
     return h.hexdigest()[:16]
 
 
@@ -106,6 +128,9 @@ class DenseTextRAGManager:
         self._chunks: list[TextChunk] = []
         self._store = None  # FAISS | None
         self._embeddings: _PrefixedEmbeddings | None = None
+        # Incremental corpus fingerprint: avoids re-hashing the whole corpus
+        # on every add_chunks call (O(n^2) for progressive indexing).
+        self._hasher = _fingerprint_hasher(embedding_model)
 
     @property
     def size(self) -> int:
@@ -114,6 +139,7 @@ class DenseTextRAGManager:
     def clear(self) -> None:
         self._chunks.clear()
         self._store = None
+        self._hasher = _fingerprint_hasher(self._embedding_model)
 
     def _get_embeddings(self) -> _PrefixedEmbeddings:
         if self._embeddings is None:
@@ -136,7 +162,8 @@ class DenseTextRAGManager:
             return 0
 
         self._chunks.extend(chunk_list)
-        fingerprint = _corpus_fingerprint(self._embedding_model, self._chunks)
+        _update_fingerprint(self._hasher, chunk_list)
+        fingerprint = self._hasher.copy().hexdigest()[:16]
         cache_dir = self._vector_index_dir / f"{_model_slug(self._embedding_model)}-{fingerprint}"
         embeddings = self._get_embeddings()
 
