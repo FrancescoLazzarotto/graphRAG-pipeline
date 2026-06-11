@@ -105,11 +105,19 @@ class KGRAGAgent:
         except json.JSONDecodeError:
             pass
 
-        return {
-            "sub_questions": [
-                line.strip("-• \t") for line in text.splitlines() if line.strip()
-            ]
-        }
+        # Fallback for non-JSON output: strip bullets and "1." / "2)" numbering
+        # so malformed sub-questions don't flow into retrieval.
+        logger.warning(
+            "Decomposition output was not a JSON array; falling back to "
+            "line-based parsing (first 200 chars): %s",
+            text[:200],
+        )
+        sub_questions = []
+        for line in text.splitlines():
+            cleaned = re.sub(r"^\s*(?:[-•*]|\d+[.)])\s*", "", line).strip()
+            if cleaned:
+                sub_questions.append(cleaned)
+        return {"sub_questions": sub_questions or [question]}
 
     def _rewrite(self, state: RAGState) -> dict:
         question = state.get("question", "").strip()
@@ -169,9 +177,12 @@ class KGRAGAgent:
             sub_questions=sub_questions if isinstance(sub_questions, list) else [],
         )
         cache_query = " || ".join(retrieval_queries) if retrieval_queries else query
+        # Include the rewrite attempt in the key so a rewrite loop never reuses
+        # results cached for a previous reformulation of the same question.
+        cache_mode = f"{mode}|rw{int(state.get('rewrite_count', 0) or 0)}"
 
         if self.cache:
-            hit = self.cache.get(cache_query, str(mode))
+            hit = self.cache.get(cache_query, cache_mode)
             if hit is not None:
                 return hit
 
@@ -249,6 +260,16 @@ class KGRAGAgent:
                     candidate_context = str(batch.get("context_text", "")).strip()
                     if candidate_context:
                         context_sections.append(candidate_context)
+
+                if (
+                    self.config.rerank_merged_results
+                    and self.config.rank_triples
+                    and len(retrieval_queries) > 1
+                ):
+                    # Merged multi-query results keep arrival order by default;
+                    # re-rank globally against the original question.
+                    triples = self.kg_retriever.rank_triples(triples, query)
+                    subgraph = self.kg_retriever.rank_triples(subgraph, query)
 
                 context = self._merge_context_sections(context_sections)
                 if mm == "KG" and not context:
@@ -352,7 +373,7 @@ class KGRAGAgent:
         }
 
         if self.cache:
-            self.cache.put(cache_query, str(mode), result)
+            self.cache.put(cache_query, cache_mode, result)
 
         return result
 
@@ -568,6 +589,12 @@ class KGRAGAgent:
         evidence_units = kg_evidence_units + (1 if has_text_evidence else 0)
 
         if evidence_units == 0:
+            logger.warning(
+                "Generation with zero evidence: retrieval mode=%s returned no nodes, "
+                "triples, subgraph, shortest_path or text context for query=%r",
+                state.get("chosen_retrieval_mode", "HYBRID"),
+                str(query)[:200],
+            )
             return {
                 "answer": (
                     "The provided context is insufficient to generate a grounded response. "
