@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 from datetime import datetime
@@ -15,14 +16,22 @@ from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.strategies import apply_strategy
-from graphrag.text_rag.factory import make_text_pipeline
+from graphrag.text_rag.factory import (
+    DEFAULT_CHUNK_OVERLAP,
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_MIN_CHUNK_CHARS,
+    make_text_pipeline,
+)
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
+
+logger = logging.getLogger("graphrag.cli")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run GraphRAG demo pipeline")
     parser.add_argument(
-        "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
+        "--question",
+        default="Quali sono gli obiettivi della strategia Farm to Fork?",
     )
     parser.add_argument(
         "--entity",
@@ -197,11 +206,10 @@ def _build_text_pipeline(args: argparse.Namespace) -> StandardTextRAGPipeline | 
                     filename = str(doc.get("filename", f"doc_{doc_idx}"))
                     if not text:
                         continue
-                    # Split into ~1200-char chunks with 180-char overlap.
-                    step = 1200 - 180
+                    step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
                     for c_idx, start in enumerate(range(0, len(text), step), start=1):
-                        fragment = text[start : start + 1200].strip()
-                        if len(fragment) >= 80:
+                        fragment = text[start : start + DEFAULT_CHUNK_SIZE].strip()
+                        if len(fragment) >= DEFAULT_MIN_CHUNK_CHARS:
                             chunks.append(TextChunk(
                                 chunk_id=f"d{doc_idx:04d}-c{c_idx:04d}",
                                 content=fragment,
@@ -258,9 +266,12 @@ def _run_experiments(
     needs_text = any(s in ("text_only",) for s in strategies)
     text_pipeline = _build_text_pipeline(args) if needs_text else None
 
+    strategy_configs: dict[str, dict] = {}
     for strategy in strategies:
         for run_index in range(1, args.runs_per_strategy + 1):
             config = apply_strategy(base_config, strategy)
+            if strategy not in strategy_configs:
+                strategy_configs[strategy] = dataclasses.asdict(config)
             retriever = KGRetriever(
                 kg_store=kg_manager,
                 config=config,
@@ -297,6 +308,21 @@ def _run_experiments(
     csv_path = output_dir / "results.csv"
     summary_txt_path = output_dir / "summary.txt"
     summary_json_path = output_dir / "summary.json"
+    config_json_path = output_dir / "config.json"
+
+    config_json_path.write_text(
+        json.dumps(
+            {
+                "cli_args": {k: v for k, v in vars(args).items()},
+                "strategy_configs": strategy_configs,
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     runner.export_jsonl(str(jsonl_path))
     runner.export_csv(str(csv_path))
@@ -336,14 +362,10 @@ def _run_experiments(
         encoding="utf-8",
     )
 
-    print("\nExperiment completed.")
-    print("Output directory:", output_dir)
-    print("-", jsonl_path)
-    print("-", csv_path)
-    print("-", summary_txt_path)
-    print("-", summary_json_path)
-    print("\nSummary:")
-    print(summary_text)
+    logger.info("Experiment completed. Output directory: %s", output_dir)
+    for path in (jsonl_path, csv_path, summary_txt_path, summary_json_path, config_json_path):
+        logger.info("Output file: %s", path)
+    logger.info("Summary:\n%s", summary_text)
 
 
 def main() -> None:
@@ -373,7 +395,7 @@ def main() -> None:
     kg_config = build_kg_config_from_env()
     kg_manager = KnowledgeGraphManager(kg_config)
 
-    print("Graph Schema:", kg_manager.refresh_schema())
+    logger.info("Graph Schema: %s", kg_manager.refresh_schema())
 
     if args.experiment:
         _run_experiments(args=args, kg_manager=kg_manager)
