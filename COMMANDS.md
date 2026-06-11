@@ -157,9 +157,12 @@ conda run -n graphllm python -m kg_pipeline.main \
 | 5 — linking | Triple linking | `stage5_triples_linked.json` |
 | 6 — neo4j | Neo4j ingestion | `stage6_neo4j_summary.json` |
 
-Additional outputs: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`.
+Additional outputs: `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`,
+`run_metadata.json` (seed, models, git commit, timestamps) plus snapshots of
+`config.yaml` and the relation vocab — every run directory is self-describing
+and reproducible.
 
-> **Stage 3 checkpoint**: progress is saved every N chunks to `stage3_checkpoint.json`. Re-running without deleting this file resumes from the last saved chunk.
+> **Stage 3 checkpoint**: progress is saved every N chunks to `stage3_checkpoint.json` (written atomically). Re-running without deleting this file resumes from the last saved chunk; triples from chunks past the last completed checkpoint are dropped on resume so recovery never duplicates.
 
 ---
 
@@ -230,9 +233,14 @@ artifacts/experiments/<timestamp>_<tag>/
   results.csv
   summary.txt
   summary.json
+  config.json            # CLI args + fully resolved AgentConfig per strategy
   resource_samples.jsonl
   resource_summary.json
 ```
+
+> **Traceability**: `config.json` records the exact resolved configuration for
+> each strategy, so any metric in `summary.json` can be traced back to the
+> settings that produced it.
 
 ---
 
@@ -423,6 +431,26 @@ python evaluation/run_ragas_eval.py \
   --save-summary-json artifacts/evaluation/ragas_summary.json \
   --save-row-csv artifacts/evaluation/ragas_rows.csv
 ```
+
+---
+
+## 11b. KG Post-processing — `scripts/kg_postprocess.py`
+
+Unified entrypoint for the four Neo4j repair passes (hub cleanup, relation
+consolidation, RELATED_TO reclassification via LLM, property enrichment, ...).
+The passes are distinct post-processing rounds implemented in
+`kg_repair.py`..`kg_repair4.py`; run them through this script, not directly.
+
+```bash
+conda run -n graphllm python scripts/kg_postprocess.py            # all passes
+conda run -n graphllm python scripts/kg_postprocess.py --passes 3,4
+```
+
+Requires `NEO4J_*` and `VLLM_*` env vars (each pass loads `kg_pipeline/.env`).
+
+Related: `scripts/kg_evaluator.py` queries the live Neo4j graph and writes a
+structural quality report to `artifacts/kg_reports/` (used for manual/LLM
+review of graph quality after ingestion or repair).
 
 ---
 
