@@ -216,6 +216,12 @@ class KGRetriever:
     def format_triples(self, triples: Sequence[KGTriple]) -> str:
         return self._format_triples(triples)
 
+    def rank_triples(
+        self, triples: Sequence[KGTriple], query_text: str
+    ) -> list[KGTriple]:
+        """Rank triples by the configured lexical/mention/confidence score."""
+        return self._rank_triples(triples, query_text)
+
     def _format_triples(self, triples: Sequence[KGTriple]) -> str:
         if not triples:
             return ""
