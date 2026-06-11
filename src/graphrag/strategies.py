@@ -7,6 +7,11 @@ from graphrag.config import AgentConfig
 # Canonical retrieval-strategy presets shared by the CLI (`graphrag.cli`) and the
 # experiment matrix driver (`scripts/run_retrieval_matrix.py`). This module is the
 # single source of truth: keep STRATEGY_PRESETS and apply_strategy() in sync.
+#
+# Presets only toggle the retrieval channels (include_* flags, hops). Cardinality
+# limits (nodes_limit, triples_limit, ...) and ranking options come from the base
+# AgentConfig; the fully resolved per-strategy config is serialized to
+# config.json in each experiment output directory for traceability.
 STRATEGY_PRESETS: tuple[str, ...] = (
     "default",
     "text_only",
