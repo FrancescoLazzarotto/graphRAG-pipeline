@@ -4,20 +4,21 @@ import argparse
 import json
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 from kg_pipeline.models.types import CanonicalEntityRecord, DocumentRecord, KGTriple
 
 
-def _load_json(path: Path):
+def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _save_json(path: Path, payload):
+def _save_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _document_props(doc: DocumentRecord) -> dict:
+def _document_props(doc: DocumentRecord) -> dict[str, Any]:
     return {
         "name": doc.filename,
         "filename": doc.filename,
