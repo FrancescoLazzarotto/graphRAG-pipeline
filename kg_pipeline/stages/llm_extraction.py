@@ -70,8 +70,14 @@ def _load_json(path: Path) -> Any:
 
 
 def _save_json(path: Path, payload: Any) -> None:
+    # Atomic write: a crash mid-write must not leave a truncated JSON that a
+    # later resume would try to load.
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    os.replace(tmp_path, path)
 
 
 def _log_new_label(new_label_path: Path, label: str) -> None:
@@ -142,6 +148,13 @@ def _enforce_labels(
     return triple
 
 
+# Cap generation length so a pathological chunk (e.g. a dense table page that
+# makes the model emit an unbounded JSON array under structured output) cannot
+# run until the HTTP timeout. A chunk's triples comfortably fit in this budget;
+# override with KG_EXTRACTION_MAX_TOKENS if a corpus needs more.
+_MAX_OUTPUT_TOKENS = int(os.getenv("KG_EXTRACTION_MAX_TOKENS", "4096"))
+
+
 def _llm_call(
     client: OpenAI,
     model_name: str,
@@ -154,6 +167,7 @@ def _llm_call(
         "model": model_name,
         "temperature": temperature,
         "seed": seed,
+        "max_tokens": _MAX_OUTPUT_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }
 
@@ -186,6 +200,7 @@ async def _llm_call_async(
         "model": model_name,
         "temperature": temperature,
         "seed": seed,
+        "max_tokens": _MAX_OUTPUT_TOKENS,
         "messages": [{"role": "user", "content": prompt}],
     }
     if use_structured_output:
@@ -465,6 +480,24 @@ def extract_triples(
             checkpoint_info = _load_json(checkpoint_info_path)
             start_chunk_idx = checkpoint_info.get("last_completed_chunk_idx", 0) + 1
             acronym_map = checkpoint_info.get("acronym_map", {})
+            # The triples file and the info file are written separately: a crash
+            # between the two can leave triples from chunks past
+            # last_completed_chunk_idx. Drop them so resume never duplicates.
+            completed_chunk_ids = {c.chunk_id for c in chunks[:start_chunk_idx]}
+            before_count = len(all_triples)
+            all_triples = [
+                t
+                for t in all_triples
+                if "chunk_id" not in t.relationship_properties
+                or str(t.relationship_properties.get("chunk_id", ""))
+                in completed_chunk_ids
+            ]
+            if len(all_triples) != before_count:
+                _log.warning(
+                    "Dropped %d checkpoint triples from chunks past the last "
+                    "completed checkpoint (inconsistent crash recovery state)",
+                    before_count - len(all_triples),
+                )
             _log.info(
                 f"Resuming from checkpoint: chunk {start_chunk_idx}/{len(chunks)}, "
                 f"triples so far: {len(all_triples)}"
