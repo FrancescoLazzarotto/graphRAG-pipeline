@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -16,6 +17,8 @@ from kg_pipeline.models.types import CanonicalEntityRecord, KGTriple
 from datetime import datetime
 from kg_pipeline.utils.acronym_map import expand_acronym
 
+
+LOGGER = logging.getLogger("kg_pipeline")
 
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
@@ -256,7 +259,13 @@ Pairs:
                     left_group = int(item["left_group"])
                     right_group = int(item["right_group"])
                     approved.add(tuple(sorted((left_group, right_group))))
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning(
+                "LLM merge confirmation failed for doc=%s (%d pairs skipped): %s",
+                doc,
+                len(pairs),
+                exc,
+            )
             continue
 
     return approved
@@ -357,6 +366,11 @@ def resolve_entities(
         norm_map: dict[str, list[str]] = defaultdict(list)
         for cname in list(registry.keys()):
             norm = cname.strip().lower()
+            if not norm:
+                LOGGER.warning(
+                    "Registry entry with empty normalized name skipped: %r", cname
+                )
+                continue
             norm_map[norm].append(cname)
 
         log_lines: list[str] = []
@@ -365,17 +379,17 @@ def resolve_entities(
                 continue
             # gather labels
             label_sets = {lbl for cname in cnames for lbl in registry[cname].labels}
-            if len(label_sets) <= 1:
-                continue
 
-            # choose canonical label by precedence
+            # choose canonical label by precedence; case-variant duplicates with a
+            # single shared label are merged as well (same normalized name must
+            # map to one canonical entry)
             chosen_label = None
             for p in precedence:
                 if p in label_sets:
                     chosen_label = p
                     break
             if not chosen_label:
-                chosen_label = sorted(label_sets)[0]
+                chosen_label = sorted(label_sets)[0] if label_sets else "Concept"
 
             # choose keeper record (prefer record that already contains chosen_label)
             keeper: str | None = None
@@ -429,8 +443,10 @@ def resolve_entities(
                 with log_path.open("a", encoding="utf-8") as fh:
                     for l in log_lines:
                         fh.write(l + "\n")
-            except Exception:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Could not write cross-label merge log %s: %s", log_path, exc
+                )
 
         # build alias_to_canonical map from final registry
         alias_to_canonical: dict[str, str] = {}
@@ -475,6 +491,17 @@ def resolve_entities(
 
 
 def save_registry(path: Path, registry: dict[str, CanonicalEntityRecord]) -> None:
+    seen_norms: dict[str, str] = {}
+    for key in registry:
+        norm = key.strip().lower()
+        if norm in seen_norms:
+            LOGGER.warning(
+                "Registry contains case-variant duplicate canonical names: %r and %r",
+                seen_norms[norm],
+                key,
+            )
+        else:
+            seen_norms[norm] = key
     payload = {key: value.model_dump() for key, value in registry.items()}
     _save_json(path, payload)
 
