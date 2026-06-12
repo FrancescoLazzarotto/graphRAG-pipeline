@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import random
+import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,16 @@ def _set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except ImportError:
+        LOGGER.warning(
+            "torch not installed: GLiNER/SentenceTransformer outputs will not be seeded"
+        )
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -69,6 +81,53 @@ def _load_relation_vocab(config: dict[str, Any], config_path: Path) -> list[str]
     if not isinstance(payload, list):
         raise ValueError("relation vocab must be a JSON array")
     return [str(item).strip().upper() for item in payload if str(item).strip()]
+
+
+def _git_commit_hash() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _write_run_metadata(
+    run_dir: Path, config_path: Path, config: dict[str, Any], seed: int
+) -> None:
+    """Snapshot config, relation vocab and run metadata so a run is traceable."""
+    config_snapshot = run_dir / "config.yaml"
+    if config_path.resolve() != config_snapshot.resolve():
+        shutil.copy2(config_path, config_snapshot)
+
+    rel_path = str(config.get("llm", {}).get("relation_vocab_path", "")).strip()
+    if rel_path:
+        vocab_path = Path(rel_path)
+        if not vocab_path.is_absolute():
+            vocab_path = config_path.parent / vocab_path
+        if vocab_path.exists():
+            shutil.copy2(vocab_path, run_dir / vocab_path.name)
+
+    metadata = {
+        "seed": seed,
+        "config_path": str(config_path.resolve()),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "git_commit": _git_commit_hash(),
+        "gliner_model": config.get("gliner", {}).get("model_name"),
+        "resolution_embedding_model": config.get("resolution", {}).get(
+            "embedding_model"
+        ),
+        "vllm_model": os.getenv("VLLM_MODEL_NAME", ""),
+        "vllm_base_url": os.getenv("VLLM_BASE_URL", ""),
+    }
+    _save_json(run_dir / "run_metadata.json", metadata)
 
 
 def _log_versions(config: dict[str, Any]) -> None:
@@ -245,8 +304,9 @@ def _load_or_run_linking(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="kg_pipeline/config.yaml")
-    parser.add_argument("--env-file", default="kg_pipeline/.env")
+    pipeline_dir = Path(__file__).resolve().parent
+    parser.add_argument("--config", default=str(pipeline_dir / "config.yaml"))
+    parser.add_argument("--env-file", default=str(pipeline_dir / ".env"))
     parser.add_argument("--run-dir", default="")
     parser.add_argument("--single-doc", default=None)
     parser.add_argument(
@@ -302,6 +362,7 @@ def main() -> None:
 
     seed = int(config.get("seed", 42))
     _set_seed(seed)
+    _write_run_metadata(run_dir, config_path, config, seed)
     _log_versions(config)
     paths = _stage_output_paths(run_dir)
 
