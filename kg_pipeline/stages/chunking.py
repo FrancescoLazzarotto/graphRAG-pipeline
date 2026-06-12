@@ -131,24 +131,30 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
                 end_page=doc.page_count,
                 section_title="SmallDoc",
             )
-            for p in paragraphs:
-                t = _token_count(p.text)
-                if t < small_min_tokens:
-                    continue
-                if t <= small_max_tokens:
-                    chunks.append(
-                        _build_chunk(doc, next_chunk_idx, p.section_title, [p])
-                    )
-                    next_chunk_idx += 1
-                else:
-                    windows = _window_paragraphs(
-                        [p], max_tokens=small_max_tokens, overlap_tokens=0
-                    )
-                    for win in windows:
-                        chunks.append(
-                            _build_chunk(doc, next_chunk_idx, p.section_title, win)
-                        )
-                        next_chunk_idx += 1
+            # Pack paragraphs into token-windowed chunks instead of emitting (or
+            # dropping) one paragraph at a time. The previous per-paragraph logic
+            # skipped every paragraph below ``small_min_tokens`` and never merged
+            # short paragraphs, so a document made entirely of short paragraphs
+            # (e.g. picture-heavy briefs) produced zero chunks and vanished from
+            # the KG. Windowing accumulates them up to ``small_max_tokens``.
+            windows = _window_paragraphs(
+                paragraphs, max_tokens=small_max_tokens, overlap_tokens=0
+            )
+            kept = [
+                win
+                for win in windows
+                if _token_count("\n\n".join(p.text for p in win)) >= small_min_tokens
+            ]
+            # Never drop an entire document: if no window clears the noise floor
+            # but there is text, keep the packed windows so the doc still enters
+            # the KG.
+            if not kept and windows:
+                kept = windows
+            for win in kept:
+                chunks.append(
+                    _build_chunk(doc, next_chunk_idx, win[0].section_title, win)
+                )
+                next_chunk_idx += 1
             continue
 
         if doc.page_count <= medium_max_pages:
