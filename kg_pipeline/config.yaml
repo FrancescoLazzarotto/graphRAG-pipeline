@@ -19,6 +19,9 @@ ontology:
     - Dataset
     - Method
 
+# Adaptive chunking: documents are routed to one of three windowing profiles
+# by page count (<=small_max_pages: paragraph chunks gated by min/max tokens;
+# <=medium_max_pages: 512-token windows; larger: 1024-token windows).
 chunking:
   small_max_pages: 10
   medium_max_pages: 80
@@ -44,8 +47,14 @@ resolution:
   similarity_threshold: 0.88
   context_jaccard_floor: 0.15
 
+# Intentional: '588fe1bc' is the AuraDB instance database name for this
+# project. This value takes precedence over NEO4J_DATABASE; remove or blank
+# the key to fall back to the env var on other setups.
 neo4j:
   database: '588fe1bc'
 
+# Intentional: MENTIONED_IN edges are excluded to keep the graph lean for
+# retrieval; SAME_AS alias edges are still produced. Set to true to also
+# materialize entity->document mention edges.
 linking:
   include_mentioned_in: false
