@@ -1,46 +1,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from kg_pipeline.models.types import ChunkRecord
 
 
-_DEFAULT_RELATION_VOCAB = [
-    "WORKED_WITH",
-    "HAS_COMPONENT",
-    "CONTRIBUTES_TO",
-    "COMPLIES_WITH",
-    "REQUIRES",
-    "ESTABLISHES",
-    "DEFINED_AS",
-    "APPLIES_TO",
-    "AIMS_TO_ACHIEVE",
-    "INCLUDES",
-    "ENSURES",
-    "IS_TYPE_OF",
-    "HAS_MAXIMUM_LEVEL",
-    "BASED_ON",
-    "PRODUCES",
-    "AFFECTS",
-    "CAUSES",
-    "MEASURES",
-    "HAS_VALUE",
-    "LOCATED_IN",
-    "NEEDED_FOR",
-    "USES",
-    "PUBLISHED",
-    "CONTAINS_DATA",
-    "REGULATED_BY",
-    "HAS_MEMBER",
-    "ANALYZES",
-    "IMPACTS",
-    "GOVERNED_BY",
-    "RELATED_TO",
-    "GOVERNS",
-    "EXCHANGES_INFO_WITH",
-    "DECREASED_FROM",
-    "INCREASED_FROM",
-]
+# Fallback when no relation_vocab is passed: read the canonical vocab file so
+# the prompt can never drift from what validation enforces.
+_VOCAB_PATH = Path(__file__).resolve().parents[1] / "relation_vocab_v8.json"
+_DEFAULT_RELATION_VOCAB: list[str] = json.loads(
+    _VOCAB_PATH.read_text(encoding="utf-8")
+)
 
 
 def build_extraction_prompt(
