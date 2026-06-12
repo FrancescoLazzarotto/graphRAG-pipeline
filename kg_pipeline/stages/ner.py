@@ -76,7 +76,6 @@ def _cli() -> None:
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--labels-json", required=True)
     parser.add_argument("--threshold", type=float, default=0.45)
-    parser.add_argument("--threshold", type=float, default=0.55)
     args = parser.parse_args()
 
     chunks_payload = json.loads(Path(args.chunks_json).read_text(encoding="utf-8"))
