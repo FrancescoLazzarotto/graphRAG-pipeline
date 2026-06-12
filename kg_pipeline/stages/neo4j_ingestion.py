@@ -170,7 +170,12 @@ def _sanitize_props(props: dict[str, object]) -> dict[str, object]:
     return out
 
 
-def _merge_triple(tx, triple: KGTriple) -> None:
+def _triple_cypher_parts(triple: KGTriple) -> tuple[str, dict[str, object]]:
+    """Build the per-signature Cypher (labels/rel type are identifiers, not
+    parameters) and the parameter row for a triple.
+
+    Triples sharing the same query text can be ingested together via UNWIND.
+    """
     s_labels = triple.subject_labels or ["Concept"]
     o_labels = triple.object_labels or ["Concept"]
 
@@ -185,33 +190,37 @@ def _merge_triple(tx, triple: KGTriple) -> None:
     set_object_extra = "\n".join([f"SET o:{label}" for label in o_extra])
 
     query = f"""
-MERGE (s:{s_primary} {{name: $s_name}})
-SET s += $s_props
+UNWIND $rows AS row
+MERGE (s:{s_primary} {{name: row.s_name}})
+SET s += row.s_props
 {set_subject_extra}
-MERGE (o:{o_primary} {{name: $o_name}})
-SET o += $o_props
+MERGE (o:{o_primary} {{name: row.o_name}})
+SET o += row.o_props
 {set_object_extra}
-MERGE (s)-[r:{rel_type} {{subject: $s_name, object: $o_name}}]->(o)
-SET r += $r_props
+MERGE (s)-[r:{rel_type} {{subject: row.s_name, object: row.o_name}}]->(o)
+SET r += row.r_props
 """
 
-    s_name = _sanitize_value(triple.subject_properties.get("name", triple.subject))
-    o_name = _sanitize_value(triple.object_properties.get("name", triple.object))
-    s_props = _sanitize_props(triple.subject_properties)
-    o_props = _sanitize_props(triple.object_properties)
-    r_props = _sanitize_props(triple.relationship_properties)
+    row: dict[str, object] = {
+        "s_name": _sanitize_value(triple.subject_properties.get("name", triple.subject)),
+        "o_name": _sanitize_value(triple.object_properties.get("name", triple.object)),
+        "s_props": _sanitize_props(triple.subject_properties),
+        "o_props": _sanitize_props(triple.object_properties),
+        "r_props": _sanitize_props(triple.relationship_properties),
+    }
+    return query, row
+
+
+def _merge_triple(tx, triple: KGTriple) -> None:
+    query, row = _triple_cypher_parts(triple)
+    s_props = row["s_props"]
+    o_props = row["o_props"]
+    r_props = row["r_props"]
 
     logger = logging.getLogger(__name__)
 
     try:
-        tx.run(
-            query,
-            s_name=s_name,
-            o_name=o_name,
-            s_props=s_props,
-            o_props=o_props,
-            r_props=r_props,
-        ).consume()
+        tx.run(query, rows=[row]).consume()
     except CypherTypeError as e:
         # log details for debugging and skip this triple to allow ingestion to continue
         debug = {
@@ -220,8 +229,8 @@ SET r += $r_props
             "object": triple.object,
             "subject_labels": triple.subject_labels,
             "object_labels": triple.object_labels,
-            "s_name": s_name,
-            "o_name": o_name,
+            "s_name": row["s_name"],
+            "o_name": row["o_name"],
             "s_props_sanitized": s_props,
             "o_props_sanitized": o_props,
             "r_props_sanitized": r_props,
@@ -267,6 +276,10 @@ SET r += $r_props
         return
 
 
+def _merge_triples_batch(tx, query: str, rows: list[dict[str, object]]) -> None:
+    tx.run(query, rows=rows).consume()
+
+
 def ingest_triples(
     triples: list[KGTriple],
     uri: str,
@@ -274,17 +287,54 @@ def ingest_triples(
     password: str,
     database: str | None = None,
     log_every: int = 0,
+    batch_size: int = 200,
 ) -> int:
+    """Ingest triples batched with UNWIND, grouped by label/predicate signature.
+
+    Falls back to per-triple ingestion (which logs and skips problematic
+    triples) when a whole batch fails.
+    """
     count = 0
     total = len(triples)
     logger = logging.getLogger(__name__)
+
+    # Group triples that share the same Cypher text so each group can be sent
+    # as one UNWIND statement. MERGE is idempotent, so cross-group reordering
+    # does not change the resulting graph.
+    grouped: dict[str, tuple[str, list[tuple[KGTriple, dict[str, object]]]]] = {}
+    for triple in triples:
+        query, row = _triple_cypher_parts(triple)
+        if query not in grouped:
+            grouped[query] = (query, [])
+        grouped[query][1].append((triple, row))
+
+    batch_size = max(1, int(batch_size))
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         with driver.session(database=database) as session:
-            for triple in tqdm(triples, desc="Stage 6 Neo4j Ingestion", unit="triple"):
-                session.execute_write(_merge_triple, triple)
-                count += 1
-                if log_every > 0 and count % log_every == 0:
-                    logger.info("ingest_progress count=%d total=%d", count, total)
+            with tqdm(
+                total=total, desc="Stage 6 Neo4j Ingestion", unit="triple"
+            ) as progress:
+                for query, items in grouped.values():
+                    for start in range(0, len(items), batch_size):
+                        batch = items[start : start + batch_size]
+                        rows = [row for _, row in batch]
+                        try:
+                            session.execute_write(_merge_triples_batch, query, rows)
+                        except Exception as exc:
+                            logger.warning(
+                                "Batch ingestion failed (%d triples), retrying "
+                                "one by one: %s",
+                                len(batch),
+                                exc,
+                            )
+                            for triple, _row in batch:
+                                session.execute_write(_merge_triple, triple)
+                        count += len(batch)
+                        progress.update(len(batch))
+                        if log_every > 0 and count % log_every < batch_size:
+                            logger.info(
+                                "ingest_progress count=%d total=%d", count, total
+                            )
     return count
 
 
