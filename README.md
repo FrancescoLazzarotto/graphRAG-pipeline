@@ -9,7 +9,7 @@
 [![Status](https://img.shields.io/badge/status-active%20development-brightgreen)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline)
 [![Neo4j](https://img.shields.io/badge/Neo4j-Knowledge%20Graph-008CC1?logo=neo4j)](https://neo4j.com/)
 
-*Active development — May 2026*
+*Active development — Jun 2026*
 
 </div>
 
