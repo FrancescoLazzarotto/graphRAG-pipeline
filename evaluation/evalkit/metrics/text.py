@@ -156,6 +156,23 @@ def bertscore_f1(prediction: str, reference: str, model: str = "distilbert-base-
         return None
 
 
+# ─── Answer cleaning ────────────────────────────────────────────────────────
+
+_BOILERPLATE_MARKERS = (
+    "Verifica nel grafo:",
+    "Evidence in graph:",
+    "Evidence in Graph:",
+)
+
+def _clean_answer(answer: str) -> str:
+    """Strip KG provenance block appended after the narrative answer."""
+    for marker in _BOILERPLATE_MARKERS:
+        idx = answer.find(marker)
+        if idx != -1:
+            answer = answer[:idx]
+    return answer.strip()
+
+
 # ─── Variant-aware scoring ───────────────────────────────────────────────────
 
 def best_variant_score(
@@ -196,7 +213,7 @@ def compute_text_row(row: EvalRow, bertscore: bool = False) -> dict[str, Any]:
     if row.skip_reason or not row.ground_truth.strip():
         return base
 
-    pred = row.answer
+    pred = _clean_answer(row.answer)
     gt = row.ground_truth
     variants = row.answer_variants
 
