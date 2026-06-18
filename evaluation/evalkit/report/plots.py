@@ -176,6 +176,33 @@ def generate_plots(report: ReportModel, plots_dir: Path) -> list[Path]:
         _line_trend(plt, latency_trend, "Latency Trend (avg)", "avg_latency_ms (ms)", out_path)
         generated.append(out_path)
 
+    # ── Run stats bar charts (always available, no gold needed) ──────────
+    run_stats: dict[str, Any] = report.meta.get("run_stats", {})
+    if run_stats:
+        # latency p50 per strategy
+        stat_entries = [(k, v) for k, v in sorted(run_stats.items()) if k != "global" and isinstance(v, dict)]
+        if stat_entries:
+            strat_labels = [k for k, _ in stat_entries]
+            for stat_key, ylabel, title_suffix in [
+                ("latency_p50", "ms", "Latency p50 (ms)"),
+                ("latency_p95", "ms", "Latency p95 (ms)"),
+                ("insufficient_rate", "rate [0-1]", "Insufficiency Rate"),
+            ]:
+                vals = [v.get(stat_key, 0.0) or 0.0 for _, v in stat_entries]
+                if any(v > 0 for v in vals):
+                    out_path = plots_dir / f"runstats_{stat_key}.png"
+                    fig, ax = plt.subplots(figsize=(max(6, len(strat_labels) * 1.4), 4))
+                    ax.bar(range(len(strat_labels)), vals, color="steelblue", alpha=0.8)
+                    ax.set_xticks(list(range(len(strat_labels))))
+                    ax.set_xticklabels(strat_labels, rotation=30, ha="right", fontsize=9)
+                    ax.set_ylabel(ylabel, fontsize=10)
+                    ax.set_title(title_suffix + " by Strategy", fontsize=11)
+                    plt.tight_layout()
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    fig.savefig(str(out_path), dpi=120)
+                    plt.close(fig)
+                    generated.append(out_path)
+
     # ── Text metrics bar ──────────────────────────────────────────────────
     for metric in ["token_f1", "rouge_l", "bleu"]:
         data_points = [
