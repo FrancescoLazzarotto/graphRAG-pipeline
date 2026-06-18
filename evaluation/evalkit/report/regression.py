@@ -136,6 +136,7 @@ def load_cross_run_trend(
     experiments_root: Path,
     metric_name: str,
     strategy: str = "global",
+    run_dirs: list[Path] | None = None,
 ) -> list[dict[str, Any]]:
     """Load a metric's value across all runs for trend plotting.
 
@@ -146,15 +147,20 @@ def load_cross_run_trend(
         experiments_root: Parent directory of all run dirs.
         metric_name: Metric key to extract (e.g. "avg_latency_ms").
         strategy: Strategy key in stats dict (or "global" for overall).
+        run_dirs: Explicit list of run dirs to use. If None, iterates experiments_root.
 
     Returns:
         List of {"run_dir", "timestamp", "value"} sorted by timestamp.
     """
-    if not experiments_root.is_dir():
+    if run_dirs is not None:
+        dirs = sorted(run_dirs)
+    elif experiments_root.is_dir():
+        dirs = sorted(d for d in experiments_root.iterdir() if d.is_dir())
+    else:
         return []
 
     trend: list[dict[str, Any]] = []
-    for run_dir in sorted(experiments_root.iterdir()):
+    for run_dir in dirs:
         if not run_dir.is_dir():
             continue
         summary_path = run_dir / "summary.json"
