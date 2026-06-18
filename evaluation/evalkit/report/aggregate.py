@@ -205,9 +205,10 @@ def build_project_report(
         seed=cfg.seed,
     )
 
-    # Latency trend
+    # Latency trend — scoped to the same filtered run_dirs (not whole experiments_root)
     latency_trend = load_cross_run_trend(
-        experiments_root, metric_name="avg_latency_ms", strategy="global"
+        experiments_root, metric_name="avg_latency_ms", strategy="global",
+        run_dirs=run_dirs,
     )
 
     kg_result: KGQualityResult | None = None
