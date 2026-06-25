@@ -8,12 +8,16 @@ _DEFAULT_QUERY_PREFIX = "query: "
 _DEFAULT_PASSAGE_PREFIX = "passage: "
 _DEFAULT_VECTOR_INDEX_DIR = "artifacts/vector_index"
 
+DEFAULT_CHUNK_SIZE = 1200
+DEFAULT_CHUNK_OVERLAP = 180
+DEFAULT_MIN_CHUNK_CHARS = 80
+
 
 def make_text_pipeline(
     backend: str = "tfidf",
-    chunk_size: int = 1200,
-    chunk_overlap: int = 180,
-    min_chunk_chars: int = 80,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    min_chunk_chars: int = DEFAULT_MIN_CHUNK_CHARS,
     *,
     embedding_model: str = _DEFAULT_DENSE_MODEL,
     vector_index_dir: str = _DEFAULT_VECTOR_INDEX_DIR,
