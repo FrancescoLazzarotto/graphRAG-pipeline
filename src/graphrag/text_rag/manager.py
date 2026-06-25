@@ -27,6 +27,7 @@ class TextRAGManager:
         self._chunks: list[TextChunk] = []
         self._chunk_tokens: list[list[str]] = []
         self._idf: dict[str, float] = {}
+        self._idf_dirty = False
 
     @property
     def size(self) -> int:
@@ -36,6 +37,7 @@ class TextRAGManager:
         self._chunks.clear()
         self._chunk_tokens.clear()
         self._idf.clear()
+        self._idf_dirty = False
 
     def add_chunks(self, chunks: Iterable[TextChunk]) -> int:
         added = 0
@@ -48,7 +50,9 @@ class TextRAGManager:
             added += 1
 
         if added:
-            self._rebuild_idf()
+            # Defer the O(corpus) IDF rebuild to the first retrieval so that
+            # repeated add_chunks calls don't recompute it per batch.
+            self._idf_dirty = True
 
         return added
 
@@ -78,6 +82,10 @@ class TextRAGManager:
         query_tokens = _tokenize(query)
         if not query_tokens:
             return []
+
+        if self._idf_dirty:
+            self._rebuild_idf()
+            self._idf_dirty = False
 
         query_tf: Counter[str] = Counter(query_tokens)
         scored_chunks: list[tuple[TextChunk, float]] = []
