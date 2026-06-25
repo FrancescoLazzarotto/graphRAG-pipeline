@@ -31,8 +31,6 @@ class RAGState(TypedDict, total=False):
     kg_context: str
     merged_context: str
     chosen_retrieval_mode: str
-    hop_history: list[dict[str, Any]]
-    current_hop: int
     relevance: Literal["relevant", "not_relevant"]
     confidence: float
     confidence_retries: int
