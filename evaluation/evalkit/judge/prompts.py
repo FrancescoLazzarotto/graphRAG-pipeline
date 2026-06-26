@@ -37,6 +37,33 @@ Return only the JSON object with keys "{score_field}" and "rationale".
 """
 
 
+def build_row_content(row: EvalRow) -> str:
+    """Assemble the per-row evaluation block (question, answer, references).
+
+    Shared by the single-rubric prompt and the batched multi-row prompt so both
+    feed the judge identical evidence.
+
+    Args:
+        row: EvalRow with question, answer, ground_truth, contexts, triples.
+
+    Returns:
+        A markdown string with the row's question, generated answer, and any
+        available ground truth / retrieved contexts / retrieved triples.
+    """
+    parts = [
+        f"## Question\n{row.question}",
+        f"## Generated Answer\n{row.answer}",
+    ]
+    if row.ground_truth.strip():
+        parts.append(f"## Ground Truth Answer\n{row.ground_truth}")
+    if row.contexts:
+        parts.append("## Retrieved Text Contexts\n" + "\n---\n".join(row.contexts[:5]))
+    if row.retrieved_triples:
+        triples_str = json.dumps(row.retrieved_triples[:20], ensure_ascii=False, indent=2)
+        parts.append(f"## Retrieved KG Triples\n{triples_str}")
+    return "\n\n".join(parts)
+
+
 def build_prompt(row: EvalRow, rubric: Rubric) -> tuple[str, str]:
     """Build (system, user) prompt strings for a given row and rubric.
 
