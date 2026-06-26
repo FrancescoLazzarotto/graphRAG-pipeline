@@ -171,6 +171,92 @@ class APIBackend:
         return ""
 
 
+class ClaudeCodeBackend:
+    """Judge backend driving the Claude Code CLI (`claude -p`) headless.
+
+    Uses the Claude Code subscription auth (Pro/Max) rather than a metered API
+    key: the `claude` binary must be installed and logged in to a claude.ai
+    account. This is the only way to use the subscription programmatically.
+
+    The user prompt is piped via stdin (avoids arg-length/quoting limits on
+    large prompts); the system prompt is appended via --append-system-prompt.
+
+    Env overrides:
+        CLAUDE_CODE_BIN: path to the claude binary (default "claude").
+        CLAUDE_CODE_TIMEOUT: per-call timeout in seconds (default 300).
+        CLAUDE_CODE_EXTRA_ARGS: extra CLI args, whitespace-separated.
+    """
+
+    def __init__(
+        self,
+        model_id: str = "sonnet",
+        max_tokens: int = 256,  # noqa: ARG002 - kept for backend interface parity
+        bin_path: str = "",
+        timeout: int = 300,
+    ) -> None:
+        self.model_id = model_id or "sonnet"
+        self.bin = bin_path or os.getenv("CLAUDE_CODE_BIN", "claude")
+        self.timeout = int(os.getenv("CLAUDE_CODE_TIMEOUT", str(timeout)))
+        extra = os.getenv("CLAUDE_CODE_EXTRA_ARGS", "").strip()
+        self.extra_args = extra.split() if extra else []
+
+    def _backoff(self, attempt: int) -> None:
+        import random
+        import time
+
+        time.sleep(min(2.0**attempt + random.random(), 30.0))
+
+    def complete(self, system: str, user: str) -> str:
+        import json as _json
+        import subprocess
+
+        cmd = [self.bin, "-p", "--output-format", "json", "--model", self.model_id, "--max-turns", "1"]
+        if system:
+            cmd += ["--append-system-prompt", system]
+        cmd += self.extra_args
+
+        for attempt in range(3):
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    input=user,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                )
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"claude CLI not found ({self.bin!r}). Install Claude Code and run "
+                    "`claude login` with your Pro/Max account, or set CLAUDE_CODE_BIN."
+                ) from exc
+            except subprocess.TimeoutExpired:
+                logger.warning("ClaudeCodeBackend attempt %d timed out", attempt + 1)
+                self._backoff(attempt)
+                continue
+
+            if proc.returncode != 0:
+                logger.warning(
+                    "ClaudeCodeBackend attempt %d exit=%d stderr=%s",
+                    attempt + 1, proc.returncode, proc.stderr[:200],
+                )
+                self._backoff(attempt)
+                continue
+
+            out = proc.stdout.strip()
+            try:
+                payload = _json.loads(out)
+            except _json.JSONDecodeError:
+                return out  # already plain text
+            if isinstance(payload, dict):
+                if payload.get("is_error"):
+                    logger.warning("ClaudeCodeBackend is_error: %s", str(payload)[:200])
+                    self._backoff(attempt)
+                    continue
+                return str(payload.get("result", "")).strip()
+            return out
+        return ""
+
+
 def make_backend(
     backend: str,
     model_id: str,
@@ -178,6 +264,7 @@ def make_backend(
     vllm_api_key: str = "",
     api_provider: str = "anthropic",
     max_new_tokens: int = 256,
+    claude_code_bin: str = "",
 ) -> JudgeBackend:
     """Factory: return the appropriate JudgeBackend based on *backend* string."""
     if backend == "vllm":
@@ -195,4 +282,12 @@ def make_backend(
             provider=api_provider,
             max_tokens=max_new_tokens,
         )
-    raise ValueError(f"Unknown backend: {backend!r}. Choose from: vllm, local_hf, api")
+    if backend == "claude_code":
+        return ClaudeCodeBackend(
+            model_id=model_id,
+            max_tokens=max_new_tokens,
+            bin_path=claude_code_bin,
+        )
+    raise ValueError(
+        f"Unknown backend: {backend!r}. Choose from: vllm, local_hf, api, claude_code"
+    )
