@@ -14,6 +14,61 @@ from evalkit.models import EvalRow
 logger = logging.getLogger("graphrag")
 
 
+def summarize_row_scores(
+    row_scores: list[dict[str, Any]],
+    rubric_names: list[str],
+    n_bootstrap: int = 1000,
+    ci: float = 0.95,
+    seed: int = 42,
+    rows_skipped: int = 0,
+) -> dict[str, Any]:
+    """Aggregate per-row judge scores into per-rubric summaries with bootstrap CI.
+
+    Shared by the sequential (LLMJudge.score_dataset) and batched judging paths
+    so both emit an identical result schema.
+
+    Args:
+        row_scores: Per-row dicts, each carrying a numeric value per rubric name.
+        rubric_names: Rubrics to summarise.
+        n_bootstrap: Bootstrap resamples for the CI.
+        ci: Confidence level.
+        seed: Bootstrap seed.
+        rows_skipped: Count of rows excluded before scoring (for reporting).
+
+    Returns:
+        Dict with rows_evaluated, rows_skipped, per-rubric summaries, row_scores.
+    """
+    from statistics import mean, stdev
+
+    summaries: dict[str, dict[str, Any]] = {}
+    for rubric_name in rubric_names:
+        values = [
+            float(rs[rubric_name])
+            for rs in row_scores
+            if rs.get(rubric_name) is not None
+        ]
+        if values:
+            ci_lower, ci_upper = bootstrap_ci(values, n_bootstrap=n_bootstrap, ci=ci, seed=seed)
+            summaries[rubric_name] = {
+                "mean": mean(values),
+                "std": stdev(values) if len(values) > 1 else 0.0,
+                "ci_lower": ci_lower,
+                "ci_upper": ci_upper,
+                "n": len(values),
+            }
+        else:
+            summaries[rubric_name] = {
+                "mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0, "n": 0,
+            }
+
+    return {
+        "rows_evaluated": len(row_scores),
+        "rows_skipped": rows_skipped,
+        "rubrics": summaries,
+        "row_scores": row_scores,
+    }
+
+
 class _JudgeCache:
     """Simple LRU cache keyed by (rubric_name, prompt_hash)."""
 
@@ -137,31 +192,11 @@ class LLMJudge:
                     )
             row_scores.append(entry)
 
-        rubric_names = [r.name for r in self.rubrics]
-        summaries: dict[str, dict[str, Any]] = {}
-        for rubric_name in rubric_names:
-            values = [
-                float(rs[rubric_name])
-                for rs in row_scores
-                if rs.get(rubric_name) is not None
-            ]
-            if values:
-                ci_lower, ci_upper = bootstrap_ci(values, n_bootstrap=n_bootstrap, ci=ci, seed=seed)
-                from statistics import mean, stdev
-
-                summaries[rubric_name] = {
-                    "mean": mean(values),
-                    "std": stdev(values) if len(values) > 1 else 0.0,
-                    "ci_lower": ci_lower,
-                    "ci_upper": ci_upper,
-                    "n": len(values),
-                }
-            else:
-                summaries[rubric_name] = {"mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0, "n": 0}
-
-        return {
-            "rows_evaluated": len(row_scores),
-            "rows_skipped": skipped,
-            "rubrics": summaries,
-            "row_scores": row_scores,
-        }
+        return summarize_row_scores(
+            row_scores,
+            [r.name for r in self.rubrics],
+            n_bootstrap=n_bootstrap,
+            ci=ci,
+            seed=seed,
+            rows_skipped=skipped,
+        )
