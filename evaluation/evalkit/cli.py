@@ -215,20 +215,59 @@ def cmd_judge(args: argparse.Namespace) -> int:
     backend = make_backend(
         backend=args.backend,
         model_id=args.model,
+        api_provider=args.provider,
         max_new_tokens=args.max_new_tokens,
+        claude_code_bin=args.claude_bin,
     )
     rubric_names = [r.strip() for r in args.rubrics.split(",") if r.strip()]
-    judge = LLMJudge(backend=backend, rubric_names=rubric_names)
-    result = judge.score_dataset(rows)
 
-    if args.out:
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        (out / "judge_summary.json").write_text(
+    out_dir = Path(args.out) if args.out else None
+    # The subscription backend (and any batch_size > 1) routes through the
+    # batched, checkpointed path; batch_size == 1 reproduces the legacy loop.
+    use_batched = args.backend == "claude_code" or args.batch_size > 1
+    if use_batched:
+        from evalkit.judge.batch import score_dataset_batched
+
+        result = score_dataset_batched(
+            rows,
+            backend=backend,
+            rubric_names=rubric_names,
+            batch_size=args.batch_size,
+            out_dir=out_dir,
+            resume=args.resume,
+        )
+    else:
+        judge = LLMJudge(backend=backend, rubric_names=rubric_names)
+        result = judge.score_dataset(rows)
+
+    if out_dir:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "judge_summary.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        logger.info("saved judge results to %s", out)
+        logger.info("saved judge results to %s", out_dir)
 
+    return 0
+
+
+# ─── Subcommand: judge-compare ────────────────────────────────────────────────
+
+def cmd_judge_compare(args: argparse.Namespace) -> int:
+    from evalkit.judge.compare import compare_from_paths, render_markdown
+
+    cmp = compare_from_paths(
+        Path(args.a), Path(args.b), label_a=args.label_a, label_b=args.label_b
+    )
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "judge_model_comparison.json").write_text(
+            json.dumps(cmp, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (out / "judge_model_comparison.md").write_text(render_markdown(cmp), encoding="utf-8")
+        logger.info("saved judge comparison to %s", out)
+    else:
+        print(render_markdown(cmp))
     return 0
 
 
@@ -488,10 +527,36 @@ def _build_parser() -> argparse.ArgumentParser:
     # judge
     p = sub.add_parser("judge", help="LLM-as-a-Judge evaluation")
     p.add_argument("--input", required=True)
-    p.add_argument("--backend", default="vllm", choices=["vllm", "local_hf", "api"])
+    p.add_argument(
+        "--backend", default="vllm", choices=["vllm", "local_hf", "api", "claude_code"]
+    )
     p.add_argument("--model", default="")
+    p.add_argument(
+        "--provider", default="anthropic", choices=["anthropic", "openai"],
+        help="API provider for --backend api",
+    )
+    p.add_argument(
+        "--claude-bin", default="",
+        help="Path to the claude CLI for --backend claude_code (default: $CLAUDE_CODE_BIN or 'claude')",
+    )
     p.add_argument("--rubrics", default="answer_correctness,groundedness,relevance")
     p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument(
+        "--batch-size", type=int, default=1,
+        help="Rows per judge call. >1 (or claude_code) uses the batched, checkpointed path.",
+    )
+    p.add_argument(
+        "--resume", action="store_true",
+        help="Skip rows already present in <out>/judge_rows.jsonl",
+    )
+    p.add_argument("--out", default="")
+
+    # judge-compare
+    p = sub.add_parser("judge-compare", help="Compare two judge runs (e.g. Haiku vs Sonnet)")
+    p.add_argument("--a", required=True, help="First judge out dir or judge_summary.json")
+    p.add_argument("--b", required=True, help="Second judge out dir or judge_summary.json")
+    p.add_argument("--label-a", default="a")
+    p.add_argument("--label-b", default="b")
     p.add_argument("--out", default="")
 
     # ragas
@@ -542,6 +607,7 @@ SUBCOMMAND_MAP = {
     "retrieval": cmd_retrieval,
     "text": cmd_text,
     "judge": cmd_judge,
+    "judge-compare": cmd_judge_compare,
     "ragas": cmd_ragas,
     "kg": cmd_kg,
     "report-experiment": cmd_report_experiment,
