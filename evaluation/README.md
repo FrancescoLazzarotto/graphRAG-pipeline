@@ -57,6 +57,54 @@ Metrics include:
 - `entity_coverage`
 - `precision_at_k`, `recall_at_k`, `mrr` (when triple labels are available)
 
+## 3b) LLM-as-a-Judge
+
+Scores generated answers against the gold set on `answer_correctness`,
+`groundedness`, `relevance` (JSON score + rationale per row, with bootstrap CIs).
+The judge model is pluggable via `--backend` — pick the one that fits your wallet:
+
+| `--backend` | Auth | Cost | Reproducible | When |
+|---|---|---|---|---|
+| `claude_code` | Claude Code subscription (Pro/Max, OAuth) | $0 extra | ✗ (tied to your account) | Day-to-day iteration on your own machine |
+| `api` | `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY`) | ~$3–15 / full run | ✓ (pin model + run) | Final paper numbers; anyone reusing the project with their own key |
+| `vllm` / `local_hf` | local model | $0 | ✓ | No Claude access; uses your own model as judge |
+
+**Subscription backend (`claude_code`).** Requires the `claude` CLI installed and
+logged in to your claude.ai account (`claude login`). It drives `claude -p`
+headless; the judge prompt is fully self-contained. Overrides: `CLAUDE_CODE_BIN`,
+`CLAUDE_CODE_TIMEOUT`, `CLAUDE_CODE_EXTRA_ARGS`. Note: this uses the coding
+subscription as a batch judge (grey area in Anthropic's usage policy) and is
+**not reproducible by reviewers** — regenerate final numbers with `--backend api`.
+
+```bash
+# Pro subscription, both models, batched + resumable:
+conda run -n graphllm python -m evalkit.cli judge \
+  --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
+  --backend claude_code --model haiku --batch-size 8 --resume \
+  --out artifacts/evaluation/judge_haiku
+conda run -n graphllm python -m evalkit.cli judge \
+  --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
+  --backend claude_code --model sonnet --batch-size 8 --resume \
+  --out artifacts/evaluation/judge_sonnet
+
+# Judge-model agreement (robustness table for the paper):
+conda run -n graphllm python -m evalkit.cli judge-compare \
+  --a artifacts/evaluation/judge_haiku --b artifacts/evaluation/judge_sonnet \
+  --label-a haiku --label-b sonnet \
+  --out artifacts/evaluation/judge_compare
+
+# Same numbers via API (needs ANTHROPIC_API_KEY), pinned + reproducible:
+conda run -n graphllm python -m pip install anthropic
+conda run -n graphllm python -m evalkit.cli judge \
+  --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
+  --backend api --provider anthropic --model claude-sonnet-4-6 \
+  --batch-size 8 --out artifacts/evaluation/judge_api
+```
+
+`--batch-size > 1` (always on for `claude_code`) scores N rows per call —
+keeps subscription rate/weekly limits a non-issue and lets `--resume` recover an
+interrupted run from `<out>/judge_rows.jsonl` without re-spending quota.
+
 ## 4) RAGAS (optional)
 
 Install evaluation dependencies:
