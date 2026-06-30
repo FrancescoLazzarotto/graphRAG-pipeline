@@ -6,24 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-# Case-insensitive substrings that signal an LLM fallback / empty-context response.
-INSUFFICIENT_PHRASES: tuple[str, ...] = (
-    "the provided context does not contain",
-    "the context does not contain",
-    "does not contain enough information",
-    "does not contain information",
-    "non ho informazioni",
-    "non posso rispondere",
-    "i don't have enough information",
-    "i cannot find",
-    "cannot answer",
-    "unable to answer",
-    "not enough information",
-    "il contesto fornito non contiene",
-    "il contesto non contiene",
-    "no information available",
-    "no relevant information",
-)
+from graphrag.llm.refusal import is_insufficient
 
 
 class SupportsInvoke(Protocol):
@@ -60,7 +43,8 @@ class ExperimentRunner:
         run_metadata: dict[str, Any] | None = None,
     ) -> list[ExperimentResult]:
         batch: list[ExperimentResult] = []
-        for question in self.questions:
+        total = len(self.questions)
+        for idx, question in enumerate(self.questions, start=1):
             state = agent.invoke(question)
             metadata: dict[str, Any] = {"run_id": state.get("run_id", "")}
             if run_metadata:
@@ -99,6 +83,13 @@ class ExperimentRunner:
                 metadata=metadata,
             )
             batch.append(result)
+            print(
+                f"[{label}] q{idx}/{total} "
+                f"latency_ms={result.latency_ms:.0f} "
+                f"insufficient={result.insufficient_answer} "
+                f"kg_triples={result.kg_triples_used}",
+                flush=True,
+            )
 
         self.results.extend(batch)
         return batch
@@ -209,10 +200,7 @@ class ExperimentRunner:
 
     @staticmethod
     def _is_insufficient(answer: str) -> bool:
-        if not answer.strip():
-            return True
-        lower = answer.lower()
-        return any(phrase in lower for phrase in INSUFFICIENT_PHRASES)
+        return is_insufficient(answer)
 
     def compare(self) -> dict[str, list[ExperimentResult]]:
         grouped: dict[str, list[ExperimentResult]] = {}
