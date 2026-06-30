@@ -263,7 +263,13 @@ def _run_experiments(
     llm_manager = _build_llm_manager(args=args, warmup=args.llm_warmup)
     runner = ExperimentRunner(questions=questions)
 
-    needs_text = any(s in ("text_only",) for s in strategies)
+    # Build the text pipeline if ANY selected strategy resolves to a config that
+    # uses raw-text retrieval (text_only, hybrid, ...). Deriving this from the
+    # resolved config instead of a hardcoded name list keeps new text-using
+    # strategies working automatically.
+    needs_text = any(
+        apply_strategy(base_config, s).use_text_retriever for s in strategies
+    )
     text_pipeline = _build_text_pipeline(args) if needs_text else None
 
     strategy_configs: dict[str, dict] = {}
