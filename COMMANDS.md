@@ -432,6 +432,92 @@ python evaluation/run_ragas_eval.py \
   --save-row-csv artifacts/evaluation/ragas_rows.csv
 ```
 
+### LLM-as-a-Judge — `evalkit.cli judge`
+
+Scores generated answers against the gold set on `answer_correctness`,
+`groundedness`, `relevance` (score 0–1 + rationale per row, with bootstrap CIs).
+The judge model is pluggable via `--backend`:
+
+| `--backend` | Auth | Cost |
+|---|---|---|---|---|
+| `claude_code` | Claude **subscription** (Pro/Max, OAuth) | $0 extra |  
+| `api` | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | ~$3–15 / full run | 
+| `vllm` / `local_hf` | local model | $0 |
+
+> **Run from the `evaluation/` directory** (`cd evaluation`) so `evalkit` is
+> importable, otherwise `python -m evalkit.cli` fails on import.
+
+#### Prerequisite for `claude_code`: make `claude` reachable
+
+The `claude` binary is **not on `PATH`** — it ships bundled inside the VSCode
+extension. Create a stable symlink **once** (auto-picks the newest extension
+version, survives updates):
+
+```bash
+ln -sf "$(ls -d /home/flazzarotto/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude | sort -V | tail -1)" ~/.local/bin/claude
+claude --version    # → e.g. "2.1.193 (Claude Code)"
+```
+
+Alternative (no symlink): pass `--claude-bin <path>` per run, or
+`export CLAUDE_CODE_BIN=<path>`. The CLI must be logged in to your claude.ai
+account (it reuses `~/.claude/.credentials.json`).
+
+#### Smoke run (5 rows → 1 call, ~$0 extra)
+
+```bash
+cd evaluation
+conda run -n graphllm python -m evalkit.cli judge \
+  --input ../artifacts/evaluation/smoke_eval_dataset.csv \
+  --backend claude_code --model haiku --batch-size 8 \
+  --out ../artifacts/evaluation/judge_smoke
+```
+
+Output in `judge_smoke/`: `judge_summary.json` (per-rubric means + CIs) and
+`judge_rows.jsonl` (one scored row per question).
+
+#### Full run + judge agreement (paper)
+
+```bash
+cd evaluation
+# Haiku and Sonnet as two independent judges (batched + resumable):
+conda run -n graphllm python -m evalkit.cli judge \
+  --input ../artifacts/evaluation/eval_dataset_gold23q_v2.csv \
+  --backend claude_code --model haiku --batch-size 8 --resume \
+  --out ../artifacts/evaluation/judge_haiku
+conda run -n graphllm python -m evalkit.cli judge \
+  --input ../artifacts/evaluation/eval_dataset_gold23q_v2.csv \
+  --backend claude_code --model sonnet --batch-size 8 --resume \
+  --out ../artifacts/evaluation/judge_sonnet
+
+# Inter-judge agreement table (robustness):
+conda run -n graphllm python -m evalkit.cli judge-compare \
+  --a ../artifacts/evaluation/judge_haiku --b ../artifacts/evaluation/judge_sonnet \
+  --label-a haiku --label-b sonnet \
+  --out ../artifacts/evaluation/judge_compare
+```
+
+> **Reproducible paper numbers**: regenerate the final table with
+> `--backend api --provider anthropic --model claude-sonnet-4-6` (needs
+> `ANTHROPIC_API_KEY`). The subscription path is account-bound and **not**
+> reproducible by reviewers (grey area in Anthropic's usage policy).
+
+#### Flags
+
+| Flag | Effect |
+|------|--------|
+| `--input` | Eval dataset CSV (from `build_eval_dataset.py`) |
+| `--backend` | `vllm` / `local_hf` / `api` / `claude_code` (default `vllm`) |
+| `--model` | Judge model. `claude_code`: `haiku` / `sonnet`. `api`: full id, e.g. `claude-sonnet-4-6` |
+| `--provider` | `anthropic` / `openai` (only for `--backend api`) |
+| `--claude-bin` | Path to the `claude` binary (or set `CLAUDE_CODE_BIN`) |
+| `--rubrics` | Comma list (default `answer_correctness,groundedness,relevance`) |
+| `--batch-size` | Rows per call; always batched for `claude_code` (rate-limit friendly) |
+| `--resume` | Skip rows already in `<out>/judge_rows.jsonl` (recover an interrupted run) |
+| `--out` | Output directory |
+
+> `claude_code` env overrides: `CLAUDE_CODE_BIN` (binary path),
+> `CLAUDE_CODE_TIMEOUT` (seconds, default 300), `CLAUDE_CODE_EXTRA_ARGS`.
+
 ---
 
 ## 11b. KG Post-processing — `scripts/kg_postprocess.py`
