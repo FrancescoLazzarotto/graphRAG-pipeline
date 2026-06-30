@@ -14,6 +14,7 @@ from graphrag.config import AgentConfig
 # config.json in each experiment output directory for traceability.
 STRATEGY_PRESETS: tuple[str, ...] = (
     "default",
+    "hybrid",
     "text_only",
     "no_retrieval",
     "text_plus_triples",
@@ -39,6 +40,14 @@ def apply_strategy(base: AgentConfig, label: str) -> AgentConfig:
     config = copy.deepcopy(base)
 
     if label == "default":
+        return config
+
+    if label == "hybrid":
+        # GraphRAG default (all KG channels) augmented with raw-text retrieval:
+        # the graph supplies relations, the text supplies the fine-grained facts
+        # that triples abstract away. The caller must pass a text pipeline to the
+        # KGRetriever, otherwise the text channel is silently skipped.
+        config.use_text_retriever = True
         return config
 
     if label == "text_only":
