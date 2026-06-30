@@ -7,31 +7,40 @@ from typing import Any
 
 logger = logging.getLogger("graphrag")
 
-# Matches INSUFFICIENT_PHRASES from src/graphrag/experiments/runner.py
-INSUFFICIENT_PHRASES: tuple[str, ...] = (
-    "the provided context does not contain",
-    "the context does not contain",
-    "does not contain enough information",
-    "does not contain information",
-    "non ho informazioni",
-    "non posso rispondere",
-    "i don't have enough information",
-    "i cannot find",
-    "cannot answer",
-    "unable to answer",
-    "not enough information",
-    "il contesto fornito non contiene",
-    "il contesto non contiene",
-    "no information available",
-    "no relevant information",
-)
+# Single source of truth lives in graphrag.llm.refusal.is_insufficient. Import it
+# when graphrag is available; fall back to a self-contained copy so evalkit keeps
+# working when used standalone (graphrag is an optional dependency here — see the
+# lazy import in evalkit.judge.backends). Keep the fallback list in sync with
+# graphrag.llm.refusal._INSUFFICIENT_MARKERS.
+try:
+    from graphrag.llm.refusal import is_insufficient as _is_insufficient
+except ImportError:
+    _INSUFFICIENT_MARKERS: tuple[str, ...] = (
+        "the provided context does not contain",
+        "the context does not contain",
+        "does not contain enough information",
+        "does not contain information",
+        "i don't have enough information",
+        "i cannot find",
+        "cannot answer",
+        "unable to answer",
+        "not enough information",
+        "no information available",
+        "no relevant information",
+        "non ho informazioni",
+        "non posso rispondere",
+        "il contesto fornito non contiene",
+        "il contesto non contiene",
+        "context is insufficient",
+        "too sparse to build a reliable answer",
+        "troppo scarno per costruire una risposta",
+    )
 
-
-def _is_insufficient(answer: str) -> bool:
-    if not answer.strip():
-        return True
-    lower = answer.lower()
-    return any(phrase in lower for phrase in INSUFFICIENT_PHRASES)
+    def _is_insufficient(answer: str) -> bool:
+        if not answer or not str(answer).strip():
+            return True
+        lower = str(answer).lower()
+        return any(marker in lower for marker in _INSUFFICIENT_MARKERS)
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -187,7 +196,11 @@ def raw_row_to_partial(raw: dict[str, Any], run_dir_name: str) -> dict[str, Any]
         "kg_subgraph_triples_used": _safe_int(raw.get("kg_subgraph_triples_used", 0)),
         "kg_shortest_path_triples_used": _safe_int(raw.get("kg_shortest_path_triples_used", 0)),
         "sub_questions": _safe_int(raw.get("sub_questions", 0)),
-        "insufficient": bool(raw.get("insufficient_answer", _is_insufficient(answer))),
+        # Always recompute from the answer text rather than trusting the flag
+        # stored in the artifact: older runner versions wrote an inconsistent /
+        # weaker flag, so trusting it made reports under-count insufficiency on
+        # historical runs. Recomputing keeps every run comparable under one rule.
+        "insufficient": _is_insufficient(answer),
         "contexts": [str(c) for c in contexts if str(c).strip()],
         "retrieved_triples": [t for t in retrieved_triples if isinstance(t, dict)],
         "retrieved_entities": retrieved_entities,
