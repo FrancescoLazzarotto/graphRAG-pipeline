@@ -54,12 +54,9 @@ class KGRAGAgent:
 
         builder.add_edge(START, "decompose")
         builder.add_edge("decompose", "route")
-
-        def route_condition(state: RAGState):
-            _ = state.get("chosen_retrieval_mode", "TEXT")
-            return "retrieve"
-
-        builder.add_conditional_edges("route", route_condition)
+        # The retrieval mode chosen in `route` is read directly by `_retrieve`
+        # from the state, so the edge is unconditional.
+        builder.add_edge("route", "retrieve")
         builder.add_edge("retrieve", "grade")
 
         def grade_condition(state: RAGState):
@@ -136,12 +133,21 @@ class KGRAGAgent:
             output.content if hasattr(output, "content") else output
         ).strip()
         rewrite_count = state.get("rewrite_count", 0) + 1
-        if rewrite_count > 2:
-            return {
-                "rewritten_question": rewritten,
-                "rewrite_count": rewrite_count,
-                "relevance": "relevant",
-            }
+        # Generation is deterministic (temperature 0 / do_sample=False), so a
+        # rewrite equal to the query already tried can never change retrieval:
+        # cap the counter to exit the loop instead of burning identical
+        # LLM + retrieval rounds.
+        previous = str(
+            state.get("rewritten_question") or state.get("question", "")
+        ).strip()
+        if rewritten and rewritten == previous:
+            logger.info(
+                "Rewrite produced an identical query; short-circuiting the rewrite loop."
+            )
+            rewrite_count = max(rewrite_count, 3)
+        # The grade -> generate edge already short-circuits once rewrite_count
+        # reaches 3, so a forced relevance flag here would never be read. Just
+        # bump the counter.
         return {"rewritten_question": rewritten, "rewrite_count": rewrite_count}
 
     def _adaptive_route(self, state: RAGState) -> dict:
@@ -177,9 +183,11 @@ class KGRAGAgent:
             sub_questions=sub_questions if isinstance(sub_questions, list) else [],
         )
         cache_query = " || ".join(retrieval_queries) if retrieval_queries else query
-        # Include the rewrite attempt in the key so a rewrite loop never reuses
-        # results cached for a previous reformulation of the same question.
-        cache_mode = f"{mode}|rw{int(state.get('rewrite_count', 0) or 0)}"
+        # The key already contains the (possibly rewritten) query text, and
+        # retrieval is deterministic for a fixed query and graph. Adding the
+        # rewrite counter here would only force a re-retrieval when a rewrite
+        # produces the exact same text — pure wasted Neo4j round-trips.
+        cache_mode = str(mode)
 
         if self.cache:
             hit = self.cache.get(cache_query, cache_mode)
@@ -495,6 +503,11 @@ class KGRAGAgent:
             if self.kg_retriever:
                 return str(self.kg_retriever.kg_store.triples_to_text(triples))
         except Exception:
+            logger.warning(
+                "Triple formatting failed; dropping %d triples from the context.",
+                len(triples),
+                exc_info=True,
+            )
             return ""
         return ""
 
@@ -605,11 +618,21 @@ class KGRAGAgent:
         sparse_context = evidence_units <= 2 and len(str(context or "").strip()) < 1600
         effective_query = query
         if sparse_context:
-            effective_query = (
-                query
-                + "\n\nIstruzione: rispondi direttamente usando solo il contesto disponibile. "
-                + "Se il contesto e limitato, fornisci comunque la migliore risposta possibile e aggiungi una breve sezione 'Limiti e fiducia'."
-            )
+            # Match the instruction language to the question language: a fixed
+            # Italian instruction on an English question pushes the model into
+            # mixed-language answers.
+            if LLMManager._detect_query_language(query) == "it":
+                effective_query = (
+                    query
+                    + "\n\nIstruzione: rispondi direttamente usando solo il contesto disponibile. "
+                    + "Se il contesto e limitato, fornisci comunque la migliore risposta possibile e aggiungi una breve sezione 'Limiti e fiducia'."
+                )
+            else:
+                effective_query = (
+                    query
+                    + "\n\nInstruction: answer directly using only the available context. "
+                    + "If the context is limited, still provide the best possible answer and add a short 'Limits and confidence' section."
+                )
 
         if self.llm:
             result = self.llm.generate(
@@ -818,8 +841,6 @@ class KGRAGAgent:
         query: str, context: str, limit: int = 4
     ) -> list[str]:
         tokens = set(KGRAGAgent._extract_salient_terms(query=query, context=context))
-        if not tokens:
-            tokens = {"fao", "who"}
 
         highlights: list[str] = []
         seen: set[str] = set()
@@ -864,7 +885,6 @@ class KGRAGAgent:
 
         query_terms = KGRAGAgent._extract_salient_terms_from_text(query)
         focus_terms = {term for term in query_terms if term}
-        focus_terms.update({"fao", "who"})
 
         matched: list[str] = []
         fallback: list[str] = []
