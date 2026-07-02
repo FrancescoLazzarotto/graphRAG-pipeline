@@ -117,6 +117,28 @@ class PromptLibrary:
         )
 
     @staticmethod
+    def refusal_retry_prompt(language: str = "en") -> ChatPromptTemplate:
+        """Stricter prompt used for the single fallback attempt after a refusal.
+
+        Lives here (not inline in the backend) so vLLM and local HF keep
+        rendering identical prompts — the invariant the whole PromptLibrary
+        exists for.
+        """
+        if language == "it":
+            return ChatPromptTemplate.from_template(
+                "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda. "
+                "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
+                "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
+                "Contesto:\n{context}\n\nDomanda:\n{question}\n\nRisposta:"
+            )
+        return ChatPromptTemplate.from_template(
+            "Use only the provided context to answer the question naturally and concisely. "
+            "Avoid a mechanical list; prefer a short 1-2 paragraph explanation. "
+            "When possible, add a short 'Evidence in graph' section with the exact node or triple names that support the answer. "
+            "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"
+        )
+
+    @staticmethod
     def multihop_steer_prompt() -> ChatPromptTemplate:
         return ChatPromptTemplate.from_template(
             "You are exploring a knowledge graph to answer a question.\n"
