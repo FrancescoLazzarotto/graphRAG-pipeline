@@ -180,3 +180,67 @@ def test_update_baseline_creates_and_merges(tmp_path: Path) -> None:
     data = json.loads(path.read_text())
     assert data["precision_at_k"] == pytest.approx(0.75)
     assert data["mrr"] == pytest.approx(0.5)
+
+
+def test_judge_scores_join_by_identity_with_skipped_rows(tmp_path: Path) -> None:
+    """Judge skips rows with skip_reason: scores must land on the right rows.
+
+    Regression test for the positional-index merge that shifted every judge
+    score onto the wrong question whenever at least one row was skipped.
+    """
+    from evalkit.report.aggregate import build_experiment_report
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    rows = [
+        {  # skipped by the judge (empty contexts -> skip_reason=empty_context);
+           # different strategy so a positional merge would leak the judge
+           # score into the wrong aggregation group.
+            "strategy": "text_only", "question": "Q-skipped", "answer": "a",
+            "latency_ms": 1.0, "contexts": [],
+            "metadata": {"framework": "graph_rag", "model_id": "m1", "run_index": 1},
+        },
+        {  # judged
+            "strategy": "default", "question": "Q-judged", "answer": "b",
+            "latency_ms": 1.0, "contexts": ["ctx"],
+            "metadata": {"framework": "graph_rag", "model_id": "m1", "run_index": 1},
+        },
+    ]
+    with (run_dir / "results.jsonl").open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    gold = tmp_path / "gold.csv"
+    gold.write_text(
+        "question,ground_truth,question_type\n"
+        "Q-skipped,x,fact_based\nQ-judged,y,fact_based\n",
+        encoding="utf-8",
+    )
+
+    class FakeJudge:
+        def score_dataset(self, rows, n_bootstrap=1000, ci=0.95, seed=42):
+            scored = [r for r in rows if not r.skip_reason]
+            assert [r.question for r in scored] == ["Q-judged"]
+            return {
+                "rows_evaluated": 1,
+                "rows_skipped": 1,
+                "rubrics": {},
+                "row_scores": [{
+                    "run_dir": scored[0].run_dir, "model_id": scored[0].model_id,
+                    "framework": scored[0].framework, "strategy": scored[0].strategy,
+                    "question": scored[0].question, "question_type": scored[0].question_type,
+                    "skip_reason": "", "answer_correctness": 0.9,
+                }],
+            }
+
+    report = build_experiment_report(run_dir, gold_path=gold, judge=FakeJudge())
+    assert report.meta["n_rows"] == 2
+
+    by_strategy = {
+        g.keys["strategy"]: g
+        for g in report.groups
+        if g.keys.get("segment") == "global"
+    }
+    judged = by_strategy["default"].metrics["answer_correctness"]
+    assert judged["n"] == 1 and judged["mean"] == pytest.approx(0.9)
+    # The skipped row's group must not have inherited the score.
+    assert by_strategy["text_only"].metrics["answer_correctness"]["n"] == 0
