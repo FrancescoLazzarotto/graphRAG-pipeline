@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import re
 from typing import Any, Sequence
@@ -8,6 +9,8 @@ from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
 from graphrag.types import KGNode, KGTriple
+
+logger = logging.getLogger("graphrag")
 
 _QUOTED_ENTITY_RE = re.compile(r"[\"']([^\"']{2,})[\"']")
 _TITLE_ENTITY_RE = re.compile(r"\b(?:[A-Z][\w'-]*)(?:\s+[A-Z][\w'-]*)+\b")
@@ -62,6 +65,14 @@ class KGRetriever:
         self.kg_store = kg_store
         self.config = config
         self.text_pipeline = text_pipeline
+        if self.config.use_text_retriever and self.text_pipeline is None:
+            # Without this warning a "hybrid"/"text_only" run silently degrades
+            # to KG-only and the experiment looks valid while measuring the
+            # wrong strategy.
+            logger.warning(
+                "use_text_retriever is enabled but no text_pipeline was provided: "
+                "the text channel will be skipped for every retrieval."
+            )
 
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
