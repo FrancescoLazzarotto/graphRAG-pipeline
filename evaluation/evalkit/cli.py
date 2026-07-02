@@ -356,7 +356,7 @@ def cmd_report_experiment(args: argparse.Namespace) -> int:
         fixtures = Path(__file__).resolve().parents[1] / "fixtures"
         smoke_results = fixtures / "smoke_results.csv"
         gold_path = fixtures / "smoke_gold.csv"
-        out_dir = Path(args.out) if args.out else Path("/tmp/evalkit_smoke")
+        out_dir = Path(args.out) if args.out else Path("artifacts/tmp/evalkit_smoke")
 
         # Build eval dataset from smoke fixtures in-memory
         from evalkit.io.dataset import build_dataset, rows_to_csv
