@@ -13,7 +13,7 @@ from evalkit.io.gold_loader import (
     normalize_question,
     pick_ground_truth,
 )
-from evalkit.io.run_loader import load_raw_rows, raw_row_to_partial
+from evalkit.io.run_loader import _is_insufficient, load_raw_rows, raw_row_to_partial
 from evalkit.models import EvalRow
 
 logger = logging.getLogger("graphrag")
@@ -295,6 +295,9 @@ def _dict_to_row(d: dict[str, str]) -> EvalRow:
         kg_subgraph_triples_used=_i("kg_subgraph_triples_used"),
         kg_shortest_path_triples_used=_i("kg_shortest_path_triples_used"),
         sub_questions=_i("sub_questions"),
-        insufficient=False,
+        # Recompute from the answer text (same rule as raw_row_to_partial):
+        # hardcoding False here made the CSV round-trip silently lose the
+        # insufficiency signal.
+        insufficient=_is_insufficient(d.get("answer", "")),
         skip_reason=d.get("skip_reason", ""),
     )
