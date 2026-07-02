@@ -140,7 +140,7 @@ class KnowledgeGraphManager:
                 if backoff_sec > 0:
                     time.sleep(backoff_sec)
 
-        return []
+        raise RuntimeError("unreachable: retry loop either returns or raises")
 
     def clear(self) -> None:
         self.run_query("MATCH (n) DETACH DELETE n")
@@ -394,9 +394,16 @@ class KnowledgeGraphManager:
         """
         try:
             rows = self.run_query(cypher_exact, {"entity_a": entity_a, "entity_b": entity_b})
-        except Exception:
+        except Exception as exc:
             # If the shortestPath call fails (e.g. same-node cartesian product),
-            # return an empty result instead of propagating the DB error.
+            # return an empty result instead of propagating the DB error — but
+            # log it, so "no path" stays distinguishable from "query failed".
+            logger.warning(
+                "shortestPath exact query failed for (%r, %r): %s",
+                entity_a,
+                entity_b,
+                exc,
+            )
             return []
 
         if not rows:
@@ -423,7 +430,13 @@ class KnowledgeGraphManager:
             """
             try:
                 rows = self.run_query(cypher_fallback, {"entity_a": entity_a, "entity_b": entity_b})
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "shortestPath fallback query failed for (%r, %r): %s",
+                    entity_a,
+                    entity_b,
+                    exc,
+                )
                 return []
 
         return [self._row_to_triple(row) for row in rows]
