@@ -127,21 +127,24 @@ def _simple_bleu(prediction: str, reference: str, max_n: int) -> float:
     # Brevity penalty
     bp = min(1.0, math.exp(1 - len(ref_tokens) / len(pred_tokens))) if pred_tokens else 0.0
 
+    # Effective-order BLEU (mirrors sacrebleu): only n-gram orders the
+    # prediction can actually produce enter the geometric mean, and a single
+    # zero precision among them zeroes the score. Skipping zero terms while
+    # still dividing by max_n would silently inflate the score.
     precisions = []
     for n in range(1, max_n + 1):
         if len(pred_tokens) < n:
-            precisions.append(0.0)
-            continue
+            break
         pred_ngrams = _ngrams(pred_tokens, n)
         ref_ngrams = _ngrams(ref_tokens, n)
         clipped = sum(min(count, ref_ngrams.get(gram, 0)) for gram, count in pred_ngrams.items())
         total = sum(pred_ngrams.values())
         precisions.append(clipped / total if total else 0.0)
 
-    if all(p == 0 for p in precisions):
+    if not precisions or any(p == 0 for p in precisions):
         return 0.0
 
-    log_avg = sum(math.log(p) for p in precisions if p > 0) / max_n
+    log_avg = sum(math.log(p) for p in precisions) / len(precisions)
     return bp * math.exp(log_avg)
 
 
@@ -180,11 +183,19 @@ def best_variant_score(
     prediction: str,
     ground_truth: str,
     answer_variants: list[str],
-) -> float:
-    """Return the best score across ground_truth and answer_variants."""
+) -> float | None:
+    """Return the best score across ground_truth and answer_variants.
+
+    Returns None when the metric itself is unavailable (e.g. bertscore_f1
+    without bert-score installed) — a None from the metric must not be
+    compared by max() nor coerced to 0.0.
+    """
     references = [ground_truth] + [v for v in answer_variants if v.strip()]
     scores = [metric_fn(prediction, ref) for ref in references if ref.strip()]
-    return max(scores) if scores else 0.0
+    valid = [s for s in scores if s is not None]
+    if valid:
+        return max(valid)
+    return None if scores else 0.0
 
 
 # ─── Row-level computation ───────────────────────────────────────────────────
