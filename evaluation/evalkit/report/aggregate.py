@@ -67,10 +67,29 @@ def build_experiment_report(
     judge_result: dict[str, Any] = {}
     if judge is not None:
         judge_result = judge.score_dataset(rows, n_bootstrap=cfg.n_bootstrap, ci=cfg.ci, seed=cfg.seed)
-        for i, score_entry in enumerate(judge_result.get("row_scores", [])):
+        # Join judge scores by row identity, never by position: the judge skips
+        # rows with a skip_reason, so row_scores can be shorter than merged and
+        # positional indexing would attach scores to the wrong questions.
+        def _judge_join_key(d: dict[str, Any]) -> tuple[str, str, str, str]:
+            return (
+                str(d.get("run_dir", "")),
+                str(d.get("model_id", "")),
+                str(d.get("strategy", "")),
+                str(d.get("question", "")),
+            )
+
+        scores_by_key: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        for score_entry in judge_result.get("row_scores", []):
+            scores_by_key.setdefault(_judge_join_key(score_entry), []).append(score_entry)
+
+        for entry in merged:
+            bucket = scores_by_key.get(_judge_join_key(entry))
+            if not bucket:
+                continue
+            score_entry = bucket.pop(0)
             for k, v in score_entry.items():
-                if k not in merged[i]:
-                    merged[i][k] = v
+                if k not in entry:
+                    entry[k] = v
 
     all_metric_names = RETRIEVAL_METRICS + TEXT_METRICS
     if judge is not None:
