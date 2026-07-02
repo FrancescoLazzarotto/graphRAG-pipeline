@@ -26,7 +26,10 @@ RUBRICS: dict[str, Rubric] = {
         score_field="groundedness_score",
         description=(
             "Is every claim in the generated answer grounded in the provided contexts or retrieved triples? "
-            "Penalise any claim that cannot be inferred from the provided evidence. "
+            "IMPORTANT: for this rubric, IGNORE the Ground Truth Answer section entirely — "
+            "a claim that matches the ground truth but does not appear in the retrieved "
+            "contexts/triples is NOT grounded. "
+            "Penalise any claim that cannot be inferred from the retrieved evidence alone. "
             "Score 1 = fully grounded, 0 = mostly hallucinated."
         ),
     ),
