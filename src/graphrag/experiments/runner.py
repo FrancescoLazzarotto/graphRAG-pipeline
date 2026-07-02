@@ -186,8 +186,8 @@ class ExperimentRunner:
                     entities.append(item)
 
         for triple in triples:
-            for field in ("subject", "object"):
-                value = str(triple.get(field, "")).strip()
+            for role in ("subject", "object"):
+                value = str(triple.get(role, "")).strip()
                 if not value:
                     continue
                 key = f"name:{value.lower()}"
