@@ -539,12 +539,10 @@ class LLMManager:
         if looks_like_refusal(answer) and context and str(context).strip():
             try:
                 logger.info("LLM refusal detected; attempting fallback retry...")
-                fallback_prompt = self._build_refusal_retry_prompt(
-                    query=query,
-                    context=context,
-                    language=response_language,
-                )
-                output2 = model.invoke(fallback_prompt)
+                fallback_prompt = PromptLibrary.refusal_retry_prompt(
+                    language=response_language
+                ).invoke({"question": query, "context": context})
+                output2 = self._invoke_with_retry(model, fallback_prompt)
                 answer2 = str(
                     output2.content if hasattr(output2, "content") else output2
                 ).strip()
@@ -604,27 +602,3 @@ class LLMManager:
 
         return "it" if it_score > en_score else "en"
 
-    @staticmethod
-    def _build_refusal_retry_prompt(query: str, context: str, language: str) -> str:
-        if language == "it":
-            return (
-                "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda. "
-                "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
-                "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
-                "Contesto:\n"
-                + str(context)
-                + "\n\nDomanda:\n"
-                + str(query)
-                + "\n\nRisposta:"
-            )
-
-        return (
-            "Use only the provided context to answer the question naturally and concisely. "
-            "Avoid a mechanical list; prefer a short 1-2 paragraph explanation. "
-            "When possible, add a short 'Evidence in graph' section with the exact node or triple names that support the answer. "
-            "Context:\n"
-            + str(context)
-            + "\n\nQuestion:\n"
-            + str(query)
-            + "\n\nAnswer:"
-        )
