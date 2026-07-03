@@ -1,76 +1,91 @@
 <div align="center">
 
-#  GraphRAG Pipeline
+# GraphRAG Pipeline
 
 **An experiment-oriented Retrieval-Augmented Generation pipeline combining Knowledge Graph retrieval with LLM-based answer generation.**
 
 [![CI](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/status-active%20development-brightgreen)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Neo4j](https://img.shields.io/badge/Neo4j-Knowledge%20Graph-008CC1?logo=neo4j)](https://neo4j.com/)
-
-*Active development — Jun 2026*
 
 </div>
 
 ---
 
-##  Table of Contents
+## Table of Contents
 
-- [Overview](#-overview)
-- [End-to-End Flow](#-end-to-end-flow)
-- [Quick Start](#-quick-start-conda)
-- [Configuration](#-configuration)
-- [Usage Examples](#-usage-examples)
-- [Knowledge Graph Pipeline](#-knowledge-graph-pipeline)
-- [Experiments & Matrices](#-experiments--matrices)
-- [Analysis & Telemetry](#-analysis--telemetry)
-- [Evaluation Workflow](#-evaluation-workflow)
-- [Smoke Tests & Preflight](#-smoke-tests--preflight)
-- [Cluster & Batch Jobs](#-cluster--batch-jobs)
-- [Repository Structure](#-repository-structure)
-- [Troubleshooting](#-troubleshooting)
-- [Contributing](#-contributing)
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Knowledge Graph Pipeline](#knowledge-graph-pipeline)
+- [Experiments & Retrieval Matrices](#experiments--retrieval-matrices)
+- [Analysis & Telemetry](#analysis--telemetry)
+- [Evaluation](#evaluation)
+- [Testing](#testing)
+- [Cluster & Batch Jobs](#cluster--batch-jobs)
+- [Repository Structure](#repository-structure)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
-##  Overview
+## Overview
 
 This repository implements a full GraphRAG pipeline that:
 
--  **Ingests** documents (PDF, Markdown, plain text), chunks them, and extracts entities and triples via NER + LLM-based extraction.
--  **Builds a Knowledge Graph** by resolving and linking entities/triples, then ingesting into Neo4j.
--  **Retrieves** using a GraphRAG retriever supporting nodes, triples, local neighborhoods, 2-hop subgraphs, and shortest paths.
--  **Generates answers** by constructing LLM prompt context from retrieved graph/text evidence, using either local HuggingFace models or an OpenAI-compatible vLLM server.
--  **Runs reproducible experiment matrices** to compare retrieval strategies and LLMs, with full resource telemetry for sizing studies.
+- **Ingests** documents (PDF, Markdown, plain text), chunks them, and extracts entities and triples via NER (GLiNER) and LLM-based extraction.
+- **Builds a Knowledge Graph** by resolving and linking entities/triples, then ingesting them into Neo4j.
+- **Retrieves** graph and text evidence through eight configurable strategies — from pure text retrieval to 2-hop subgraph expansion and shortest-path traversal.
+- **Generates answers** with a LangGraph agent (retrieve → grade → generate, with a bounded rewrite loop), backed by either local Hugging Face models or an OpenAI-compatible vLLM server.
+- **Runs reproducible experiment matrices** comparing retrieval strategies and LLMs, with full resource telemetry for sizing studies.
+- **Evaluates** results with a dedicated toolkit (`evalkit`): retrieval metrics, text-similarity metrics, LLM-as-a-Judge scoring, and optional RAGAS.
 
-Primary entry points:
-- CLI: `graphrag-demo`
-- KG pipeline runner: `python -m kg_pipeline.main`
+### Entry points
 
----
+| Entry point | Purpose |
+|---|---|
+| `graphrag-demo` (or `python -m graphrag.cli`) | Single-question retrieval/generation and batch experiments |
+| `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
+| `python scripts/run_retrieval_matrix.py` | Retrieval-strategy experiment matrices |
+| `python -m evalkit.cli` (with `PYTHONPATH=evaluation`) | Evaluation toolkit |
 
-##  End-to-End Flow
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│  1. INGEST      →  docs/, PDFs, or custom folder                   │
-│  2. CHUNK       →  split text into manageable segments             │
-│  3. EXTRACT     →  NER + LLM → entities, relations, triples        │
-│  4. BUILD KG    →  resolve, link, ingest into Neo4j                │
-│  5. RETRIEVE    →  graph + text evidence (chosen strategy)         │
-│  6. GENERATE    →  build prompt context → local model or vLLM      │
-│  7. SAVE        →  results, summaries, resource telemetry          │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+A complete command reference is available in [COMMANDS.md](COMMANDS.md).
 
 ---
 
-##  Quick Start (Conda)
+## Architecture
 
-> **Recommended environment:** Conda, named `graphllm`, Python 3.10+.
+```
+Documents (PDF / Markdown / text)
+        │
+        ▼
+KG Pipeline — 7 checkpointed stages
+(ingest → chunk → NER → LLM triples → resolution → linking → Neo4j)
+        │
+        ▼
+Neo4j Knowledge Graph
+        │
+        ▼
+KGRetriever — 8 retrieval strategies
+        │
+        ▼
+LangGraph agent: retrieve → grade → generate
+        │
+        ▼
+LLMManager (local Hugging Face or vLLM server)
+        │
+        ▼
+Answer + provenance + resource telemetry
+```
+
+---
+
+## Installation
+
+Recommended environment: Conda, named `graphllm`, Python 3.10+.
 
 **1. Create and activate the environment:**
 
@@ -79,7 +94,7 @@ conda create -n graphllm python=3.10 -y
 conda activate graphllm
 ```
 
-**2. Install dependencies** — pick ONE file for your target:
+**2. Install dependencies** — pick **one** requirements file for your target:
 
 ```bash
 pip install -r requirements.txt        # development (loose bounds)
@@ -94,20 +109,25 @@ extras (RAGAS, ROUGE, plotting) live in `evaluation/requirements.txt`.
 
 ---
 
-##  Configuration
+## Configuration
+
+Copy the template and fill in your credentials:
+
+```bash
+cp .env.example .env
+```
 
 ### Neo4j
 
-Set the required connection variables (via `export` or an `.env` file):
+| Variable | Required | Description |
+|---|---|---|
+| `NEO4J_URL` | yes | Connection URI, e.g. `bolt://localhost:7687` or `neo4j+s://<instance>` |
+| `NEO4J_USERNAME` | yes | Database user |
+| `NEO4J_PASSWORD` | yes | Database password |
+| `NEO4J_DATABASE` | no | Target database name |
+| `NEO4J_URI` | no | Same value as `NEO4J_URL` — read by the `scripts/kg_repair3/4/5.py` post-processing passes |
 
-```bash
-export NEO4J_URL="neo4j+s://<your-instance>"
-export NEO4J_USERNAME="<user>"
-export NEO4J_PASSWORD="<pass>"
-export NEO4J_DATABASE="<db>"        # optional
-```
-
-### HuggingFace (gated models)
+### Hugging Face (gated models)
 
 ```bash
 export HF_TOKEN="<your-hf-token>"
@@ -121,11 +141,13 @@ export HF_TOKEN="<your-hf-token>"
 | `VLLM_MODEL_NAME` | — | Model name served by vLLM |
 | `VLLM_API_KEY` / `OPENAI_API_KEY` | — | API key, if required |
 
+> **Note:** `scripts/smoke_check.py` reads exported environment variables only — it does **not** auto-load `.env`.
+
 ---
 
-##  Usage Examples
+## Usage
 
-### Single-question demo (GraphRAG retrieval + generation)
+### Single-question demo (retrieval only)
 
 ```bash
 graphrag-demo \
@@ -148,7 +170,7 @@ graphrag-demo \
   --model-id Qwen/Qwen2.5-7B-Instruct
 ```
 
-### Model tuning — control cost and GPU memory
+### Model tuning — cost and GPU memory
 
 ```bash
 graphrag-demo \
@@ -158,33 +180,30 @@ graphrag-demo \
   --gpu-memory-fraction 0.90
 ```
 
-> **Tips:**
-> - `--max-new-tokens` — reduces generation length and cost.
-> - `--gpu-memory-fraction` — reserves headroom when loading large local models to reduce OOMs.
-> - For models ≥ 30B, fp16 fallback is **disabled** by default. Enable `--allow-large-model-fp16-fallback` only if you understand the memory/precision tradeoffs.
+| Flag | Effect |
+|---|---|
+| `--max-new-tokens` | Caps generation length (and cost) |
+| `--max-context-tokens` | Caps the compressed prompt context (default 1000) |
+| `--gpu-memory-fraction` | Reserves headroom when loading large local models to reduce OOMs |
+| `--allow-large-model-fp16-fallback` | For models ≥ 30B, fp16 fallback is disabled by default; enable only if you understand the memory/precision trade-offs |
 
-### GraphRAG test-suite generation
+### Test-suite generation
 
-Generate a JSON test suite from the latest KG pipeline run using the local vLLM endpoint:
+Generate a JSON question suite from the latest KG pipeline run (uses the local vLLM endpoint):
 
 ```bash
-cd graphRAGPipelineExp1
 conda run -n graphllm python scripts/generate_questions.py generate
 conda run -n graphllm python scripts/generate_questions.py generate --question-language en
-conda run -n graphllm python scripts/generate_questions.py generate --doc mio_documento.txt
-conda run -n graphllm python scripts/generate_questions.py generate --question-language en --matrix-output artifacts/experiments/questions_food_grounded_en.txt --matrix-max-questions 10
-conda run -n graphllm python scripts/generate_questions.py generate --no-ground-truth
 conda run -n graphllm python scripts/generate_questions.py stats --input artifacts/tmp/graphrag_test_suite.json
 ```
 
-The generator defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to `artifacts/tmp/graphrag_test_suite.json` unless `--output` is provided.
-Use `--question-language en` when your corpus is primarily English. Use `--matrix-output` to export one-question-per-line text for matrix runs.
+The generator defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to `artifacts/tmp/graphrag_test_suite.json` unless `--output` is provided. Use `--matrix-output` to export one-question-per-line text for matrix runs.
 
 ---
 
-##  Knowledge Graph Pipeline
+## Knowledge Graph Pipeline
 
-The KG pipeline lives in `kg_pipeline/` and outputs checkpointed stage artifacts to a run directory. Defaults are controlled by `kg_pipeline/config.yaml`.
+The KG pipeline lives in `kg_pipeline/` and writes checkpointed stage artifacts to a run directory. Defaults are controlled by `kg_pipeline/config.yaml`.
 
 ### Run the full pipeline
 
@@ -198,49 +217,69 @@ PYTHONUNBUFFERED=1 python -m kg_pipeline.main \
 
 ### Pipeline stages
 
-Reuse the same `--run-dir` to resume an existing run. To run a single stage, pass `--stage` with one of:
+Stages run sequentially with JSON checkpoint recovery — each stage reads the artifacts of the previous one. Reuse the same `--run-dir` to resume an existing run; pass `--stage` to run a single stage.
 
-| Stage | Description |
-|---|---|
-| `ingestion` | Load raw documents |
-| `chunking` | Split documents into chunks |
-| `ner` | Named Entity Recognition |
-| `llm` | LLM-based triple extraction |
-| `resolution` | Entity resolution |
-| `linking` | Triple linking |
-| `neo4j` | Graph ingestion into Neo4j |
+| `--stage` | Description | Main artifact |
+|---|---|---|
+| `ingestion` | Load raw documents (PDF → markdown) | `stage0_documents.json` |
+| `chunking` | Token-windowed paragraph chunks | `stage1_chunks.json` |
+| `ner` | Named Entity Recognition (GLiNER) | `stage2_ner.json` |
+| `llm` | LLM-based triple extraction | `stage3_triples_raw.json`, `stage3_acronyms.json` |
+| `resolution` | Entity resolution (embeddings + Jaccard) | `stage4_triples_resolved.json`, `stage4_registry.json` |
+| `linking` | Triple linking | `stage5_triples_linked.json` |
+| `neo4j` | Graph ingestion into Neo4j | `stage6_neo4j_summary.json` |
 
-> Use `--dry-run` to skip Neo4j ingestion (useful for testing the extraction steps).
+Useful flags:
 
-### Run directory structure
+- `--dry-run` — skip Neo4j ingestion (test the extraction stages only).
+- `--single-doc <name>` — process a single document.
+- Stage 3 checkpoints periodically to `stage3_checkpoint.json` (atomic writes); re-running without clearing it resumes from the last saved chunk.
+
+### Run directory layout
 
 ```text
-kg_pipeline/artifacts/run_YYYYMMDD_HHMMSS/
+kg_pipeline/artifacts/run_<tag>/
 ├── pipeline.log
-├── chunking/
-├── ner/
-├── llm/
-├── resolution/
-├── linking/
-└── neo4j/
+├── failed_chunks.jsonl      # malformed LLM outputs (logged, pipeline continues)
+├── new_labels.log
+├── stage0_documents.json
+├── stage1_chunks.json
+├── stage2_ner.json
+├── stage3_triples_raw.json
+├── stage3_acronyms.json
+├── stage3_checkpoint.json
+├── stage4_triples_resolved.json
+├── stage4_registry.json
+├── stage5_triples_linked.json
+└── stage6_neo4j_summary.json
+```
+
+### Post-processing
+
+After Neo4j ingestion, run the graph repair passes:
+
+```bash
+python scripts/kg_postprocess.py --passes 1,2,3,4
 ```
 
 ---
 
-##  Experiments & Matrices
+## Experiments & Retrieval Matrices
 
-The repository includes scripts to run retrieval matrices comparing multiple strategies and LLMs.
+`scripts/run_retrieval_matrix.py` runs matrices comparing retrieval strategies and LLMs.
 
-### Available retrieval strategies
+### Retrieval strategies
 
-| Strategy | Description |
+| Strategy | Evidence used |
 |---|---|
-| `default` | All sources combined |
-| `text_only` | Plain text retrieval only |
-| `text_plus_triples` | Text + extracted triples |
-| `neighbors_focus` | Local neighborhood of entities |
-| `subgraph_2hop` | 2-hop subgraph expansion |
-| `shortest_path` | Shortest path between entities |
+| `default` | All KG channels: nodes, triples, neighborhoods, 2-hop subgraph, shortest paths |
+| `hybrid` | All KG channels plus raw-text retrieval |
+| `text_only` | Text retrieval only (no KG) |
+| `no_retrieval` | No context — LLM-only baseline |
+| `text_plus_triples` | Entity nodes and triples only (no graph traversal) |
+| `neighbors_focus` | Triples plus local entity neighborhoods |
+| `subgraph_2hop` | Triples plus 2-hop subgraph expansion |
+| `shortest_path` | Triples plus shortest paths between entities |
 
 ### Smoke experiment (fast sanity check)
 
@@ -261,20 +300,18 @@ python scripts/run_retrieval_matrix.py \
   --llm --vllm \
   --vllm-base-url http://localhost:8000/v1 \
   --model-id Qwen/Qwen2.5-32B-Instruct \
-  --questions-file questions_matrix_long.txt \
+  --questions-file evaluation/fixtures/questions_matrix_long.txt \
   --graph-strategies default \
   --runs-per-strategy 1
 ```
 
-`--questions-file` accepts both plain text (one question per line) and JSON suites produced by `scripts/generate_questions.py`.
+`--questions-file` accepts both plain text (one question per line) and JSON suites produced by `scripts/generate_questions.py`. Before any long run, start with the smoke matrix and verify that `summary.json` and `results.jsonl` appear in the output directory.
 
 ---
 
-##  Analysis & Telemetry
+## Analysis & Telemetry
 
-Each run produces a structured set of output artifacts:
-
-### Output artifacts per run
+Each experiment run produces a structured set of artifacts:
 
 ```text
 artifacts/experiments/<run_name>/
@@ -282,11 +319,12 @@ artifacts/experiments/<run_name>/
 ├── results.csv             # tabular version of results
 ├── summary.txt             # fast human-readable check
 ├── summary.json            # structured statistics per strategy
+├── config.json             # CLI args + fully resolved AgentConfig per strategy
 ├── resource_samples.jsonl  # raw resource telemetry samples
 └── resource_summary.json   # peak and average resource usage
 ```
 
-### Analysis scripts
+`config.json` makes every metric traceable to its exact configuration.
 
 | Script | Purpose |
 |---|---|
@@ -294,63 +332,77 @@ artifacts/experiments/<run_name>/
 | `scripts/analyze_matrix.py` | Aggregate multiple runs into CSV/JSON summaries |
 | `scripts/analyze_resource_usage.py` | Sizing and resource comparison across runs |
 
-> **Verification example:** A report at `artifacts/experiments/20260514_170536_test_strategies_verification/REPORT.txt` documents 60 runs, with `results.jsonl` as the raw trace and `summary.json` as the structured summary. Sample answer inspection: `python3 show_samples.py results.jsonl default 2`.
+---
+
+## Evaluation
+
+The evaluation workspace under [`evaluation/`](evaluation/README.md) supports paper-oriented comparisons through the `evalkit` toolkit:
+
+- Build a gold QA dataset from run outputs and manual labels (templates and schema in `evaluation/gold/`).
+- Compute retrieval metrics (entity coverage, precision/recall@k, MRR) with bootstrap confidence intervals.
+- Score answers with an LLM-as-a-Judge (Anthropic API, local vLLM/HF, or Claude Code backends) and compare judge models.
+- Optionally run RAGAS, and generate experiment- or project-level reports.
+
+### Typical sequence
+
+```bash
+# 1. Prepare gold labels — fill a copy of evaluation/gold/gold_questions_template.csv
+
+# 2. Join run output with the gold set
+PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
+  --input artifacts/experiments/<run_dir> \
+  --gold-file evaluation/gold/<your_gold>.csv \
+  --output artifacts/evaluation/eval_dataset.csv
+
+# 3. Retrieval metrics
+PYTHONPATH=evaluation python -m evalkit.cli retrieval \
+  --input artifacts/evaluation/eval_dataset.csv \
+  --save-json artifacts/evaluation/retrieval_summary.json
+
+# 4. (Optional) LLM-as-a-Judge and RAGAS
+PYTHONPATH=evaluation python -m evalkit.cli judge --input artifacts/evaluation/eval_dataset.csv ...
+PYTHONPATH=evaluation python -m evalkit.cli ragas --input artifacts/evaluation/eval_dataset.csv ...
+```
+
+Available subcommands: `build-dataset`, `retrieval`, `text`, `judge`, `judge-compare`, `ragas`, `kg`, `report-experiment`, `report-project`, `baseline-update`. See [`evaluation/README.md`](evaluation/README.md) for backends, judge configuration, and the recommended paper table schema.
 
 ---
 
-##  Evaluation Workflow
+## Testing
 
-A dedicated evaluation workspace under [`evaluation/README.md`](evaluation/README.md) supports paper-oriented comparisons.
-
-**Use it when you want to:**
-
-- Build a gold QA dataset from run outputs and manual labels.
-- Compute retrieval-oriented metrics such as entity coverage and rank-based scores.
-- Optionally run RAGAS with a local judge model.
-- Generate summary tables for papers or internal reports.
-
-### Typical evaluation sequence
+### Unit tests
 
 ```bash
-# 1. Prepare gold labels
-#    → edit evaluation/gold_questions_template.csv
-
-# 2. Join run output with gold set
-python evaluation/build_eval_dataset.py
-
-# 3. Compute retrieval metrics
-python evaluation/retrieval_metrics.py
-
-# 4. (Optional) Answer-quality metrics via RAGAS
-python evaluation/run_ragas_eval.py
+pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q
 ```
 
----
+CI (GitHub Actions) runs a syntax check (`python -m compileall src scripts`) and the full test suite on every push and pull request, using the CPU requirements.
 
-## Smoke Tests & Preflight
+### Smoke tests
 
 ```bash
-# Quick smoke check after install
-python scripts/smoke_check.py
-
-# Local preflight helper (PowerShell)
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1
+python scripts/smoke_check.py            # health check: Neo4j + LLM connectivity
+python scripts/smoke_kg_retriever.py     # KG retriever
+python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
+python scripts/run_pipeline_smoke_full.py
 ```
 
-> Before any long run, start with the smoke matrix command and verify that `summary.json` and `results.jsonl` are created in the output directory.
+On Windows, a preflight helper is available: `powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1`.
 
 ---
 
 ## Cluster & Batch Jobs
 
-### Requirements by node type
+Install with `requirements-cpu.txt` on CPU nodes and `requirements-gpu.txt` on GPU nodes. Export the Neo4j variables before submission, then use the SLURM templates:
 
-| Node type | Requirements file |
+| Script | Purpose |
 |---|---|
-| CPU | `requirements-cpu.txt` |
-| GPU | `requirements-gpu.txt` |
-
-### SLURM templates
+| `scripts/run_kg_pipeline.sbatch` | Detached KG pipeline run |
+| `scripts/run_graphrag.sbatch` | GraphRAG job on a GPU node |
+| `scripts/run_graphrag_cpu.sbatch` | GraphRAG job on a CPU node |
+| `scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix on a GPU node |
+| `scripts/start_vllm.sh` | Start a local vLLM server |
+| `scripts/submit_matrix_from_env.sh` | Submit a matrix parameterized via environment variables |
 
 ```bash
 export NEO4J_URL="neo4j+s://<your-instance>"
@@ -358,12 +410,11 @@ export NEO4J_USERNAME="<user>"
 export NEO4J_PASSWORD="<pass>"
 export NEO4J_DATABASE="<db>"
 
-# Submit GPU job
 sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
-
-# Submit CPU job
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 ```
+
+See [docs/cluster.md](docs/cluster.md) for the full deployment guide.
 
 ---
 
@@ -371,26 +422,22 @@ sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 
 ```text
 .
-├── kg_pipeline/          # Knowledge Graph construction pipeline
-│   ├── config.yaml       # Pipeline configuration
-│   ├── main.py           # Pipeline entry point
-│   └── .env              # Environment variables (not committed)
-├── src/graphrag/         # Main package — CLI and agent code
-├── scripts/              # Utilities, smoke tests, batch templates
-│   ├── run_retrieval_matrix.py
-│   ├── analyze_experiments.py
-│   ├── analyze_matrix.py
-│   ├── analyze_resource_usage.py
-│   ├── smoke_check.py
-│   ├── preflight.ps1
-│   ├── run_graphrag.sbatch
-│   └── run_graphrag_cpu.sbatch
-├── evaluation/           # Paper-oriented evaluation workspace
-├── docs/                 # Additional documentation (e.g. cluster.md)
-├── artifacts/            # Experiment outputs, logs, and reports
-├── requirements.txt
-├── requirements-cpu.txt
-└── requirements-gpu.txt
+├── src/graphrag/         # Main package: CLI, LangGraph agent, retriever, LLM backends
+├── kg_pipeline/          # Knowledge Graph construction pipeline (config.yaml, main.py, stages/)
+├── scripts/              # Experiment runners, analyzers, smoke tests, SLURM templates
+├── evaluation/           # Evaluation workspace
+│   ├── evalkit/          #   metrics, LLM judge, reports (CLI: python -m evalkit.cli)
+│   ├── gold/             #   gold QA templates and schema
+│   ├── fixtures/         #   question sets for matrix runs
+│   └── tests/            #   evaluation unit tests
+├── tests/                # Core unit tests
+├── documents/            # Source corpus (PDFs)
+├── docs/                 # Additional documentation (cluster.md, plans, reports)
+├── artifacts/            # Experiment outputs, logs, and reports (not committed)
+├── COMMANDS.md           # Full command reference
+├── pyproject.toml
+├── requirements.txt      # + requirements-cpu.txt / requirements-gpu.txt
+└── .env.example          # Configuration template
 ```
 
 ---
@@ -399,14 +446,17 @@ sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `graphrag-demo` exits with code 126 | Stale console-script shim | Use `conda run -n graphllm python -m graphrag.cli` |
 | CLI cannot connect to Neo4j | Wrong credentials or DB name | Verify `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` |
-| Local model loading fails | Insufficient GPU memory | Try a smaller model, reduce `--max-new-tokens`, review GPU memory settings |
-| vLLM run produces no answers | Server URL or model name mismatch | Confirm `VLLM_BASE_URL` and model name match the running server process |
+| `smoke_check.py` reports missing variables | `.env` not loaded | The script reads exported variables only — `export` them or source your `.env` |
+| Local model loading fails | Insufficient GPU memory | Try a smaller model, reduce `--max-new-tokens`, tune `--gpu-memory-fraction` |
+| torch/torchvision mismatch on GPU nodes | Unpinned installs | Use `requirements-gpu.txt` (pins `torch==2.5.1+cu124`, `torchvision==0.20.1+cu124`) |
+| vLLM run produces no answers | Server URL or model name mismatch | Confirm `VLLM_BASE_URL` and model name match the running server |
 | Runs complete but context is empty | Retrieval or extraction issue | Inspect `summary.json` and `results.jsonl` before modifying the pipeline |
+| KG stage 3 crashes on malformed LLM output | Expected behavior | Failures are logged to `failed_chunks.jsonl`; the pipeline continues |
 
+---
 
+## License
 
-<div align="center">
-
-
-</div>
+This project is licensed under the [MIT License](LICENSE).
