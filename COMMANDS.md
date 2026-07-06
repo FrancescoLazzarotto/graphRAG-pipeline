@@ -191,6 +191,17 @@ python scripts/run_retrieval_matrix.py \
   --experiment-tag strategy_comparison
 ```
 
+### vLLM demo
+```bash
+conda run -n graphllm python -m graphrag.cli \
+  --question "According to the Regulation, what is the definition of 'food business operator'?" \
+  --strategies "hybrid" \
+  --llm \
+  --vllm \
+  --vllm-base-url http://localhost:8000/v1 \
+  --model-id "Qwen/Qwen2.5-32B-Instruct-AWQ"
+```
+
 ### Graph-only (skip standard RAG)
 
 ```bash
