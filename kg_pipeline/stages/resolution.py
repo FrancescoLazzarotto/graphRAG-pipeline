@@ -16,6 +16,22 @@ from tqdm import tqdm
 from kg_pipeline.models.types import CanonicalEntityRecord, KGTriple
 from datetime import datetime
 from kg_pipeline.utils.acronym_map import expand_acronym
+from kg_pipeline.utils.validation import parse_json_array
+
+
+def _parse_llm_json_array(content: str) -> list:
+    """Parse a JSON array from LLM output, tolerating fences and prose."""
+    try:
+        return parse_json_array(content)
+    except Exception:
+        start = content.find("[")
+        end = content.rfind("]")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(content[start : end + 1])
+        if not isinstance(parsed, list):
+            raise ValueError("LLM output is not a JSON array")
+        return parsed
 
 
 LOGGER = logging.getLogger("kg_pipeline")
@@ -166,13 +182,21 @@ def _embedding_candidates(
     emb = model.encode(canonical_names, normalize_embeddings=True)
     sims = np.matmul(emb, emb.T)
 
+    # Cross-label pairs are kept as candidates (bilingual corpus: the same
+    # entity is often typed differently in the two languages, e.g. "food
+    # waste"[Product] vs "spreco alimentare"[Process]); the LLM confirmation
+    # step receives both labels and decides. They need a stricter similarity
+    # floor than same-label pairs, otherwise candidates explode.
+    cross_label_threshold = max(threshold, 0.92)
     candidates: list[tuple[int, int]] = []
     n = len(canonical_names)
     for i in range(n):
         for j in range(i + 1, n):
-            if canonical_labels[i] != canonical_labels[j]:
-                continue
-            if float(sims[i, j]) > threshold:
+            sim = float(sims[i, j])
+            if canonical_labels[i] == canonical_labels[j]:
+                if sim > threshold:
+                    candidates.append((i, j))
+            elif sim > cross_label_threshold:
                 candidates.append((i, j))
     return candidates
 
@@ -210,14 +234,14 @@ def _confirm_candidates_with_llm(
             {mentions[idx]["name"] for idx in groups[j]},
             key=lambda x: (-len(x), x.lower()),
         )[0]
-        label = mentions[groups[i][0]]["label"]
 
         pair_payload = {
             "left_group": i,
             "right_group": j,
             "left_name": left_name,
             "right_name": right_name,
-            "label": label,
+            "left_label": mentions[groups[i][0]]["label"],
+            "right_label": mentions[groups[j][0]]["label"],
             "left_docs": left_docs,
             "right_docs": right_docs,
         }
@@ -225,16 +249,31 @@ def _confirm_candidates_with_llm(
         for doc in docs:
             by_doc[doc].append(pair_payload)
 
+    _CONFIRM_BATCH_SIZE = 40
+
+    doc_batches: list[tuple[str, list[dict[str, Any]]]] = []
+    for doc, pairs in by_doc.items():
+        for start in range(0, len(pairs), _CONFIRM_BATCH_SIZE):
+            doc_batches.append((doc, pairs[start : start + _CONFIRM_BATCH_SIZE]))
+
     for doc, pairs in tqdm(
-        by_doc.items(), desc="Stage 4 LLM Merge Confirm", unit="doc"
+        doc_batches, desc="Stage 4 LLM Merge Confirm", unit="batch"
     ):
         prompt = f"""
-You are resolving cross-document entities for a food-domain knowledge graph.
+You are resolving cross-document entities for a knowledge graph about circular economy
+and food systems. The corpus is bilingual: the same real-world entity may appear with an
+ENGLISH name in one document and an ITALIAN name in another (e.g. "circular economy" and
+"economia circolare", "food waste" and "spreco alimentare"). Such cross-language pairs
+SHOULD be merged when they denote the same entity or concept.
 
 Document scope: {doc}
 
 For each pair, decide if they refer to the same real-world entity.
-Be conservative: if uncertain, return merge=false.
+Be conservative: if uncertain, return merge=false. Translation equivalence alone is
+sufficient only when the meaning is clearly the same.
+When left_label and right_label differ, merge only if the two names clearly denote the
+same thing despite the typing difference; a concept and a publication named after it
+(e.g. "sustainability" vs the journal "Sustainability") are NOT the same entity.
 Return only JSON array with objects:
 {{"left_group": int, "right_group": int, "merge": true or false}}
 
@@ -249,9 +288,7 @@ Pairs:
                 messages=[{"role": "user", "content": prompt}],
             )
             content = response.choices[0].message.content or "[]"
-            parsed = json.loads(content)
-            if not isinstance(parsed, list):
-                continue
+            parsed = _parse_llm_json_array(content)
             for item in parsed:
                 if not isinstance(item, dict):
                     continue
@@ -354,14 +391,23 @@ def resolve_entities(
 
         Returns (updated_registry, alias_to_canonical_map)
         """
+        # Most-specific-first for the circular-food ontology; Concept is the
+        # fallback and must stay last.
         precedence = [
-            "Method",
-            "Concept",
-            "Indicator",
-            "Policy",
-            "Commodity",
-            "Region",
+            "Person",
             "Organization",
+            "Place",
+            "Event",
+            "Project",
+            "Policy",
+            "Document",
+            "Indicator",
+            "Method",
+            "Product",
+            "Material",
+            "Process",
+            "DataValue",
+            "Concept",
         ]
         norm_map: dict[str, list[str]] = defaultdict(list)
         for cname in list(registry.keys()):
