@@ -3,7 +3,11 @@ from __future__ import annotations
 import re
 
 
-_LONG_SHORT_RE = re.compile(r"\b([A-Za-z][A-Za-z \-/]{3,}?)\s*\(([A-Z]{2,10})\)")
+# Letter class includes Latin-1 accented characters so Italian long forms
+# ("Università di Scienze Gastronomiche (UNISG)") are captured in full.
+_LONG_SHORT_RE = re.compile(
+    r"\b([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ '\-/]{3,}?)\s*\(([A-Z]{2,10})\)"
+)
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
 
 
