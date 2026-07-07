@@ -361,39 +361,46 @@ def run_quality_checks(
     password: str,
     report_path: Path,
     database: str | None = None,
+    relation_vocab: list[str] | None = None,
 ) -> None:
-    """Run post-ingestion validation Cypher queries and write a report."""
-    queries = {
-        "predicates_out_of_vocab": """
-MATCH ()-[r]->()
-WHERE NOT type(r) IN [
-  'GOVERNS','ESTABLISHES','ESTABLISHED_BY','HAS_COMPONENT','BASED_ON',
-  'AFFECTS','CONTRIBUTES_TO','APPLIES_TO','DEFINED_AS','INCLUDES',
-  'IS_TYPE_OF','HAS_MAXIMUM_LEVEL','PUBLISHED','WORKED_WITH',
-  'EXCHANGES_INFO_WITH','TAKE_INTO_ACCOUNT','ENSURES','SHOULD_BE_MANAGED_BY',
-  'AIMS_TO_ACHIEVE','NEEDED_FOR','CONTAINS_DATA','COMPLIES_WITH','ANALYZES'
-]
-RETURN type(r) AS outOfVocab, count(*) AS n ORDER BY n DESC
-        """.strip(),
-        "duplicate_nodes_by_name": """
+    """Run post-ingestion validation Cypher queries and write a report.
+
+    ``relation_vocab`` drives the out-of-vocab predicate check; when omitted the
+    check is skipped (system predicates SAME_AS/MENTIONED_IN are always allowed).
+    """
+    queries = {}
+    if relation_vocab:
+        allowed = sorted(
+            {str(item).strip().upper() for item in relation_vocab if str(item).strip()}
+            | {"SAME_AS", "MENTIONED_IN"}
+        )
+        queries["predicates_out_of_vocab"] = (
+            "MATCH ()-[r]->() WHERE NOT type(r) IN $allowed_predicates "
+            "RETURN type(r) AS outOfVocab, count(*) AS n ORDER BY n DESC"
+        )
+    queries["duplicate_nodes_by_name"] = """
 MATCH (n)
 WITH n.name AS name, collect(labels(n)) AS labelSets, count(*) AS c
 WHERE c > 1
 RETURN name, labelSets, c ORDER BY c DESC
-        """.strip(),
-        "sparsely_connected_nodes": """
+        """.strip()
+    queries["sparsely_connected_nodes"] = """
 MATCH (n)
 WHERE size((n)--()) <= 1
 RETURN labels(n) AS labels, n.name AS name LIMIT 20
-        """.strip(),
-    }
+        """.strip()
 
     report: dict[str, object] = {"queries": {}}
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         with driver.session(database=database) as session:
             for key, q in queries.items():
+                params = (
+                    {"allowed_predicates": allowed}
+                    if key == "predicates_out_of_vocab"
+                    else {}
+                )
                 try:
-                    data = session.run(q).data()
+                    data = session.run(q, **params).data()
                 except Exception as e:
                     data = {"error": str(e)}
                 report["queries"][key] = data
@@ -438,6 +445,11 @@ def _cli() -> None:
         default=0,
         help="Log progress every N triples (0 disables)",
     )
+    parser.add_argument(
+        "--relation-vocab-json",
+        default="",
+        help="Relation vocab JSON for the out-of-vocab quality check (skipped if empty)",
+    )
     args = parser.parse_args()
 
     env_file = args.env_file.strip()
@@ -471,6 +483,11 @@ def _cli() -> None:
 
     # Run validation queries and write kg_quality_report.txt next to triples JSON
     try:
+        relation_vocab = None
+        if args.relation_vocab_json.strip():
+            relation_vocab = json.loads(
+                Path(args.relation_vocab_json).read_text(encoding="utf-8")
+            )
         report_path = Path(args.triples_json).resolve().parent / "kg_quality_report.txt"
         run_quality_checks(
             uri=uri,
@@ -478,6 +495,7 @@ def _cli() -> None:
             password=password,
             report_path=report_path,
             database=database,
+            relation_vocab=relation_vocab,
         )
     except Exception:
         pass
