@@ -7,18 +7,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 SEED_ONTOLOGY_LABELS = [
-    "Region",
-    "Commodity",
+    "Organization",
+    "Person",
+    "Place",
+    "Product",
+    "Material",
+    "Process",
+    "Method",
+    "Project",
     "Indicator",
     "DataValue",
     "Policy",
-    "Organization",
+    "Document",
     "Event",
     "Concept",
-    "TimePeriod",
-    "Document",
-    "Dataset",
-    "Method",
 ]
 
 _PREDICATE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
