@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from gliner import GLiNER
@@ -17,6 +18,9 @@ def run_ner(
     threshold: float,
 ) -> dict[str, list[NEREntityCandidate]]:
     model = GLiNER.from_pretrained(model_name)
+    device = os.environ.get("KG_NER_DEVICE", "").strip()
+    if device:
+        model = model.to(device)
 
     label_map = {label.lower(): label for label in labels}
     model_labels = list(label_map.keys())
