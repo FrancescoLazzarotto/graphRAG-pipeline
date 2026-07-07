@@ -25,6 +25,9 @@ from kg_pipeline.utils.validation import parse_json_array
 
 LOGGER = logging.getLogger("kg_pipeline.neo4j_postprocess")
 
+""" Controllare tutta la parte di post process con documenti nuovi """
+
+
 _CANONICAL_RELATION_TYPES = [
     "RELATED_TO",
     "AFFECTS",
