@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -178,7 +179,9 @@ def _embedding_candidates(
         canonical_names.append(names[0] if names else "")
         canonical_labels.append(mentions[idxs[0]]["label"])
 
-    model = SentenceTransformer(embedding_model)
+    model = SentenceTransformer(
+        embedding_model, device=os.environ.get("KG_EMBED_DEVICE") or None
+    )
     emb = model.encode(canonical_names, normalize_embeddings=True)
     sims = np.matmul(emb, emb.T)
 
@@ -274,6 +277,9 @@ sufficient only when the meaning is clearly the same.
 When left_label and right_label differ, merge only if the two names clearly denote the
 same thing despite the typing difference; a concept and a publication named after it
 (e.g. "sustainability" vs the journal "Sustainability") are NOT the same entity.
+Do NOT merge a thing with an action or goal about that thing: "food waste" vs
+"food waste reduction", "circular economy" vs "promoting the circular economy",
+"CO2 emissions" vs "reducing CO2 emissions" are DIFFERENT entities.
 Return only JSON array with objects:
 {{"left_group": int, "right_group": int, "merge": true or false}}
 
