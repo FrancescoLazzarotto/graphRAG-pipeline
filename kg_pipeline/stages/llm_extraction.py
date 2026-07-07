@@ -48,11 +48,38 @@ _GENERIC_SECTION_TITLES = {
     "results",
     "summary",
     "table of contents",
+    # Italian equivalents (bilingual corpus)
+    "bibliografia",
+    "conclusione",
+    "conclusioni",
+    "indice",
+    "introduzione",
+    "metodologia",
+    "prefazione",
+    "riassunto",
+    "ringraziamenti",
+    "risultati",
+    "sommario",
 }
 
 _SECTION_PREFIX_RE = re.compile(
-    r"^(annex|appendix|chapter|section|part)\s+\w+", re.IGNORECASE
+    r"^(annex|appendix|chapter|section|part|allegato|appendice|capitolo|sezione|parte)\s+\w+",
+    re.IGNORECASE,
 )
+
+# Chunks whose section is pure front/back matter are skipped before extraction:
+# citation lists, acknowledgements, tables of contents and editorial boilerplate
+# yield publishing metadata, not domain facts.
+_SKIP_SECTION_RE = re.compile(
+    r"(references|bibliograph|acknowledg|table of contents|list of (figures|tables|acronyms)"
+    r"|copyright|colophon|editorial board|scientific (board|committee)"
+    r"|bibliografia|sommario|ringraziament|colofone|comitato scientifico|indice delle)",
+    re.IGNORECASE,
+)
+
+
+def _should_skip_chunk(chunk: ChunkRecord) -> bool:
+    return bool(_SKIP_SECTION_RE.search(chunk.section_title or ""))
 
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
@@ -258,10 +285,13 @@ async def _extract_chunk_async(
                     triple, allowed_label_set, new_label_log_path, chunk.section_title
                 )
                 rel = dict(triple.relationship_properties)
-                rel.setdefault("source_doc", chunk.filename)
+                # Provenance is authoritative pipeline metadata: always
+                # overwrite whatever the model put there (it copies chunk ids
+                # or mistypes filenames).
+                rel["source_doc"] = chunk.filename
+                rel["chunk_id"] = chunk.chunk_id
+                rel["page_range"] = chunk.page_range
                 rel.setdefault("extraction_method", "llm")
-                rel.setdefault("chunk_id", chunk.chunk_id)
-                rel.setdefault("page_range", chunk.page_range)
                 triple.relationship_properties = rel
                 cleaned.append(triple)
             return chunk_idx, cleaned, True
@@ -464,6 +494,17 @@ def extract_triples(
     """
     _log = logging.getLogger("kg_pipeline")
     allowed_label_set = set(allowed_labels)
+
+    # Drop front/back-matter chunks before any indexing so checkpoint indices
+    # stay aligned with the filtered list.
+    skipped = [c for c in chunks if _should_skip_chunk(c)]
+    if skipped:
+        chunks = [c for c in chunks if not _should_skip_chunk(c)]
+        _log.info(
+            "Skipping %d front/back-matter chunks (sections: %s)",
+            len(skipped),
+            sorted({c.section_title for c in skipped})[:10],
+        )
 
     all_triples: list[KGTriple] = []
     acronym_map: dict[str, str] = {}
