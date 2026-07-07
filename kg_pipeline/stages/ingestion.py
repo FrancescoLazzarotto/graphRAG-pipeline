@@ -60,6 +60,11 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
                 continue
             level = len(match.group(1))
             title = match.group(2).strip()
+            # Running headers (magazines repeat the issue title on every page)
+            # must not open a new section per page: keep only the first
+            # occurrence of a consecutive run of identical titles.
+            if starts and starts[-1][2].strip().lower() == title.lower():
+                break
             starts.append((page.page_number, level, title))
             break
 
@@ -100,17 +105,28 @@ def _extract_title_and_year(
         chunk.text for chunk in page_chunks[: min(3, len(page_chunks))]
     )
 
+    # Prefer a level-1 header; failing that, the longest header of any level in
+    # the first pages (books often expose the real title as a level-2 header,
+    # while the first text line is a preface author or colophon fragment).
+    headers: list[tuple[int, str]] = []
+    first_line = ""
     for line in head_text.splitlines():
         line = line.strip()
         if not line:
             continue
+        if not first_line:
+            first_line = line
         match = _HEADER_RE.match(line)
-        if match and len(match.group(1)) == 1:
-            title = match.group(2).strip()
-            break
-        if title == fallback_title:
-            title = line
-            break
+        if match:
+            headers.append((len(match.group(1)), match.group(2).strip()))
+
+    level1 = [text for level, text in headers if level == 1]
+    if level1:
+        title = level1[0]
+    elif headers:
+        title = max((text for _, text in headers), key=len)
+    elif first_line:
+        title = first_line
 
     year_match = _YEAR_RE.search(head_text)
     if year_match:
