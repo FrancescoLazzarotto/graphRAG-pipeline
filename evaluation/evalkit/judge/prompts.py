@@ -11,7 +11,8 @@ You are an expert evaluator for question-answering systems.
 You will be given a question, a generated answer, optional reference information \
 (ground truth, retrieved context), and a scoring rubric.
 Your task is to evaluate the generated answer according to the rubric and return a \
-JSON object with the score and a brief rationale.
+JSON object with the score and a brief rationale. \
+Judge equally for all elements. 
 
 Respond ONLY with a JSON object. Do not add any text before or after the JSON.
 Example format:
