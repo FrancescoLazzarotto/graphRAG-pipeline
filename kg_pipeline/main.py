@@ -164,6 +164,7 @@ def _stage_output_paths(run_dir: Path) -> dict[str, Path]:
         "acronyms": run_dir / "stage3_acronyms.json",
         "triples_resolved": run_dir / "stage4_triples_resolved.json",
         "registry": run_dir / "stage4_registry.json",
+        "merge_cache": run_dir / "stage4_merge_approved.json",
         "triples_linked": run_dir / "stage5_triples_linked.json",
         "failed_chunks": run_dir / "failed_chunks.jsonl",
         "new_labels_log": run_dir / "new_labels.log",
@@ -272,6 +273,7 @@ def _load_or_run_resolution(
         base_url=base_url or None,
         api_key=api_key,
         model_name=model_name or None,
+        merge_cache_path=paths["merge_cache"],
     )
 
     resolution.save_triples(paths["triples_resolved"], resolved_triples)

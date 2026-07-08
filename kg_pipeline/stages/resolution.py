@@ -301,6 +301,18 @@ Pairs:
                 if bool(item.get("merge", False)):
                     left_group = int(item["left_group"])
                     right_group = int(item["right_group"])
+                    if not (
+                        0 <= left_group < len(groups)
+                        and 0 <= right_group < len(groups)
+                    ):
+                        LOGGER.warning(
+                            "LLM merge pair (%d, %d) outside valid group range "
+                            "[0, %d) — skipped",
+                            left_group,
+                            right_group,
+                            len(groups),
+                        )
+                        continue
                     approved.add(tuple(sorted((left_group, right_group))))
         except Exception as exc:
             LOGGER.warning(
@@ -324,6 +336,7 @@ def resolve_entities(
     api_key: str | None,
     model_name: str | None,
     crosslabel_log_path: Path | None = None,
+    merge_cache_path: Path | None = None,
 ) -> tuple[list[KGTriple], dict[str, CanonicalEntityRecord]]:
     mentions = _build_mentions(triples)
     groups = _initial_groups(
@@ -338,7 +351,17 @@ def resolve_entities(
     )
 
     approved: set[tuple[int, int]] = set()
-    if base_url and model_name:
+    if merge_cache_path is not None and merge_cache_path.exists():
+        # Cache indices are only meaningful for the identical (seeded) group
+        # construction of the same run dir; do not reuse across runs.
+        cached = json.loads(merge_cache_path.read_text(encoding="utf-8"))
+        approved = {(int(a), int(b)) for a, b in cached}
+        LOGGER.info(
+            "Loaded %d approved merge pairs from %s — skipping LLM confirmation",
+            len(approved),
+            merge_cache_path,
+        )
+    elif base_url and model_name:
         approved = _confirm_candidates_with_llm(
             base_url=base_url,
             api_key=(api_key or "EMPTY"),
@@ -347,10 +370,28 @@ def resolve_entities(
             groups=groups,
             candidates=candidates,
         )
+        if merge_cache_path is not None:
+            merge_cache_path.write_text(
+                json.dumps(sorted(approved)), encoding="utf-8"
+            )
+            LOGGER.info(
+                "Saved %d approved merge pairs to %s",
+                len(approved),
+                merge_cache_path,
+            )
 
     uf = UnionFind(len(groups))
     for i, j in approved:
-        uf.union(i, j)
+        if 0 <= i < len(groups) and 0 <= j < len(groups):
+            uf.union(i, j)
+        else:
+            LOGGER.warning(
+                "Approved merge pair (%d, %d) outside valid group range "
+                "[0, %d) — skipped",
+                i,
+                j,
+                len(groups),
+            )
 
     merged_group_map: dict[int, list[int]] = defaultdict(list)
     for idx in range(len(groups)):
