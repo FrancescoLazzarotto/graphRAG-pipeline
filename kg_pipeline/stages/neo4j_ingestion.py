@@ -328,7 +328,19 @@ def ingest_triples(
                                 exc,
                             )
                             for triple, _row in batch:
-                                session.execute_write(_merge_triple, triple)
+                                try:
+                                    session.execute_write(_merge_triple, triple)
+                                except Exception:
+                                    # Errors surfacing at commit time (e.g.
+                                    # ConstraintError) bypass _merge_triple's
+                                    # internal handling — skip the triple.
+                                    logger.exception(
+                                        "Skipping triple after per-triple retry "
+                                        "failed: %s -[%s]-> %s",
+                                        triple.subject,
+                                        triple.predicate,
+                                        triple.object,
+                                    )
                         count += len(batch)
                         progress.update(len(batch))
                         if log_every > 0 and count % log_every < batch_size:
