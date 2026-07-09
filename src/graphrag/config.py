@@ -54,7 +54,10 @@ class AgentConfig:
     enable_cache: bool = True
     cache_maxsize: int = 128
     recursion_limit: int = 50
-    max_content_tokens: int = 1000
+    # 6000 fits comfortably in Qwen2.5-32B's 32k window with prompt + answer;
+    # 1000 truncated most multi-channel retrievals (head/tail compression cut
+    # the mid-context evidence and inflated "insufficient context" answers).
+    max_content_tokens: int = 6000
     token_estimator_ratio: float = 0.25  # tokens-per-char (~4 chars/token)
     tone: OUTPUT_TONE = OUTPUT_TONE.TECHNICAL
     complexity: OUTPUT_COMPLEXITY = OUTPUT_COMPLEXITY.MEDIUM

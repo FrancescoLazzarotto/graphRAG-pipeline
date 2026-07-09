@@ -72,7 +72,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-context-tokens",
         type=int,
-        default=1000,
+        default=6000,
         help="Maximum tokens for compressed context before generation",
     )
     parser.add_argument(
