@@ -79,7 +79,7 @@ def main():
             prompt = mod.build_extraction_prompt(chunk, [], ["Concept", "Policy"])
             if (
                 "ALLOWED PREDICATES" in prompt
-                or "You MUST use ONLY the following predicate types" in prompt
+                or "use ONLY these predicate types" in prompt
             ):
                 ok("extraction prompt contains allowed-predicates instructions")
             else:
@@ -131,15 +131,24 @@ def main():
             else:
                 fail("resolution CLI missing --crosslabel-log flag")
 
-        # check ner threshold default
+        # check ner CLI threshold default matches config.yaml (single source of truth)
         if "kg_pipeline.stages.ner" in loaded:
+            import yaml
+
+            config = yaml.safe_load(
+                (ROOT / "kg_pipeline" / "config.yaml").read_text(encoding="utf-8")
+            )
+            config_threshold = float(config["gliner"]["threshold"])
             ner_src = Path(loaded["kg_pipeline.stages.ner"].__file__).read_text(
                 encoding="utf-8"
             )
-            if "default=0.55" in ner_src:
-                ok("ner default threshold set to 0.55")
+            if f"default={config_threshold}" in ner_src:
+                ok(f"ner CLI default threshold matches config.yaml ({config_threshold})")
             else:
-                fail("ner default threshold not set to 0.55 in source")
+                fail(
+                    f"ner CLI default threshold does not match config.yaml "
+                    f"({config_threshold})"
+                )
 
         # neo4j quality check function exists and contains expected query tokens
         if "kg_pipeline.stages.neo4j_ingestion" in loaded:

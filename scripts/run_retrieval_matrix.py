@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import time
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,11 @@ from graphrag.agent.core import KGRAGAgent
 from graphrag.config import AgentConfig, DEFAULT_MODEL_ID, build_kg_config_from_env
 from graphrag.experiments import ExperimentRunner
 from graphrag.experiments.resource_monitor import ResourceMonitor
+from graphrag.experiments.standard_presets import (
+    STANDARD_STRATEGIES_DEFAULT,
+    STANDARD_STRATEGIES_SMOKE,
+    STANDARD_STRATEGY_PRESETS,
+)
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -32,40 +37,11 @@ _PRODUCTION_FAST_LARGE_MODEL_MAX_NEW_TOKENS = 160
 _PERFORMANCE_PROFILE_CHOICES = ("auto", "default", "production_fast")
 
 
-@dataclass(frozen=True)
-class StandardStrategyPreset:
-    top_k: int
-    chunk_size: int
-    chunk_overlap: int
-    min_chunk_chars: int = 80
-    include_sources: bool = True
-    backend: str = "tfidf"  # "tfidf" | "dense"
-    embedding_model: str | None = None  # None = factory default
-
-
-_STANDARD_STRATEGY_PRESETS: dict[str, StandardStrategyPreset] = {
-    # --- TF-IDF (lexical) baselines ---
-    "std_topk3": StandardStrategyPreset(top_k=3, chunk_size=1200, chunk_overlap=180),
-    "std_topk5": StandardStrategyPreset(top_k=5, chunk_size=1200, chunk_overlap=180),
-    "std_wide_context": StandardStrategyPreset(
-        top_k=6, chunk_size=1800, chunk_overlap=180
-    ),
-    "std_fine_chunks": StandardStrategyPreset(
-        top_k=5, chunk_size=800, chunk_overlap=140
-    ),
-    # --- Dense (cosine similarity) variants ---
-    "std_dense_topk3": StandardStrategyPreset(
-        top_k=3, chunk_size=1200, chunk_overlap=180, backend="dense"
-    ),
-    "std_dense_topk5": StandardStrategyPreset(
-        top_k=5, chunk_size=1200, chunk_overlap=180, backend="dense"
-    ),
-    "std_dense_wide": StandardStrategyPreset(
-        top_k=6, chunk_size=1800, chunk_overlap=180, backend="dense"
-    ),
-}
-_STANDARD_STRATEGIES_DEFAULT = tuple(_STANDARD_STRATEGY_PRESETS.keys())
-_STANDARD_STRATEGIES_SMOKE = ("std_topk3", "std_topk5")
+# Standard RAG baseline presets live in graphrag.experiments.standard_presets
+# (shared module); aliased here to keep existing references readable.
+_STANDARD_STRATEGY_PRESETS = STANDARD_STRATEGY_PRESETS
+_STANDARD_STRATEGIES_DEFAULT = STANDARD_STRATEGIES_DEFAULT
+_STANDARD_STRATEGIES_SMOKE = STANDARD_STRATEGIES_SMOKE
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--question", default="Quali sono le relazioni tra Entita A e Entita B?"
+        "--question", default="Quali sono gli obiettivi della strategia Farm to Fork?"
     )
     parser.add_argument("--questions-file", default="", help="One question per line")
     parser.add_argument(
@@ -442,6 +418,25 @@ def _run_graph_matrix(
 
     base_config = _base_graph_config(args=args, default_question=questions[0])
 
+    # Build a shared text pipeline once if any graph strategy resolves to a config
+    # that uses raw-text retrieval (e.g. the hybrid strategy). Without this the
+    # text channel is silently skipped and hybrid would collapse into default.
+    text_pipeline = None
+    if any(apply_strategy(base_config, label).use_text_retriever for label in labels):
+        text_pipeline = make_text_pipeline(
+            backend=base_config.text_retriever_backend,
+            embedding_model=args.dense_embedding_model,
+            vector_index_dir=args.vector_index_dir,
+            device=args.dense_device,
+        )
+        indexed_chunks = text_pipeline.index_paths(
+            args.documents, discovery_patterns=_parse_csv(args.doc_patterns)
+        )
+        print(
+            f"[graph_rag] text pipeline ({base_config.text_retriever_backend}) "
+            f"indexed {indexed_chunks} chunks for hybrid strategies"
+        )
+
     for label in labels:
         for run_index in range(1, runs_per_strategy + 1):
             print(
@@ -450,7 +445,11 @@ def _run_graph_matrix(
             )
             started_at = time.perf_counter()
             config = apply_strategy(base_config, label)
-            retriever = KGRetriever(kg_store=kg_manager, config=config)
+            retriever = KGRetriever(
+                kg_store=kg_manager,
+                config=config,
+                text_pipeline=text_pipeline if config.use_text_retriever else None,
+            )
             agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm_manager)
             runner.run_agent(
                 agent=agent,
@@ -610,8 +609,31 @@ def main() -> None:
     csv_path = output_dir / "results.csv"
     summary_txt_path = output_dir / "summary.txt"
     summary_json_path = output_dir / "summary.json"
+    config_json_path = output_dir / "config.json"
     resource_samples_path = output_dir / "resource_samples.jsonl"
     resource_summary_path = output_dir / "resource_summary.json"
+
+    base_config = _base_graph_config(args, questions[0])
+    config_json_path.write_text(
+        json.dumps(
+            {
+                "cli_args": dict(vars(args)),
+                "graph_strategy_configs": {
+                    label: dataclasses.asdict(apply_strategy(base_config, label))
+                    for label in graph_labels
+                },
+                "standard_strategy_presets": {
+                    label: dataclasses.asdict(_STANDARD_STRATEGY_PRESETS[label])
+                    for label in standard_labels
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     runner.export_jsonl(str(jsonl_path))
     runner.export_csv(str(csv_path))
