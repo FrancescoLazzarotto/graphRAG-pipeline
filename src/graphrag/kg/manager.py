@@ -52,6 +52,12 @@ class KnowledgeGraphManager:
         except ValueError:
             self.query_retry_backoff_sec = 1.0
 
+        self.fulltext_index = os.getenv(
+            "GRAPHRAG_FULLTEXT_INDEX", "node_search"
+        ).strip()
+        # None = not probed yet; False = index missing, use the CONTAINS scan.
+        self._fulltext_available: bool | None = None
+
     def _build_graph(self) -> Neo4jGraph:
         return Neo4jGraph(
             url=self.config.url,
@@ -247,6 +253,163 @@ class KnowledgeGraphManager:
         LIMIT $limit
         """
         return [self._row_to_triple(row) for row in self.run_query(cypher, params)]
+
+    _LUCENE_SPECIAL_RE = re.compile(r'(&&|\|\||[+\-!(){}\[\]^"~*?:\\/])')
+    _FULLTEXT_MISSING_MARKERS = (
+        "no such fulltext",
+        "there is no such fulltext",
+        "no such index",
+        "not found",
+        "db.index.fulltext.querynodes",
+    )
+
+    @classmethod
+    def _lucene_query(cls, terms: Sequence[str]) -> str:
+        """Build a Lucene OR-query from search terms (phrases quoted)."""
+        parts: list[str] = []
+        for term in terms:
+            cleaned = str(term or "").strip()
+            if not cleaned:
+                continue
+            escaped = cls._LUCENE_SPECIAL_RE.sub(r"\\\1", cleaned)
+            parts.append(f'"{escaped}"' if " " in escaped else escaped)
+        return " OR ".join(parts)
+
+    def _handle_fulltext_error(self, exc: Exception) -> bool:
+        """Return True (and disable full-text) when the index is unavailable."""
+        text = f"{type(exc).__name__}: {exc}".lower()
+        if any(marker in text for marker in self._FULLTEXT_MISSING_MARKERS):
+            logger.warning(
+                "Full-text index %r unavailable (%s) — falling back to the "
+                "CONTAINS scan for this session. Run scripts/kg_search_index.py "
+                "to create the index.",
+                self.fulltext_index,
+                exc,
+            )
+            self._fulltext_available = False
+            return True
+        return False
+
+    def fulltext_search_nodes(
+        self,
+        terms: Sequence[str],
+        labels: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[KGNode] | None:
+        """Match nodes for all ``terms`` in one indexed query.
+
+        Args:
+            terms: Search terms; combined into a single Lucene OR-query.
+            labels: Optional label whitelist applied after the index lookup.
+            limit: Maximum nodes returned (best score first).
+
+        Returns:
+            Nodes ordered by Lucene score, or ``None`` when the full-text index
+            is unavailable and the caller must fall back to the CONTAINS scan.
+        """
+        if self._fulltext_available is False:
+            return None
+        lucene = self._lucene_query(terms)
+        if not lucene:
+            return []
+        limit = limit or self.config.default_limit
+        params: dict[str, Any] = {
+            "index": self.fulltext_index,
+            "q": lucene,
+            "limit": limit,
+        }
+        label_filter = ""
+        if labels:
+            label_filter = "WHERE any(label IN labels(node) WHERE label IN $labels)"
+            params["labels"] = list(labels)
+        cypher = f"""
+        CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
+        YIELD node, score
+        {label_filter}
+        RETURN
+            elementId(node) AS node_id,
+            labels(node) AS labels,
+            properties(node) AS properties,
+            {self._coalesce_name_expr("node")} AS text
+        """
+        try:
+            rows = self.run_query(cypher, params)
+        except Exception as exc:  # noqa: BLE001 - narrowed by marker check
+            if self._handle_fulltext_error(exc):
+                return None
+            raise
+        self._fulltext_available = True
+        return [self._row_to_node(row) for row in rows]
+
+    def fulltext_search_triples(
+        self,
+        terms: Sequence[str],
+        labels: Sequence[str] | None = None,
+        relationship_types: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> list[KGTriple] | None:
+        """Match triples around index-matched nodes in one query.
+
+        Args:
+            terms: Search terms; combined into a single Lucene OR-query.
+            labels: Optional label whitelist for either endpoint.
+            relationship_types: Optional relationship-type whitelist.
+            limit: Maximum triples returned (best seed score first).
+
+        Returns:
+            Triples ordered by the matched endpoint's Lucene score, or ``None``
+            when the full-text index is unavailable.
+        """
+        if self._fulltext_available is False:
+            return None
+        lucene = self._lucene_query(terms)
+        if not lucene:
+            return []
+        limit = limit or self.config.default_limit
+        params: dict[str, Any] = {
+            "index": self.fulltext_index,
+            "q": lucene,
+            "limit": limit,
+        }
+        filters: list[str] = []
+        if labels:
+            filters.append(
+                "(any(label IN labels(startNode(r)) WHERE label IN $labels) "
+                "OR any(label IN labels(endNode(r)) WHERE label IN $labels))"
+            )
+            params["labels"] = list(labels)
+        if relationship_types:
+            filters.append("type(r) IN $relationship_types")
+            params["relationship_types"] = list(relationship_types)
+        where_sql = f"WHERE {' AND '.join(filters)}" if filters else ""
+        cypher = f"""
+        CALL db.index.fulltext.queryNodes($index, $q, {{limit: $limit}})
+        YIELD node, score
+        MATCH (node)-[r]-()
+        WITH r, max(score) AS seed_score
+        {where_sql}
+        RETURN
+            elementId(startNode(r)) AS subject_id,
+            {self._coalesce_name_expr("startNode(r)")} AS subject,
+            coalesce(toString(properties(r)['predicate']), type(r)) AS predicate,
+            elementId(endNode(r)) AS object_id,
+            {self._coalesce_name_expr("endNode(r)")} AS object,
+            labels(startNode(r)) AS subject_labels,
+            labels(endNode(r)) AS object_labels,
+            properties(startNode(r)) AS subject_properties,
+            properties(endNode(r)) AS object_properties,
+            properties(r) AS relationship_properties
+        ORDER BY seed_score DESC
+        LIMIT $limit
+        """
+        try:
+            rows = self.run_query(cypher, params)
+        except Exception as exc:  # noqa: BLE001 - narrowed by marker check
+            if self._handle_fulltext_error(exc):
+                return None
+            raise
+        self._fulltext_available = True
+        return [self._row_to_triple(row) for row in rows]
 
     def extract_subgraph(
         self,

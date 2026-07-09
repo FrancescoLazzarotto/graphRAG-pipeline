@@ -12,7 +12,10 @@ from graphrag.types import KGNode, KGTriple
 
 logger = logging.getLogger("graphrag")
 
-_QUOTED_ENTITY_RE = re.compile(r"[\"']([^\"']{2,})[\"']")
+# Double quotes always delimit an entity; single quotes only when they are not
+# intra-word apostrophes (Italian elisions like "cos'è l'economia" would
+# otherwise yield the bogus entity "è l").
+_QUOTED_ENTITY_RE = re.compile(r"\"([^\"]{2,})\"|(?<!\w)'([^']{2,})'(?!\w)")
 _TITLE_ENTITY_RE = re.compile(r"\b(?:[A-Z][\w'-]*)(?:\s+[A-Z][\w'-]*)+\b")
 _SINGLE_TOKEN_ENTITY_RE = re.compile(r"\b[A-Z][\w'-]{2,}\b")
 _TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
@@ -25,6 +28,8 @@ _NUMERIC_TERM_RE = re.compile(
 
 _QUESTION_STOPWORDS = {
     "chi",
+    "che",
+    "cos",
     "come",
     "cosa",
     "quando",
@@ -32,6 +37,25 @@ _QUESTION_STOPWORDS = {
     "quale",
     "quali",
     "perche",
+    "sono",
+    "hanno",
+    "del",
+    "della",
+    "delle",
+    "dei",
+    "degli",
+    "nel",
+    "nella",
+    "nelle",
+    "sul",
+    "sulla",
+    "con",
+    "per",
+    "tra",
+    "fra",
+    "una",
+    "uno",
+    "gli",
     "what",
     "when",
     "where",
@@ -43,6 +67,16 @@ _QUESTION_STOPWORDS = {
     "is",
     "are",
     "did",
+    "was",
+    "were",
+    "will",
+    "can",
+    "could",
+    "should",
+    "would",
+    "has",
+    "have",
+    "had",
     "the",
     "a",
     "an",
@@ -481,15 +515,21 @@ class KGRetriever:
     def _extract_entity_candidates(self, text: str) -> list[str]:
         candidates: list[str] = []
 
-        for match in _QUOTED_ENTITY_RE.findall(text):
-            value = match.strip()
+        for match in _QUOTED_ENTITY_RE.finditer(text):
+            value = (match.group(1) or match.group(2) or "").strip()
             if value:
                 candidates.append(value)
 
         for phrase in _TITLE_ENTITY_RE.findall(text):
             value = phrase.strip()
-            if value:
-                candidates.append(value)
+            if not value:
+                continue
+            # Sentence-initial function words are capitalized too ("Che Cosa"):
+            # drop phrases made entirely of stopwords.
+            tokens = [tok.lower() for tok in _TOKEN_RE.findall(value)]
+            if tokens and all(tok in _QUESTION_STOPWORDS for tok in tokens):
+                continue
+            candidates.append(value)
 
         for token in _SINGLE_TOKEN_ENTITY_RE.findall(text):
             if token.lower() not in _QUESTION_STOPWORDS:
@@ -509,6 +549,24 @@ class KGRetriever:
         collected: list[KGNode] = []
         seen: set[str] = set()
 
+        # One indexed query for all terms; rows arrive best-score first.
+        indexed = self.kg_store.fulltext_search_nodes(
+            terms=search_terms,
+            labels=self.config.labels or None,
+            limit=limit,
+        )
+        if indexed is not None:
+            for row in indexed:
+                key = self._node_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+                if len(collected) >= limit:
+                    break
+            return collected
+
+        # Fallback (no full-text index): legacy per-term CONTAINS scan.
         for term in search_terms:
             rows = self.kg_store.extract_nodes(
                 text=term,
@@ -535,6 +593,25 @@ class KGRetriever:
         collected: list[KGTriple] = []
         seen: set[tuple[str, str, str]] = set()
 
+        # One indexed query for all terms; rows arrive best-seed-score first.
+        indexed = self.kg_store.fulltext_search_triples(
+            terms=search_terms,
+            labels=self.config.labels or None,
+            relationship_types=self.config.relationship_types or None,
+            limit=limit,
+        )
+        if indexed is not None:
+            for row in indexed:
+                key = self._triple_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+                if len(collected) >= limit:
+                    break
+            return collected
+
+        # Fallback (no full-text index): legacy per-term CONTAINS scan.
         for term in search_terms:
             rows = self.kg_store.extract_triples(
                 text=term,

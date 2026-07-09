@@ -213,3 +213,139 @@ def test_rank_triples_prefers_query_overlap():
     ]
     ranked = retriever._rank_triples(triples, "What established EFSA?")
     assert ranked[0]["subject"] == "EFSA"
+
+
+# --------------------------------------------------------------------------- #
+# Audit fixes: decomposition parsing, ranker weight validation
+# --------------------------------------------------------------------------- #
+class _StubDecomposeLLM:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def load_llm(self):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            invoke=lambda _payload: SimpleNamespace(content=self._text)
+        )
+
+
+def test_decompose_parses_json_array():
+    agent = _make_agent()
+    agent.config.enable_decomposition_step = True
+    agent.llm = _StubDecomposeLLM('["What is X?", "What is Y?"]')
+    out = agent._decompose({"question": "complex question?"})
+    assert out["sub_questions"] == ["What is X?", "What is Y?"]
+
+
+def test_decompose_fallback_strips_numbering_and_bullets():
+    agent = _make_agent()
+    agent.config.enable_decomposition_step = True
+    agent.llm = _StubDecomposeLLM("1. What is X?\n2) What is Y?\n- What is Z?")
+    out = agent._decompose({"question": "complex question?"})
+    assert out["sub_questions"] == ["What is X?", "What is Y?", "What is Z?"]
+
+
+def test_decompose_fallback_never_returns_empty():
+    agent = _make_agent()
+    agent.config.enable_decomposition_step = True
+    agent.llm = _StubDecomposeLLM("   \n  ")
+    out = agent._decompose({"question": "complex question?"})
+    assert out["sub_questions"] == ["complex question?"]
+
+
+def test_ranker_weight_sum_warning_on_misconfiguration(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="graphrag"):
+        AgentConfig(ranker_weight_lexical=1.0, ranker_weight_mention=0.5)
+    assert any("Ranker weights sum" in record.message for record in caplog.records)
+
+
+def test_ranker_weight_no_warning_when_normalized(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="graphrag"):
+        AgentConfig()
+    assert not any("Ranker weights sum" in record.message for record in caplog.records)
+
+
+# --------------------------------------------------------------------------- #
+# Full-text retrieval: Lucene query building, indexed path, CONTAINS fallback
+# --------------------------------------------------------------------------- #
+def test_lucene_query_quotes_phrases_and_escapes_specials():
+    from graphrag.kg.manager import KnowledgeGraphManager
+
+    query = KnowledgeGraphManager._lucene_query(
+        ["circular economy", "UNISG", 'waste:type', "", "  "]
+    )
+    assert query == '"circular economy" OR UNISG OR waste\\:type'
+
+
+def test_lucene_query_empty_terms_yield_empty_query():
+    from graphrag.kg.manager import KnowledgeGraphManager
+
+    assert KnowledgeGraphManager._lucene_query(["", None, "  "]) == ""
+
+
+class _StubKGStore:
+    """KG store stub: indexed rows when available, CONTAINS rows otherwise."""
+
+    def __init__(self, indexed_nodes):
+        self.indexed_nodes = indexed_nodes
+        self.contains_calls = 0
+
+    def fulltext_search_nodes(self, terms, labels=None, limit=None):
+        return self.indexed_nodes
+
+    def fulltext_search_triples(
+        self, terms, labels=None, relationship_types=None, limit=None
+    ):
+        return None
+
+    def extract_nodes(self, text=None, labels=None, limit=None):
+        self.contains_calls += 1
+        return [{"node_id": f"contains-{text}", "labels": [], "properties": {}, "text": text}]
+
+
+def test_collect_nodes_uses_single_indexed_query_and_dedups():
+    node = {"node_id": "n1", "labels": ["Concept"], "properties": {}, "text": "X"}
+    store = _StubKGStore(indexed_nodes=[node, dict(node), dict(node)])
+    retriever = KGRetriever(kg_store=store, config=AgentConfig())
+
+    result = retriever._collect_nodes(["term a", "term b"], limit=10)
+
+    assert len(result) == 1
+    assert store.contains_calls == 0
+
+
+def test_collect_nodes_falls_back_to_contains_scan_when_index_missing():
+    store = _StubKGStore(indexed_nodes=None)
+    retriever = KGRetriever(kg_store=store, config=AgentConfig())
+
+    result = retriever._collect_nodes(["term a", "term b"], limit=10)
+
+    assert store.contains_calls == 2
+    assert len(result) == 2
+
+
+def test_search_terms_ignore_italian_elision_apostrophes():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    terms = retriever._build_search_terms(
+        query_text="Che cos'è l'economia circolare nel sistema alimentare?",
+        configured_entity="",
+    )
+    assert "è l" not in terms
+    assert "Che" not in terms
+    lowered = [t.lower() for t in terms]
+    assert "economia" in lowered
+    assert "circolare" in lowered
+
+
+def test_quoted_entities_still_extracted_from_real_quotes():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates(
+        'What does "Materia Rinnovabile" say about \'Mimica Touch\'?'
+    )
+    assert "Materia Rinnovabile" in candidates
+    assert "Mimica Touch" in candidates
