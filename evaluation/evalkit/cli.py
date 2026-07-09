@@ -323,6 +323,7 @@ def cmd_kg(args: argparse.Namespace) -> int:
             neo4j_url=os.getenv("NEO4J_URL", "bolt://localhost:7687"),
             neo4j_user=os.getenv("NEO4J_USERNAME", "neo4j"),
             neo4j_password=os.getenv("NEO4J_PASSWORD", ""),
+            database=os.getenv("NEO4J_DATABASE") or "neo4j",
         )
     else:
         if not args.run_dir:
