@@ -608,6 +608,13 @@ class KGRAGAgent:
                 state.get("chosen_retrieval_mode", "HYBRID"),
                 str(query)[:200],
             )
+            if LLMManager._detect_query_language(query) == "it":
+                return {
+                    "answer": (
+                        "Il contesto disponibile non è sufficiente per dare una risposta fondata. "
+                        "Prova a riformulare la domanda o a renderla più specifica."
+                    )
+                }
             return {
                 "answer": (
                     "The provided context is insufficient to generate a grounded response. "
@@ -1034,12 +1041,20 @@ class KGRAGAgent:
                 self.config.recursion_limit,
                 question,
             )
-            output = {
-                "answer": (
-                    "Il processo ha raggiunto il limite di ricorsione dell'agente prima di convergere. "
-                    "Prova con una domanda piu specifica o aumenta --recursion-limit."
-                )
-            }
+            if LLMManager._detect_query_language(question) == "it":
+                output = {
+                    "answer": (
+                        "Il processo ha raggiunto il limite di ricorsione dell'agente prima di convergere. "
+                        "Prova con una domanda piu specifica o aumenta --recursion-limit."
+                    )
+                }
+            else:
+                output = {
+                    "answer": (
+                        "The agent hit its recursion limit before converging. "
+                        "Try a more specific question or raise --recursion-limit."
+                    )
+                }
         latency_ms = (time.perf_counter() - start) * 1000.0
         output["latency_ms"] = latency_ms
         return output
