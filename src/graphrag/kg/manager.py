@@ -538,9 +538,13 @@ class KnowledgeGraphManager:
         MATCH (a)
         WHERE {self._node_text_match_clause("a", "entity_a", exact=True)}
         WITH DISTINCT a
+        ORDER BY size({self._coalesce_name_expr("a")}) ASC
+        LIMIT 8
         MATCH (b)
         WHERE {self._node_text_match_clause("b", "entity_b", exact=True)}
         WITH DISTINCT a, b
+        ORDER BY size({self._coalesce_name_expr("b")}) ASC
+        LIMIT 16
         MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
         UNWIND relationships(p) AS r
         RETURN DISTINCT
@@ -570,13 +574,21 @@ class KnowledgeGraphManager:
             return []
 
         if not rows:
+            # The CONTAINS fallback can match hundreds of nodes per side on
+            # generic terms ("food"): unbounded, the a×b cartesian product of
+            # shortestPath calls takes tens of seconds and floods the context
+            # with deep-path noise. Shortest names first ≈ most canonical.
             cypher_fallback = f"""
             MATCH (a)
             WHERE {self._node_text_match_clause("a", "entity_a", exact=False)}
             WITH DISTINCT a
+            ORDER BY size({self._coalesce_name_expr("a")}) ASC
+            LIMIT 8
             MATCH (b)
             WHERE {self._node_text_match_clause("b", "entity_b", exact=False)}
             WITH DISTINCT a, b
+            ORDER BY size({self._coalesce_name_expr("b")}) ASC
+            LIMIT 16
             MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
             UNWIND relationships(p) AS r
             RETURN DISTINCT
