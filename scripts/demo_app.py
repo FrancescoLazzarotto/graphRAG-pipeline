@@ -126,7 +126,7 @@ def _ask(agent: KGRAGAgent, model_id: str, question: str) -> str:
     return shown
 
 
-st.set_page_config(page_title="Demo GraphRAG — Economia Circolare del Cibo", page_icon="🌱")
+st.set_page_config(page_title="Demo GraphRAG — Economia Circolare del Cibo", page_icon="")
 st.title("Demo GraphRAG")
 st.caption("Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.")
 
