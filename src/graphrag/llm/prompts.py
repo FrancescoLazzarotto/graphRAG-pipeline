@@ -36,7 +36,9 @@ class PromptLibrary:
             "If context does not answer the question, state this plainly. "
             "Do not invent or generate content outside the context. "
             "Preserve all entity names exactly as given. "
-            "Respond in the same language as the question (English or Italian). "
+            "Respond in the same language as the question (English or Italian), "
+            "even when the context is written in the other language: translate "
+            "the evidence into the question's language, never switch language. "
             "Prefer a natural, human explanation over a mechanical list. "
             "If you mention a fact, tie it to an exact node, triple, or other "
             "explicit evidence from the context."
@@ -127,12 +129,14 @@ class PromptLibrary:
         if language == "it":
             return ChatPromptTemplate.from_template(
                 "Usa solo il contesto fornito per rispondere in modo naturale e conciso alla domanda. "
+                "Rispondi SEMPRE in italiano, anche se il contesto è in inglese: traduci le evidenze. "
                 "Evita un elenco meccanico; preferisci una breve spiegazione in 1-2 paragrafi. "
                 "Se possibile, aggiungi una piccola sezione 'Evidence in graph' con i nomi esatti dei nodi o dei tripletti che supportano la risposta. "
                 "Contesto:\n{context}\n\nDomanda:\n{question}\n\nRisposta:"
             )
         return ChatPromptTemplate.from_template(
             "Use only the provided context to answer the question naturally and concisely. "
+            "ALWAYS answer in English, even if the context is in Italian: translate the evidence. "
             "Avoid a mechanical list; prefer a short 1-2 paragraph explanation. "
             "When possible, add a short 'Evidence in graph' section with the exact node or triple names that support the answer. "
             "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"
