@@ -575,6 +575,7 @@ class LLMManager:
             "della",
             "delle",
             "perche",
+            "perché",
             "quali",
             "quale",
             "come",
@@ -582,11 +583,44 @@ class LLMManager:
             "rispetto",
             "tra",
             "sulla",
+            # Elided forms tokenize with the apostrophe attached, so plain
+            # articles never match them; accented "è" and "cos'è" are the
+            # strongest single-token signals in short Italian questions.
+            "è",
+            "che",
+            "cosa",
+            "cos'è",
+            "qual",
+            "dove",
+            "chi",
+            "quando",
+            "quanto",
+            "quanti",
+            "quante",
+            "del",
+            "dei",
+            "dello",
+            "degli",
+            "nel",
+            "nella",
+            "una",
+            "uno",
+            "più",
+            "può",
+            "viene",
+            "vengono",
+            # Bare prepositions/articles that have no English homograph:
+            # they carry verbless fragments like "Esempi di X a Torino?".
+            "di",
+            "da",
+            "su",
+            "un",
         }
         english_markers = {
             "the",
             "which",
             "what",
+            "what's",
             "why",
             "how",
             "are",
@@ -594,6 +628,15 @@ class LLMManager:
             "between",
             "about",
             "regarding",
+            "does",
+            "do",
+            "can",
+            "could",
+            "of",
+            "and",
+            "to",
+            "from",
+            "with",
         }
 
         tokens = re.findall(r"[a-zà-öø-ÿ']+", text)
