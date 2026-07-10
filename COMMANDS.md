@@ -94,6 +94,22 @@ tail -f artifacts/experiments/run_my_run.log
 
 ---
 
+## 1b. Streamlit Demo — `scripts/demo_app.py`
+
+Browser UI over the GraphRAG agent (text box, spinner, answer + sources). Logs every exchange to `artifacts/demo_sessions/`.
+
+```bash
+conda run -n graphllm streamlit run scripts/demo_app.py --server.address 0.0.0.0 --server.port 8501
+```
+
+From your local machine, tunnel then browse `http://localhost:8501`:
+
+```bash
+ssh -L 8501:localhost:8501 <user>@<server>
+```
+
+---
+
 ## 2. KG Pipeline — `kg_pipeline/main.py`
 
 Builds the knowledge graph from source documents and ingests it into Neo4j. Runs across 7 sequential stages with JSON checkpoint recovery — the pipeline can be resumed from any stage.
