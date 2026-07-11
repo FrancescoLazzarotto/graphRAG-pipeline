@@ -43,6 +43,14 @@ logger = logging.getLogger("expert_demo")
 STRATEGY = os.environ.get("DEMO_STRATEGY", "hybrid")
 MAX_CONTEXT_TOKENS = int(os.environ.get("DEMO_MAX_CONTEXT_TOKENS", "6000"))
 MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "512"))
+# Show the full model answer (including 'Verifica nel grafo'); ask the prompt
+# for a 'Limits and confidence' section on every answer, not only sparse ones.
+SHOW_FULL_ANSWER = os.environ.get("DEMO_SHOW_FULL_ANSWER", "1") == "1"
+ALWAYS_LIMITS = os.environ.get("DEMO_ALWAYS_LIMITS", "1") == "1"
+# Separates the prose body from the raw evidence block in stored messages;
+# the renderer shows what follows inside a monospace expander so triple IDs
+# and <doc.pdf> references are not parsed as Markdown links/HTML.
+EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
 TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
 ENV_FILE = os.environ.get("DEMO_ENV_FILE", str(ROOT / "kg_pipeline" / ".env"))
 LOG_DIR = Path(os.environ.get("DEMO_LOG_DIR", str(ROOT / "artifacts" / "demo_sessions")))
@@ -74,7 +82,10 @@ def _load_agent() -> tuple[KGRAGAgent, str]:
         st.stop()
 
     kg_manager = KnowledgeGraphManager(build_kg_config_from_env())
-    base = AgentConfig(max_content_tokens=MAX_CONTEXT_TOKENS)
+    base = AgentConfig(
+        max_content_tokens=MAX_CONTEXT_TOKENS,
+        always_include_limits=ALWAYS_LIMITS,
+    )
     config = apply_strategy(base, STRATEGY)
 
     text_pipeline = (
@@ -113,8 +124,10 @@ def _ask(agent: KGRAGAgent, model_id: str, question: str) -> str:
         elapsed = time.perf_counter() - started
         record["answer"] = answer
         record["latency_s"] = round(elapsed, 2)
-        shown = answer.split("\nVerifica nel grafo:")[0].strip()
-        shown += f"\n\n*[{elapsed:.0f}s]*"
+        body, sep, evidence = answer.partition("\nVerifica nel grafo:")
+        shown = body.strip() + f"\n\n*[{elapsed:.0f}s]*"
+        if sep and SHOW_FULL_ANSWER:
+            shown += EVIDENCE_MARKER + evidence.strip()
     except Exception as exc:  # noqa: BLE001 - UI must survive any failure
         elapsed = time.perf_counter() - started
         record["error"] = f"{type(exc).__name__}: {exc}"
@@ -136,9 +149,17 @@ st.caption(f"strategia: {STRATEGY} | modello: {model_id}")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+def _render(content: str) -> None:
+    body, sep, evidence = content.partition(EVIDENCE_MARKER)
+    st.markdown(body)
+    if sep:
+        with st.expander("Verifica nel grafo (evidenze)"):
+            st.code(evidence, language=None)
+
+
 for role, content in st.session_state.messages:
     with st.chat_message(role):
-        st.markdown(content)
+        _render(content)
 
 question = st.chat_input("Scrivi qui la tua domanda...")
 if question:
@@ -148,5 +169,5 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Sto consultando il grafo e i documenti (10-30 secondi)..."):
             answer = _ask(agent, model_id, question)
-        st.markdown(answer)
+        _render(answer)
     st.session_state.messages.append(("assistant", answer))
