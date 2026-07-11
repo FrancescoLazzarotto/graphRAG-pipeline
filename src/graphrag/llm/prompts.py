@@ -53,8 +53,17 @@ class PromptLibrary:
             "If context has at least some factual evidence, provide the best "
             "grounded answer possible in 1-2 short paragraphs. "
             "Avoid a checklist style unless the user explicitly asks for a list. "
-            "If context is sparse, include a short section titled "
-            "'Limits and confidence'. "
+            + (
+                "Always include a short section titled 'Limits and confidence' "
+                "assessing how strong the supporting evidence is. "
+                "Keep the main paragraphs free of inline triple citations in "
+                "parentheses; cite nodes and triples only in the dedicated "
+                "evidence section. "
+                if config.always_include_limits
+                else "If context is sparse, include a short section titled "
+                "'Limits and confidence'. "
+            )
+            +
             "When possible, add a short 'Evidence in graph' section with the "
             "exact node or triple names that support the answer. "
             "State that context is insufficient only when context is empty or "
