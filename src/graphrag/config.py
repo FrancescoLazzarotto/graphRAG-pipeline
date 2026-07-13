@@ -68,6 +68,10 @@ class AgentConfig:
     # preserve arrival order by default; enable to re-rank them globally by
     # score. Off by default to keep existing baselines unchanged.
     rerank_merged_results: bool = False
+    # The answer prompt asks for a 'Limits and confidence' section only when
+    # context is sparse; enable to request it on every answer (demo UX). Off
+    # by default to keep existing baselines unchanged.
+    always_include_limits: bool = False
     # Triples carry no per-edge confidence yet (see KG-side item B8), so the
     # confidence weight is 0.0 and lexical/mention absorb it. Keeping the field
     # lets a future confidence signal be re-enabled without code changes.
