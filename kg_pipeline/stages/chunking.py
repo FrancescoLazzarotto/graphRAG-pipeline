@@ -174,6 +174,14 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
             continue
 
         top_sections = [s for s in doc.sections if s.level == 1] or doc.sections
+        # Some PDFs expose heading-only level-1 metadata (start_page ==
+        # end_page for every section), so windowing those ranges would drop
+        # nearly the whole document. If level-1 ranges cover less than half
+        # of the pages, fall back to all sections — the same path used by
+        # documents that have no level-1 sections at all.
+        coverage = sum(s.end_page - s.start_page + 1 for s in top_sections)
+        if coverage < 0.5 * doc.page_count:
+            top_sections = doc.sections
         for section in top_sections:
             paragraphs = _paragraphs_for_range(
                 doc=doc,
