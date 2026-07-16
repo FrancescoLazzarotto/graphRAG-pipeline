@@ -21,6 +21,7 @@ Subcommands:
     judge            Run LLM-as-a-Judge
     ragas            Run RAGAS metrics
     kg               Compute KG quality metrics
+    gold-triples     Extract/apply gold triple candidates from Neo4j
     report-experiment  Full report for one experiment run
     report-project   Full report across all runs (project-level)
     baseline-update  Update baseline metrics file
@@ -287,6 +288,12 @@ def cmd_ragas(args: argparse.Namespace) -> int:
         metric_names=metric_names,
         judge_model=args.judge_model or "",
         embed_model=args.embed_model,
+        judge_backend=args.judge_backend,
+        vllm_base_url=args.vllm_base_url,
+        vllm_model=args.vllm_model,
+        vllm_api_key=args.vllm_api_key,
+        max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature,
     )
 
     if args.save_summary_json:
@@ -341,6 +348,42 @@ def cmd_kg(args: argparse.Namespace) -> int:
     else:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
 
+    return 0
+
+
+# ─── Subcommand: gold-triples ────────────────────────────────────────────────
+
+def cmd_gold_triples(args: argparse.Namespace) -> int:
+    import os
+
+    from evalkit.kg.gold_triples import apply_review, extract_candidates
+
+    gold_path = Path(args.gold)
+    out_path = Path(args.out)
+
+    if args.mode == "apply":
+        if not args.candidates:
+            logger.error("--candidates required in apply mode")
+            return 1
+        summary = apply_review(
+            gold_path=gold_path,
+            candidates_path=Path(args.candidates),
+            out_path=out_path,
+        )
+    else:
+        summary = extract_candidates(
+            gold_path=gold_path,
+            out_path=out_path,
+            neo4j_url=os.getenv("NEO4J_URL", "bolt://localhost:7687"),
+            neo4j_user=os.getenv("NEO4J_USERNAME", "neo4j"),
+            neo4j_password=os.getenv("NEO4J_PASSWORD", ""),
+            database=os.getenv("NEO4J_DATABASE") or "neo4j",
+            max_per_question=args.max_per_question,
+            bridge=not args.no_bridge,
+            min_score=args.min_score,
+        )
+
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -564,8 +607,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("ragas", help="RAGAS generative metrics")
     p.add_argument("--input", required=True)
     p.add_argument("--metrics", default="faithfulness,answer_relevancy,answer_correctness,context_precision,context_recall")
-    p.add_argument("--judge-model", default="")
+    p.add_argument("--judge-backend", choices=["transformers", "vllm"], default="transformers",
+                   help="'transformers' loads --judge-model in-process; 'vllm' calls an OpenAI-compatible endpoint")
+    p.add_argument("--judge-model", default="", help="HF model id for the transformers backend")
     p.add_argument("--embed-model", default="sentence-transformers/all-MiniLM-L6-v2")
+    p.add_argument("--vllm-base-url", default="", help="vLLM endpoint (vllm backend); defaults to $VLLM_BASE_URL")
+    p.add_argument("--vllm-model", default="", help="model id served by the vLLM endpoint; defaults to $VLLM_MODEL_NAME")
+    p.add_argument("--vllm-api-key", default="", help="endpoint API key; defaults to $VLLM_API_KEY/$OPENAI_API_KEY")
+    p.add_argument("--max-new-tokens", type=int, default=192, help="max tokens the judge may generate per call")
+    p.add_argument("--temperature", type=float, default=0.0)
     p.add_argument("--save-row-csv", default="")
     p.add_argument("--save-summary-json", default="")
 
@@ -574,6 +624,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-dir", default="")
     p.add_argument("--neo4j", action="store_true")
     p.add_argument("--out", default="")
+
+    # gold-triples
+    p = sub.add_parser(
+        "gold-triples",
+        help="Extract gold triple candidates from Neo4j / apply reviewed candidates to a gold CSV",
+    )
+    p.add_argument("--mode", choices=["extract", "apply"], default="extract")
+    p.add_argument("--gold", required=True, help="Gold CSV (question, expected_entities, ...)")
+    p.add_argument("--out", required=True, help="extract: candidates CSV; apply: new gold CSV")
+    p.add_argument("--candidates", default="", help="Reviewed candidates CSV (apply mode)")
+    p.add_argument("--max-per-question", type=int, default=30)
+    p.add_argument("--no-bridge", action="store_true", help="Skip 2-hop bridging triples between matched entities")
+    p.add_argument("--min-score", type=float, default=0.0)
 
     # report-experiment
     p = sub.add_parser("report-experiment", help="Full report for one experiment run")
@@ -611,6 +674,7 @@ SUBCOMMAND_MAP = {
     "judge-compare": cmd_judge_compare,
     "ragas": cmd_ragas,
     "kg": cmd_kg,
+    "gold-triples": cmd_gold_triples,
     "report-experiment": cmd_report_experiment,
     "report-project": cmd_report_project,
     "baseline-update": cmd_baseline_update,
