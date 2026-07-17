@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import dataclasses
 import json
 import logging
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 
 from graphrag.agent.core import KGRAGAgent
 from graphrag.config import AgentConfig, DEFAULT_MODEL_ID, build_kg_config_from_env
-from graphrag.experiments import ExperimentRunner
+from graphrag.experiments import ExperimentRunner, Question
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -98,7 +99,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Run batch experiments and persist outputs",
     )
     parser.add_argument(
-        "--questions-file", help="Path to a UTF-8 text file with one question per line"
+        "--questions-file",
+        help="Questions to run. .txt: one question per line (optionally "
+             "'Q01<TAB>question' to carry the gold id); .json: the gold's "
+             "{'queries': [{'query_id','query'}]} shape; .jsonl: one such object "
+             "per line; .csv: query_id + query columns. Declaring ids lets the "
+             "evaluator join results to the gold by query_id instead of by text.",
     )
     parser.add_argument(
         "--strategies", default="default", help="Comma-separated strategy presets"
@@ -230,21 +236,186 @@ def _build_text_pipeline(args: argparse.Namespace) -> StandardTextRAGPipeline | 
     return None
 
 
-def _load_questions(args: argparse.Namespace) -> list[str]:
+def _question_from_obj(obj: dict, where: str) -> Question:
+    """Build a Question from a JSON/JSONL/CSV entry.
+
+    Args:
+        obj: Mapping with a question field and an optional id field.
+        where: Human-readable location, for error messages.
+
+    Returns:
+        The parsed Question.
+
+    Raises:
+        ValueError: If no question text field is present.
+    """
+    text = str(
+        obj.get("query") or obj.get("question") or obj.get("text") or ""
+    ).strip()
+    if not text:
+        raise ValueError(f"{where}: entry has no 'query'/'question'/'text' field")
+    query_id = str(obj.get("query_id") or obj.get("id") or "").strip()
+    return Question(text=text, query_id=query_id)
+
+
+def _questions_from_text(path: Path) -> list[Question]:
+    """Parse the plain-text format: one question per line.
+
+    A line may optionally carry its gold id as ``Q01<TAB>question text``. Lines
+    without a TAB keep their legacy meaning — the whole line is the question and
+    the run emits no id for it.
+    """
+    questions: list[Question] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        query_id = ""
+        text = line
+        if "\t" in line:
+            head, _, tail = line.partition("\t")
+            if head.strip() and tail.strip():
+                query_id, text = head.strip(), tail.strip()
+            else:
+                text = line.replace("\t", " ").strip()
+        questions.append(Question(text=text, query_id=query_id))
+    return questions
+
+
+def _questions_from_jsonl(path: Path) -> list[Question]:
+    """Parse a JSONL questions file: one {query_id, query} object per line."""
+    questions: list[Question] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path}:{lineno}: invalid JSON: {exc}") from exc
+        if not isinstance(obj, dict):
+            raise ValueError(f"{path}:{lineno}: expected a JSON object")
+        questions.append(_question_from_obj(obj, f"{path}:{lineno}"))
+    return questions
+
+
+def _questions_from_json(path: Path) -> list[Question]:
+    """Parse a JSON questions file.
+
+    Accepts the gold's own shape (``{"queries": [{"query_id", "query"}, ...]}``),
+    so a gold file can be handed straight to --questions-file and the run is
+    guaranteed to emit ids that join to it. A bare list of objects or of plain
+    strings also works.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
+
+    if isinstance(payload, dict):
+        raw_entries = payload.get("queries")
+        if raw_entries is None:
+            raise ValueError(f"{path}: JSON object has no 'queries' array")
+    elif isinstance(payload, list):
+        raw_entries = payload
+    else:
+        raise ValueError(f"{path}: expected a JSON object with 'queries' or a list")
+
+    if not isinstance(raw_entries, list):
+        raise ValueError(f"{path}: 'queries' must be a list")
+
+    questions: list[Question] = []
+    for idx, entry in enumerate(raw_entries):
+        if isinstance(entry, str):
+            if entry.strip():
+                questions.append(Question(text=entry.strip()))
+        elif isinstance(entry, dict):
+            questions.append(_question_from_obj(entry, f"{path}[{idx}]"))
+        else:
+            raise ValueError(f"{path}[{idx}]: expected an object or a string")
+    return questions
+
+
+def _questions_from_csv(path: Path) -> list[Question]:
+    """Parse a CSV questions file with a query/question column and optional query_id."""
+    questions: list[Question] = []
+    with path.open("r", encoding="utf-8", newline="") as file_obj:
+        reader = csv.DictReader(file_obj)
+        for lineno, row in enumerate(reader, start=2):
+            if not any((v or "").strip() for v in row.values()):
+                continue
+            questions.append(_question_from_obj(dict(row), f"{path}:{lineno}"))
+    return questions
+
+
+def _load_questions(args: argparse.Namespace) -> list[Question]:
+    """Load the questions to run, with their gold ids when the file declares them.
+
+    Supported --questions-file formats, picked by suffix:
+      * ``.txt`` / anything else: one question per line (legacy), optionally
+        ``Q01<TAB>question text``;
+      * ``.json``: the gold's ``{"queries": [...]}`` shape, or a bare list;
+      * ``.jsonl``: one ``{"query_id", "query"}`` object per line;
+      * ``.csv``: a ``query_id`` column plus ``query`` or ``question``.
+
+    Returns:
+        The questions in file order.
+
+    Raises:
+        FileNotFoundError: If the questions file does not exist.
+        ValueError: If the file is empty, malformed, or repeats a query_id.
+    """
+    logger = logging.getLogger("graphrag.cli")
+
     if not args.questions_file:
-        return [args.question]
+        return [Question(text=args.question)]
 
     questions_path = Path(args.questions_file)
     if not questions_path.exists():
         raise FileNotFoundError(f"Questions file not found: {questions_path}")
 
-    questions = [
-        line.strip()
-        for line in questions_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    suffix = questions_path.suffix.lower()
+    if suffix == ".json":
+        questions = _questions_from_json(questions_path)
+    elif suffix == ".jsonl":
+        questions = _questions_from_jsonl(questions_path)
+    elif suffix == ".csv":
+        questions = _questions_from_csv(questions_path)
+    else:
+        questions = _questions_from_text(questions_path)
+
     if not questions:
         raise ValueError(f"Questions file is empty: {questions_path}")
+
+    ids = [q.query_id for q in questions if q.query_id]
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicates:
+        # Duplicated ids would make the evaluator's join ambiguous, and it joins
+        # on exactly this field.
+        raise ValueError(
+            f"{questions_path}: duplicate query_id(s) {duplicates}"
+        )
+
+    if not ids:
+        logger.warning(
+            "Questions file %s declares no query_id: results.jsonl will carry an "
+            "empty query_id and the evaluator must fall back to joining on "
+            "question TEXT. Use a gold .json/.jsonl/.csv, or 'Q01<TAB>question' "
+            "lines, to join by id.",
+            questions_path,
+        )
+    elif len(ids) < len(questions):
+        logger.warning(
+            "Questions file %s declares query_id for only %d/%d questions; the "
+            "rest will fall back to a text join at evaluation time.",
+            questions_path,
+            len(ids),
+            len(questions),
+        )
+    else:
+        logger.info(
+            "Loaded %d questions with query_id from %s", len(questions), questions_path
+        )
     return questions
 
 
@@ -340,6 +511,9 @@ def _run_experiments(
                 "timestamp": timestamp,
                 "tag": tag,
                 "questions_count": len(questions),
+                # Lets a reader tell at a glance whether this run can be joined
+                # to the gold by id or only by question text.
+                "questions_with_query_id": sum(1 for q in questions if q.query_id),
                 "strategies": strategies,
                 "runs_per_strategy": args.runs_per_strategy,
                 "llm": {

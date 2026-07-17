@@ -13,12 +13,30 @@ class SupportsInvoke(Protocol):
     def invoke(self, question: str) -> dict[str, Any]: ...
 
 
+@dataclass(frozen=True)
+class Question:
+    """One benchmark question, optionally carrying its gold identifier.
+
+    Attributes:
+        text: The question as sent to the agent.
+        query_id: Gold query id (``Q01``…``Q30``) when the questions file
+            declares one, else "". Emitting it into results.jsonl is what lets
+            the evaluator join runs to the gold by id instead of by question
+            text.
+    """
+
+    text: str
+    query_id: str = ""
+
+
 @dataclass
 class ExperimentResult:
     strategy: str
     question: str
     answer: str
     latency_ms: float
+    # Empty for questions files that declare no ids (legacy one-per-line format).
+    query_id: str = ""
     kg_triples_used: int = 0
     kg_neighbors_used: int = 0
     kg_subgraph_triples_used: int = 0
@@ -32,8 +50,19 @@ class ExperimentResult:
 
 
 class ExperimentRunner:
-    def __init__(self, questions: list[str]) -> None:
-        self.questions = questions
+    """Runs a list of questions against one or more agents and exports artifacts."""
+
+    def __init__(self, questions: list[str] | list[Question]) -> None:
+        """Initialise the runner.
+
+        Args:
+            questions: Either plain question strings (legacy, no gold ids) or
+                Question objects carrying query_id. Both forms are accepted so
+                existing callers keep working unchanged.
+        """
+        self.questions: list[Question] = [
+            q if isinstance(q, Question) else Question(text=str(q)) for q in questions
+        ]
         self.results: list[ExperimentResult] = []
 
     def run_agent(
@@ -44,7 +73,8 @@ class ExperimentRunner:
     ) -> list[ExperimentResult]:
         batch: list[ExperimentResult] = []
         total = len(self.questions)
-        for idx, question in enumerate(self.questions, start=1):
+        for idx, item in enumerate(self.questions, start=1):
+            question = item.text
             state = agent.invoke(question)
             metadata: dict[str, Any] = {"run_id": state.get("run_id", "")}
             if run_metadata:
@@ -63,6 +93,7 @@ class ExperimentRunner:
                 question=question,
                 answer=answer,
                 latency_ms=float(state.get("latency_ms", 0.0)),
+                query_id=item.query_id,
                 kg_triples_used=len(state.get("kg_triples", []))
                 if isinstance(state.get("kg_triples", []), list)
                 else 0,
@@ -220,6 +251,7 @@ class ExperimentRunner:
             writer = csv.writer(output_file)
             writer.writerow(
                 [
+                    "query_id",
                     "strategy",
                     "question",
                     "answer",
@@ -238,6 +270,7 @@ class ExperimentRunner:
             for result in self.results:
                 writer.writerow(
                     [
+                        result.query_id,
                         result.strategy,
                         result.question,
                         result.answer,

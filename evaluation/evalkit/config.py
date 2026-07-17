@@ -22,8 +22,16 @@ class JudgeConfig:
         default_factory=lambda: os.getenv("VLLM_API_KEY") or os.getenv("OPENAI_API_KEY") or "EMPTY"
     )
     api_provider: str = "anthropic"  # "anthropic" | "openai"
+    # factual_correctness no longer folds in coverage, so completeness must be asked
+    # for explicitly or a default run silently drops one of the gold's judge_dimensions.
+    # `abstention` is not listed: it is applied automatically to distractor rows only.
     rubrics: list[str] = field(
-        default_factory=lambda: ["answer_correctness", "groundedness", "relevance"]
+        default_factory=lambda: [
+            "factual_correctness",
+            "completeness",
+            "groundedness",
+            "relevance",
+        ]
     )
     max_new_tokens: int = 256
     cache_size: int = 256

@@ -105,7 +105,17 @@ RETRIEVAL_REPORT_METRICS = [
     "hit_at_k", "ndcg_at_k", "mrr", "map",
 ]
 TEXT_REPORT_METRICS = ["exact_match", "token_f1", "rouge_l", "bleu"]
-JUDGE_REPORT_METRICS = ["answer_correctness", "groundedness", "relevance", "completeness"]
+# Canonical rubrics first, then `answer_correctness` so historic artifacts — scored
+# before it was split into factual_correctness + completeness — still render.
+# `abstention` only carries a value on distractor rows; it stays blank elsewhere.
+JUDGE_REPORT_METRICS = [
+    "factual_correctness",
+    "completeness",
+    "groundedness",
+    "relevance",
+    "abstention",
+    "answer_correctness",
+]
 
 
 def render_experiment(report: ReportModel, plots_dir: Path | None = None) -> str:

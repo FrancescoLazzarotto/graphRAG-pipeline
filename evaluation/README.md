@@ -59,8 +59,14 @@ Metrics include:
 
 ## 3b) LLM-as-a-Judge
 
-Scores generated answers against the gold set on `answer_correctness`,
-`groundedness`, `relevance` (JSON score + rationale per row, with bootstrap CIs).
+Scores generated answers against the gold set on `factual_correctness`,
+`completeness`, `groundedness`, `relevance` (JSON score + rationale per row,
+with bootstrap CIs). `abstention` is applied automatically to distractor rows;
+`answer_correctness` survives only as a legacy alias for `factual_correctness`.
+Groundedness and relevance never see the ground truth (rubric
+`uses_ground_truth=False`), and every pipeline's evidence is rendered through
+the same `## Retrieved Evidence` block, so the judge cannot tell pipelines
+apart by format.
 The judge model is pluggable via `--backend` — pick the one that fits your wallet:
 
 | `--backend` | Auth | Cost | Reproducible | When |

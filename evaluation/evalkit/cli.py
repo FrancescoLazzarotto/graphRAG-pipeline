@@ -583,7 +583,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--claude-bin", default="",
         help="Path to the claude CLI for --backend claude_code (default: $CLAUDE_CODE_BIN or 'claude')",
     )
-    p.add_argument("--rubrics", default="answer_correctness,groundedness,relevance")
+    p.add_argument(
+        "--rubrics",
+        default="factual_correctness,completeness,groundedness,relevance",
+        help=(
+            "Comma-separated rubric names. 'abstention' is applied automatically to "
+            "distractor rows and need not be listed. The legacy name "
+            "'answer_correctness' still resolves, with a deprecation warning."
+        ),
+    )
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument(
         "--batch-size", type=int, default=1,

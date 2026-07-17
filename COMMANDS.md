@@ -537,7 +537,7 @@ conda run -n graphllm python -m evalkit.cli judge-compare \
 | `--model` | Judge model. `claude_code`: `haiku` / `sonnet`. `api`: full id, e.g. `claude-sonnet-4-6` |
 | `--provider` | `anthropic` / `openai` (only for `--backend api`) |
 | `--claude-bin` | Path to the `claude` binary (or set `CLAUDE_CODE_BIN`) |
-| `--rubrics` | Comma list (default `answer_correctness,groundedness,relevance`) |
+| `--rubrics` | Comma list (default `factual_correctness,completeness,groundedness,relevance`; `answer_correctness` is a legacy alias for `factual_correctness`; `abstention` is applied automatically to distractor rows) |
 | `--batch-size` | Rows per call; always batched for `claude_code` (rate-limit friendly) |
 | `--resume` | Skip rows already in `<out>/judge_rows.jsonl` (recover an interrupted run) |
 | `--out` | Output directory |

@@ -7,11 +7,55 @@ from typing import Any
 
 from evalkit.judge.base import JudgeBackend, JudgeResult, extract_score, parse_judge_output
 from evalkit.judge.prompts import build_prompt
-from evalkit.judge.rubrics import Rubric, get_rubric
+from evalkit.judge.rubrics import (
+    ROW_KIND_ANSWERABLE,
+    ROW_KIND_DISTRACTOR,
+    Rubric,
+    resolve_rubrics,
+    row_kind,
+    rubrics_for_kind,
+    rubrics_for_row,
+)
 from evalkit.metrics.stats import aggregate, bootstrap_ci
 from evalkit.models import EvalRow
 
 logger = logging.getLogger("graphrag")
+
+# factual_correctness and completeness are the gold's own judge_dimensions, and
+# they are both here because they are scored apart: factual_correctness used to
+# fold coverage into accuracy (§5.4), so a run that drops completeness now loses
+# the dimension entirely rather than double-counting it.
+DEFAULT_RUBRIC_NAMES: tuple[str, ...] = (
+    "factual_correctness",
+    "completeness",
+    "groundedness",
+    "relevance",
+)
+
+
+def summary_rubric_names(rows: list[EvalRow], rubrics: list[Rubric]) -> list[str]:
+    """Rubric names a dataset's summary should carry.
+
+    The requested rubrics, plus any rubric the row kinds present in the data pull
+    in on their own — ``abstention`` is scored on distractor rows whether or not
+    it was requested (§5.3).
+
+    Args:
+        rows: The dataset about to be scored.
+        rubrics: The requested rubrics.
+
+    Returns:
+        Rubric names, requested ones first, each once.
+    """
+    names = [r.name for r in rubrics]
+    kinds_present = {row_kind(row) for row in rows}
+    for kind in (ROW_KIND_ANSWERABLE, ROW_KIND_DISTRACTOR):
+        if kind not in kinds_present:
+            continue
+        for rubric in rubrics_for_kind(kind, rubrics):
+            if rubric.name not in names:
+                names.append(rubric.name)
+    return names
 
 
 def summarize_row_scores(
@@ -98,9 +142,13 @@ class _JudgeCache:
 class LLMJudge:
     """Evaluate EvalRows using LLM-as-a-Judge with configurable rubrics.
 
+    Which rubrics run is decided per row, not once for the dataset: a distractor
+    row is scored on ``abstention`` alone (§5.3).
+
     Args:
         backend: A JudgeBackend instance (VLLMBackend, LocalHFBackend, or APIBackend).
-        rubric_names: List of rubric names to apply per row.
+        rubric_names: Rubric names to apply per row; legacy names are accepted
+            and resolved. Defaults to DEFAULT_RUBRIC_NAMES.
         cache_size: Maximum number of cached judge results.
     """
 
@@ -111,20 +159,17 @@ class LLMJudge:
         cache_size: int = 256,
     ) -> None:
         self.backend = backend
-        self.rubrics: list[Rubric] = [
-            get_rubric(name)
-            for name in (rubric_names or ["answer_correctness", "groundedness", "relevance"])
-        ]
+        self.rubrics: list[Rubric] = resolve_rubrics(rubric_names or DEFAULT_RUBRIC_NAMES)
         self._cache = _JudgeCache(maxsize=cache_size)
 
     def score_row(self, row: EvalRow) -> dict[str, JudgeResult]:
-        """Evaluate a single row against all rubrics.
+        """Evaluate a single row against the rubrics that apply to it.
 
         Returns:
             Dict mapping rubric_name → JudgeResult.
         """
         results: dict[str, JudgeResult] = {}
-        for rubric in self.rubrics:
+        for rubric in rubrics_for_row(row, self.rubrics):
             system, user = build_prompt(row, rubric)
             cached = self._cache.get(rubric.name, system, user)
             if cached is not None:
@@ -194,7 +239,7 @@ class LLMJudge:
 
         return summarize_row_scores(
             row_scores,
-            [r.name for r in self.rubrics],
+            summary_rubric_names(rows, self.rubrics),
             n_bootstrap=n_bootstrap,
             ci=ci,
             seed=seed,

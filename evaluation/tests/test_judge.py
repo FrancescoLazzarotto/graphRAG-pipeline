@@ -86,9 +86,15 @@ def test_extract_score_missing() -> None:
 
 
 def test_get_rubric_known() -> None:
-    rubric = get_rubric("answer_correctness")
-    assert rubric.name == "answer_correctness"
+    rubric = get_rubric("factual_correctness")
+    assert rubric.name == "factual_correctness"
     assert rubric.score_field == "correctness_score"
+
+
+def test_get_rubric_accepts_legacy_name() -> None:
+    # answer_correctness was renamed to factual_correctness (§5.4); the old name
+    # keeps resolving so historic configs and artifacts still load.
+    assert get_rubric("answer_correctness") is get_rubric("factual_correctness")
 
 
 def test_get_rubric_unknown() -> None:
@@ -101,19 +107,19 @@ def test_llm_judge_score_row() -> None:
         "correctness_score": 0.9,
         "rationale": "Very accurate.",
     })
-    judge = LLMJudge(backend=backend, rubric_names=["answer_correctness"])
+    judge = LLMJudge(backend=backend, rubric_names=["factual_correctness"])
     row = _make_row()
     results = judge.score_row(row)
-    assert "answer_correctness" in results
-    result = results["answer_correctness"]
+    assert "factual_correctness" in results
+    result = results["factual_correctness"]
     assert result.ok is True
-    assert result.scores["answer_correctness"] == pytest.approx(0.9)
+    assert result.scores["factual_correctness"] == pytest.approx(0.9)
     assert "Very accurate" in result.rationale
 
 
 def test_llm_judge_skips_row_with_skip_reason() -> None:
     backend = MockBackend({"correctness_score": 0.9, "rationale": "x"})
-    judge = LLMJudge(backend=backend, rubric_names=["answer_correctness"])
+    judge = LLMJudge(backend=backend, rubric_names=["factual_correctness"])
     row = _make_row(skip_reason="no_gold")
     result = judge.score_dataset([row])
     assert result["rows_evaluated"] == 0
@@ -122,12 +128,12 @@ def test_llm_judge_skips_row_with_skip_reason() -> None:
 
 def test_llm_judge_dataset_summary() -> None:
     backend = MockBackend({"correctness_score": 0.8, "rationale": "Fine."})
-    judge = LLMJudge(backend=backend, rubric_names=["answer_correctness"])
+    judge = LLMJudge(backend=backend, rubric_names=["factual_correctness"])
     rows = [_make_row() for _ in range(3)]
     result = judge.score_dataset(rows)
     assert result["rows_evaluated"] == 3
     assert result["rows_skipped"] == 0
-    summary = result["rubrics"]["answer_correctness"]
+    summary = result["rubrics"]["factual_correctness"]
     assert summary["mean"] == pytest.approx(0.8)
     assert summary["n"] == 3
 
@@ -141,7 +147,7 @@ def test_llm_judge_caches_results() -> None:
             call_count += 1
             return json.dumps({"correctness_score": 0.7, "rationale": "ok"})
 
-    judge = LLMJudge(backend=CountingBackend(), rubric_names=["answer_correctness"])
+    judge = LLMJudge(backend=CountingBackend(), rubric_names=["factual_correctness"])
     row = _make_row()
     judge.score_row(row)
     judge.score_row(row)  # same row → should hit cache

@@ -3,6 +3,67 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from evalkit.normalisation import match_key
+
+# Mapping status values from gold_entity_eval_protocol.md §4.
+MAPPING_EXACT = "exact"
+MAPPING_LOCAL = "benchmark_local_extension"
+
+
+@dataclass(frozen=True)
+class GoldEntity:
+    """One expected entity of a gold query (protocol §4).
+
+    Attributes:
+        label: Human-readable label as written in the gold.
+        normalised_label: Canonical form the shared resolver targets.
+        alt_labels: Accepted concept-level variants (synonyms, plurals, IT forms).
+        uri: Canonical vocabulary IRI, or a ``urn:ceff:`` local identifier, or None.
+        mapping_status: ``exact`` (counts at grounding-level) or
+            ``benchmark_local_extension`` (concept-level only).
+        vocabulary: Source vocabulary name, informational.
+        aligned_to: Broader CEON/AGROVOC class a local concept is aligned to.
+            A proposed alignment, never asserted equivalence — never scored.
+    """
+
+    label: str
+    normalised_label: str
+    alt_labels: tuple[str, ...]
+    uri: str | None
+    mapping_status: str
+    vocabulary: str = ""
+    aligned_to: str | None = None
+
+    @property
+    def counts_at_grounding_level(self) -> bool:
+        """True when the entity has a real vocabulary URI to be anchored to (§2b)."""
+        return self.mapping_status == MAPPING_EXACT
+
+    @property
+    def surface_forms(self) -> frozenset[str]:
+        """Every form accepted as a concept-level hit, as comparison keys (§2a)."""
+        forms = [self.normalised_label, *self.alt_labels]
+        return frozenset(match_key(f) for f in forms if match_key(f))
+
+
+@dataclass(frozen=True)
+class GoldQuery:
+    """One gold query with its expected answer and entities."""
+
+    query_id: str
+    query_type: str
+    query: str
+    expected_answer: str
+    expected_entities: tuple[GoldEntity, ...]
+    expected_relations: tuple[str, ...] = ()
+    distractor_expected: bool = False
+    source_verified: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def grounding_entities(self) -> tuple[GoldEntity, ...]:
+        """Entities in scope for grounding-level scoring (§2b: exact only)."""
+        return tuple(e for e in self.expected_entities if e.counts_at_grounding_level)
+
 
 @dataclass
 class EvalRow:
@@ -34,6 +95,8 @@ class EvalRow:
     sub_questions: int
     insufficient: bool
     skip_reason: str
+    gold_query: GoldQuery | None = None
+    pipeline: str = ""
 
     @property
     def has_gold(self) -> bool:
@@ -42,6 +105,11 @@ class EvalRow:
     @property
     def is_skipped(self) -> bool:
         return bool(self.skip_reason)
+
+    @property
+    def is_distractor(self) -> bool:
+        """True when correct behaviour is abstention (protocol §4, gold `scoring`)."""
+        return bool(self.gold_query and self.gold_query.distractor_expected)
 
 
 @dataclass

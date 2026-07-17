@@ -3,13 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from evalkit.judge.base import JudgeBackend, extract_score, parse_judge_output
-from evalkit.judge.llm_judge import summarize_row_scores
-from evalkit.judge.prompts import build_prompt, build_row_content
-from evalkit.judge.rubrics import Rubric, get_rubric
+from evalkit.judge.llm_judge import summarize_row_scores, summary_rubric_names
+from evalkit.judge.prompts import EVIDENCE_CHAR_BUDGET, build_prompt, build_row_content
+from evalkit.judge.rubrics import (
+    ROW_KIND_ANSWERABLE,
+    ROW_KIND_DISTRACTOR,
+    Rubric,
+    resolve_rubrics,
+    row_kind,
+    rubrics_for_kind,
+)
 from evalkit.models import EvalRow
 
 logger = logging.getLogger("graphrag")
@@ -20,11 +28,12 @@ CHECKPOINT_FILE = "judge_rows.jsonl"
 _BATCH_SYSTEM_TEMPLATE = """\
 You are an expert evaluator for question-answering systems.
 You will be given a numbered list of items. Each item has a question, a generated \
-answer, and optional reference information (ground truth, retrieved context, \
-retrieved triples).
+answer, the evidence that was retrieved to answer it, and possibly a reference \
+answer.
 
 For EACH item, evaluate the generated answer on the following rubrics. Every \
-rubric is scored as a float between 0 and 1.
+rubric is scored as a float between 0 and 1. Judge every answer by the same \
+standard, whatever form its evidence takes.
 
 {rubric_block}
 
@@ -46,23 +55,73 @@ def _row_key(row: EvalRow) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def build_batch_prompt(rows: list[EvalRow], rubrics: list[Rubric]) -> tuple[str, str]:
+def build_batch_prompt(
+    rows: list[EvalRow],
+    rubrics: list[Rubric],
+    char_budget: int = EVIDENCE_CHAR_BUDGET,
+) -> tuple[str, str]:
     """Build (system, user) prompts scoring a batch of rows across all rubrics.
 
     Args:
         rows: Rows in this batch; their position is the item ``id``.
-        rubrics: Rubrics to score for every row.
+        rubrics: Rubrics to score for every row. They must agree on whether the
+            ground truth is needed — see Raises.
+        char_budget: Maximum characters of evidence per row.
 
     Returns:
         (system_prompt, user_prompt). Item ``id`` is the row's index in *rows*.
+
+    Raises:
+        ValueError: If *rubrics* is empty, or mixes rubrics that need the ground
+            truth with rubrics that must not see it (§5.5) — one prompt either
+            shows the gold answer or it does not, so such a set has to be scored
+            in separate calls (:func:`partition_by_ground_truth`).
     """
+    if not rubrics:
+        raise ValueError("build_batch_prompt needs at least one rubric")
+    uses_ground_truth = {r.uses_ground_truth for r in rubrics}
+    if len(uses_ground_truth) > 1:
+        names = ", ".join(r.name for r in rubrics)
+        raise ValueError(
+            f"Cannot build one batch prompt for rubrics that disagree about the ground "
+            f"truth ({names}): score them in separate calls."
+        )
+
+    include_ground_truth = uses_ground_truth.pop()
     rubric_block = "\n".join(f"- {r.name}: {r.description}" for r in rubrics)
     score_keys = ", ".join(f'"{r.name}": <float 0-1>' for r in rubrics)
     system = _BATCH_SYSTEM_TEMPLATE.format(rubric_block=rubric_block, score_keys=score_keys)
 
-    items = [f"### Item {i}\n{build_row_content(row)}" for i, row in enumerate(rows)]
+    items = [
+        f"### Item {i}\n"
+        + build_row_content(
+            row,
+            include_ground_truth=include_ground_truth,
+            char_budget=char_budget,
+        )
+        for i, row in enumerate(rows)
+    ]
     user = "\n\n".join(items)
     return system, user
+
+
+def partition_by_ground_truth(rubrics: Sequence[Rubric]) -> list[list[Rubric]]:
+    """Split rubrics into groups that can share one prompt (§5.5).
+
+    Args:
+        rubrics: Rubrics to score for a batch.
+
+    Returns:
+        One group of reference-free rubrics and one of reference-based rubrics,
+        empty groups dropped. Each group costs one backend call per batch: the
+        gold answer cannot be both hidden from groundedness and shown to
+        factual_correctness in a single prompt.
+    """
+    groups = [
+        [r for r in rubrics if not r.uses_ground_truth],
+        [r for r in rubrics if r.uses_ground_truth],
+    ]
+    return [g for g in groups if g]
 
 
 def parse_batch_array(raw: str) -> list[dict[str, Any]]:
@@ -113,6 +172,25 @@ def _entry_for(row: EvalRow) -> dict[str, Any]:
     }
 
 
+def _entry_covers(entry: Mapping[str, Any], rubrics: Sequence[Rubric]) -> bool:
+    """Whether a checkpointed row already carries a score for every rubric.
+
+    A rubric that ran and failed to parse leaves its key with a None value, so a
+    *missing* key means the row was never scored on that rubric — the case after
+    the answer_correctness → factual_correctness rename, or when a rubric is
+    added to an existing checkpoint. Such rows are re-judged rather than merged:
+    scores produced under a different rubric set are not the same measurement.
+
+    Args:
+        entry: A checkpoint row.
+        rubrics: The rubrics this row is meant to be scored on.
+
+    Returns:
+        True when the entry can be reused as-is.
+    """
+    return all(rubric.name in entry for rubric in rubrics)
+
+
 def _load_checkpoint(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
@@ -144,25 +222,33 @@ def score_dataset_batched(
 ) -> dict[str, Any]:
     """Score rows in batches (one backend call per batch) with checkpointing.
 
-    One call scores ``batch_size`` rows across all rubrics, cutting call count
-    from rows*rubrics to ceil(active_rows / batch_size). Built for the
+    One call scores ``batch_size`` rows across the rubrics that can share a
+    prompt, cutting call count from rows*rubrics to roughly
+    ceil(active_rows / batch_size) per rubric group. Built for the
     subscription-driven ``claude_code`` backend (rate-limit friendly) but works
     with any backend. Per-batch results are appended to ``out_dir/judge_rows.jsonl``
     so an interrupted run can resume without re-spending quota.
 
+    Rows are grouped before batching so that every call is coherent:
+
+    * by row kind — distractor rows are scored on ``abstention`` alone (§5.3);
+    * by ground-truth need — reference-free rubrics are asked in their own call,
+      with no gold answer in the prompt (§5.5). A rubric set spanning both
+      therefore costs two calls per batch.
+
     Args:
         rows: EvalRows to score (rows with a skip_reason are excluded).
         backend: Any JudgeBackend.
-        rubric_names: Rubric names to score per row.
+        rubric_names: Rubric names to score per row; legacy names are resolved.
         batch_size: Rows per backend call (>=1).
         out_dir: Where to write the checkpoint; required for ``resume``.
-        resume: Skip rows already present in the checkpoint.
+        resume: Reuse rows the checkpoint already scores on these rubrics.
         n_bootstrap, ci, seed: Bootstrap CI parameters.
 
     Returns:
         Same schema as ``LLMJudge.score_dataset``.
     """
-    rubrics = [get_rubric(n) for n in rubric_names]
+    rubrics = resolve_rubrics(rubric_names)
     active = [r for r in rows if not r.skip_reason]
     skipped = len(rows) - len(active)
 
@@ -175,55 +261,102 @@ def score_dataset_batched(
     if ckpt_path:
         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
-    row_scores: list[dict[str, Any]] = list(done.values())
-    pending = [r for r in active if _row_key(r) not in done]
+    pending: list[EvalRow] = []
+    stale_keys: set[str] = set()
+    for row in active:
+        key = _row_key(row)
+        entry = done.get(key)
+        if entry is not None and _entry_covers(entry, rubrics_for_kind(row_kind(row), rubrics)):
+            continue
+        if entry is not None:
+            stale_keys.add(key)
+        pending.append(row)
+    if stale_keys:
+        logger.warning(
+            "resume: re-judging %d checkpointed rows that carry no score for every "
+            "requested rubric (rubric renamed, or added since the checkpoint was written)",
+            len(stale_keys),
+        )
+
+    row_scores: list[dict[str, Any]] = [e for k, e in done.items() if k not in stale_keys]
 
     ckpt_fh = ckpt_path.open("a", encoding="utf-8") if ckpt_path else None
     try:
         bs = max(1, batch_size)
-        for start in range(0, len(pending), bs):
-            batch = pending[start : start + bs]
-            entries: list[dict[str, Any]] = [_entry_for(r) for r in batch]
+        for kind in (ROW_KIND_ANSWERABLE, ROW_KIND_DISTRACTOR):
+            kind_rows = [r for r in pending if row_kind(r) == kind]
+            if not kind_rows:
+                continue
+            kind_rubrics = rubrics_for_kind(kind, rubrics)
+            if not kind_rubrics:
+                logger.warning(
+                    "no requested rubric applies to %d %s rows — leaving them unscored",
+                    len(kind_rows), kind,
+                )
+                continue
 
-            if bs == 1:
-                # Degenerate batch → single-item prompts (identical to legacy path).
-                for entry, row in zip(entries, batch):
-                    rationale = ""
-                    for rubric in rubrics:
-                        system, user = build_prompt(row, rubric)
-                        parsed, ok = parse_judge_output(backend.complete(system, user))
-                        entry[rubric.name] = extract_score(parsed, rubric.score_field) if ok else None
-                        rationale = rationale or (str(parsed.get("rationale", "")) if parsed else "")
-                    entry["rationale"] = rationale
-            else:
-                system, user = build_batch_prompt(batch, rubrics)
-                by_id = {o.get("id"): o for o in parse_batch_array(backend.complete(system, user))}
-                for idx, (entry, row) in enumerate(zip(entries, batch)):
-                    obj = by_id.get(idx)
-                    entry["rationale"] = str(obj.get("rationale", "")) if obj else ""
-                    for rubric in rubrics:
-                        score: float | None = None
-                        if obj is not None and rubric.name in obj:
-                            score = extract_score(obj, rubric.name)
-                        if score is None:
-                            # Missing/malformed → re-score just this (row, rubric).
-                            logger.warning(
-                                "batch miss id=%d rubric=%s — single-row fallback", idx, rubric.name
+            for start in range(0, len(kind_rows), bs):
+                batch = kind_rows[start : start + bs]
+                entries: list[dict[str, Any]] = [_entry_for(r) for r in batch]
+
+                if bs == 1:
+                    # Degenerate batch → single-item prompts (identical to legacy path).
+                    for entry, row in zip(entries, batch):
+                        rationale = ""
+                        for rubric in kind_rubrics:
+                            system, user = build_prompt(row, rubric)
+                            parsed, ok = parse_judge_output(backend.complete(system, user))
+                            entry[rubric.name] = (
+                                extract_score(parsed, rubric.score_field) if ok else None
                             )
-                            score = _score_single(row, rubric, backend)
-                        entry[rubric.name] = score
+                            rationale = rationale or (
+                                str(parsed.get("rationale", "")) if parsed else ""
+                            )
+                        entry["rationale"] = rationale
+                else:
+                    # One call per rubric group: a single prompt cannot both hide the
+                    # gold answer from groundedness and show it to factual_correctness.
+                    for group in partition_by_ground_truth(kind_rubrics):
+                        system, user = build_batch_prompt(batch, group)
+                        by_id = {
+                            o.get("id"): o
+                            for o in parse_batch_array(backend.complete(system, user))
+                        }
+                        for idx, (entry, row) in enumerate(zip(entries, batch)):
+                            obj = by_id.get(idx)
+                            rationale = str(obj.get("rationale", "")) if obj else ""
+                            if rationale and not entry.get("rationale"):
+                                entry["rationale"] = rationale
+                            for rubric in group:
+                                score: float | None = None
+                                if obj is not None and rubric.name in obj:
+                                    score = extract_score(obj, rubric.name)
+                                if score is None:
+                                    # Missing/malformed → re-score just this (row, rubric).
+                                    logger.warning(
+                                        "batch miss id=%d rubric=%s — single-row fallback",
+                                        idx, rubric.name,
+                                    )
+                                    score = _score_single(row, rubric, backend)
+                                entry[rubric.name] = score
 
-            for entry in entries:
-                row_scores.append(entry)
+                for entry in entries:
+                    entry.setdefault("rationale", "")
+                    row_scores.append(entry)
+                    if ckpt_fh:
+                        ckpt_fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 if ckpt_fh:
-                    ckpt_fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            if ckpt_fh:
-                ckpt_fh.flush()
-            logger.info("judged %d/%d rows", len(row_scores), len(active))
+                    ckpt_fh.flush()
+                logger.info("judged %d/%d rows", len(row_scores), len(active))
     finally:
         if ckpt_fh:
             ckpt_fh.close()
 
     return summarize_row_scores(
-        row_scores, rubric_names, n_bootstrap=n_bootstrap, ci=ci, seed=seed, rows_skipped=skipped
+        row_scores,
+        summary_rubric_names(active, rubrics),
+        n_bootstrap=n_bootstrap,
+        ci=ci,
+        seed=seed,
+        rows_skipped=skipped,
     )

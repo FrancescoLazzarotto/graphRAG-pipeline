@@ -9,6 +9,14 @@ from evalkit.judge.base import JudgeBackend
 logger = logging.getLogger("graphrag")
 
 
+def _backoff(attempt: int) -> None:
+    """Exponential backoff with jitter between retry attempts."""
+    import random
+    import time
+
+    time.sleep(min(2.0**attempt + random.random(), 30.0))
+
+
 class VLLMBackend:
     """Judge backend using an OpenAI-compatible vLLM endpoint.
 
@@ -54,6 +62,9 @@ class VLLMBackend:
                 return str(output.content).strip()
             except Exception as exc:
                 logger.warning("VLLMBackend attempt %d failed: %s", attempt + 1, exc)
+                if attempt < 2:
+                    _backoff(attempt)
+        logger.error("VLLMBackend gave up after 3 attempts; row will carry no score")
         return ""
 
 
@@ -73,8 +84,11 @@ class LocalHFBackend:
             import sys
             from pathlib import Path
 
-            # Ensure src/ is importable
-            src_path = Path(__file__).resolve().parents[4] / "src"
+            # Ensure src/ is importable. parents[3] is the repo root
+            # (evaluation/evalkit/judge/backends.py -> up 3 = repo); normally a
+            # no-op because graphrag is installed editable, but it must point at
+            # a real directory for environments that skip `pip install -e .`.
+            src_path = Path(__file__).resolve().parents[3] / "src"
             if str(src_path) not in sys.path:
                 sys.path.insert(0, str(src_path))
 
@@ -99,6 +113,9 @@ class LocalHFBackend:
                 return str(output.content if hasattr(output, "content") else output).strip()
             except Exception as exc:
                 logger.warning("LocalHFBackend attempt %d failed: %s", attempt + 1, exc)
+                if attempt < 2:
+                    _backoff(attempt)
+        logger.error("LocalHFBackend gave up after 3 attempts; row will carry no score")
         return ""
 
 
@@ -133,18 +150,32 @@ class APIBackend:
         except ImportError as exc:
             raise ImportError("Install anthropic: pip install anthropic") from exc
 
+        # Auth/invalid-request failures are deterministic: retrying them burns
+        # time and hides a misconfiguration behind per-row empty results.
+        fatal = (anthropic.AuthenticationError, anthropic.BadRequestError,
+                 anthropic.PermissionDeniedError, anthropic.NotFoundError)
+
         client = anthropic.Anthropic()
         for attempt in range(3):
             try:
                 message = client.messages.create(
                     model=self.model_id,
                     max_tokens=self.max_tokens,
+                    # temperature must reach the API or the judge samples at the
+                    # provider default (1.0) and scores stop being reproducible.
+                    temperature=self.temperature,
                     system=system,
                     messages=[{"role": "user", "content": user}],
                 )
                 return str(message.content[0].text).strip()
+            except fatal as exc:
+                logger.error("APIBackend (anthropic) non-retryable error: %s", exc)
+                raise
             except Exception as exc:
                 logger.warning("APIBackend (anthropic) attempt %d failed: %s", attempt + 1, exc)
+                if attempt < 2:
+                    _backoff(attempt)
+        logger.error("APIBackend (anthropic) gave up after 3 attempts; row will carry no score")
         return ""
 
     def _openai(self, system: str, user: str) -> str:
@@ -152,6 +183,9 @@ class APIBackend:
             import openai  # type: ignore
         except ImportError as exc:
             raise ImportError("Install openai: pip install openai") from exc
+
+        fatal = (openai.AuthenticationError, openai.BadRequestError,
+                 openai.PermissionDeniedError, openai.NotFoundError)
 
         client = openai.OpenAI()
         for attempt in range(3):
@@ -166,8 +200,14 @@ class APIBackend:
                     ],
                 )
                 return str(response.choices[0].message.content or "").strip()
+            except fatal as exc:
+                logger.error("APIBackend (openai) non-retryable error: %s", exc)
+                raise
             except Exception as exc:
                 logger.warning("APIBackend (openai) attempt %d failed: %s", attempt + 1, exc)
+                if attempt < 2:
+                    _backoff(attempt)
+        logger.error("APIBackend (openai) gave up after 3 attempts; row will carry no score")
         return ""
 
 
@@ -200,12 +240,6 @@ class ClaudeCodeBackend:
         extra = os.getenv("CLAUDE_CODE_EXTRA_ARGS", "").strip()
         self.extra_args = extra.split() if extra else []
 
-    def _backoff(self, attempt: int) -> None:
-        import random
-        import time
-
-        time.sleep(min(2.0**attempt + random.random(), 30.0))
-
     def complete(self, system: str, user: str) -> str:
         import json as _json
         import subprocess
@@ -231,7 +265,7 @@ class ClaudeCodeBackend:
                 ) from exc
             except subprocess.TimeoutExpired:
                 logger.warning("ClaudeCodeBackend attempt %d timed out", attempt + 1)
-                self._backoff(attempt)
+                _backoff(attempt)
                 continue
 
             if proc.returncode != 0:
@@ -239,7 +273,7 @@ class ClaudeCodeBackend:
                     "ClaudeCodeBackend attempt %d exit=%d stderr=%s",
                     attempt + 1, proc.returncode, proc.stderr[:200],
                 )
-                self._backoff(attempt)
+                _backoff(attempt)
                 continue
 
             out = proc.stdout.strip()
@@ -250,7 +284,7 @@ class ClaudeCodeBackend:
             if isinstance(payload, dict):
                 if payload.get("is_error"):
                     logger.warning("ClaudeCodeBackend is_error: %s", str(payload)[:200])
-                    self._backoff(attempt)
+                    _backoff(attempt)
                     continue
                 return str(payload.get("result", "")).strip()
             return out
@@ -267,6 +301,13 @@ def make_backend(
     claude_code_bin: str = "",
 ) -> JudgeBackend:
     """Factory: return the appropriate JudgeBackend based on *backend* string."""
+    if backend in ("vllm", "local_hf", "api") and not model_id.strip():
+        # JudgeConfig defaults model_id to "": failing here beats a per-row 404
+        # three-retries-then-empty-string loop at scoring time.
+        raise ValueError(
+            f"backend {backend!r} requires an explicit judge model_id "
+            "(JudgeConfig.model_id / --model)"
+        )
     if backend == "vllm":
         return VLLMBackend(
             model_id=model_id,
