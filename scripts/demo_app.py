@@ -24,6 +24,10 @@ import time
 import traceback
 from pathlib import Path
 
+import urllib.error
+import urllib.parse
+import urllib.request
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -54,6 +58,13 @@ EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
 TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
 ENV_FILE = os.environ.get("DEMO_ENV_FILE", str(ROOT / "kg_pipeline" / ".env"))
 LOG_DIR = Path(os.environ.get("DEMO_LOG_DIR", str(ROOT / "artifacts" / "demo_sessions")))
+# Comma-separated vLLM endpoints offered in the model selector; each is probed
+# at startup and skipped when unreachable, so a stopped server just disappears
+# from the list instead of breaking the demo.
+VLLM_ENDPOINTS = os.environ.get(
+    "DEMO_VLLM_ENDPOINTS",
+    "http://localhost:8000/v1,http://localhost:8001/v1",
+)
 
 
 def _build_text_pipeline(backend: str) -> object | None:
@@ -68,18 +79,37 @@ def _build_text_pipeline(backend: str) -> object | None:
     return graphrag_cli._build_text_pipeline(ns)
 
 
+@st.cache_resource(show_spinner=False)
+def _available_models() -> dict[str, tuple[str, str]]:
+    """Probe the configured vLLM endpoints and map label -> (base_url, model_id).
+
+    Falls back to VLLM_BASE_URL/VLLM_MODEL_NAME when no endpoint answers, so the
+    demo keeps working in single-server setups without the selector env var.
+    """
+    load_dotenv(ENV_FILE, override=False)
+    options: dict[str, tuple[str, str]] = {}
+    for base_url in (u.strip().rstrip("/") for u in VLLM_ENDPOINTS.split(",") if u.strip()):
+        try:
+            with urllib.request.urlopen(f"{base_url}/models", timeout=3) as resp:
+                model_id = json.load(resp)["data"][0]["id"]
+        except (urllib.error.URLError, OSError, KeyError, IndexError, json.JSONDecodeError):
+            continue
+        port = urllib.parse.urlparse(base_url).port or "?"
+        options[f"{model_id.split('/')[-1]} (:{port})"] = (base_url, model_id)
+    if not options:
+        model_id = os.environ.get("VLLM_MODEL_NAME", "")
+        base_url = os.environ.get("VLLM_BASE_URL", "")
+        if model_id and base_url:
+            options[model_id.split("/")[-1]] = (base_url, model_id)
+    return options
+
+
 @st.cache_resource(show_spinner="Avvio in corso (connessione al grafo e indice testi)...")
-def _load_agent() -> tuple[KGRAGAgent, str]:
+def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("graphrag").setLevel(logging.ERROR)
     load_dotenv(ENV_FILE, override=False)
     os.chdir(ROOT)
-
-    model_id = os.environ.get("VLLM_MODEL_NAME", "")
-    base_url = os.environ.get("VLLM_BASE_URL", "")
-    if not model_id or not base_url:
-        st.error("VLLM_MODEL_NAME/VLLM_BASE_URL mancanti (env o .env).")
-        st.stop()
 
     kg_manager = KnowledgeGraphManager(build_kg_config_from_env())
     base = AgentConfig(
@@ -143,7 +173,21 @@ st.set_page_config(page_title="Demo GraphRAG — Economia Circolare del Cibo", p
 st.title("Demo GraphRAG")
 st.caption("Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.")
 
-agent, model_id = _load_agent()
+models = _available_models()
+if not models:
+    st.error("Nessun server vLLM raggiungibile (DEMO_VLLM_ENDPOINTS) e VLLM_MODEL_NAME/VLLM_BASE_URL mancanti.")
+    st.stop()
+
+env_base_url = os.environ.get("VLLM_BASE_URL", "").rstrip("/")
+labels = list(models)
+default_index = next(
+    (i for i, lbl in enumerate(labels) if models[lbl][0] == env_base_url), 0
+)
+with st.sidebar:
+    choice = st.selectbox("Modello", labels, index=default_index)
+base_url, model_id = models[choice]
+
+agent, model_id = _load_agent(base_url, model_id)
 st.caption(f"strategia: {STRATEGY} | modello: {model_id}")
 
 if "messages" not in st.session_state:
