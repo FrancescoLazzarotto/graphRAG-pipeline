@@ -16,7 +16,16 @@ logger = logging.getLogger("graphrag")
 # intra-word apostrophes (Italian elisions like "cos'è l'economia" would
 # otherwise yield the bogus entity "è l").
 _QUOTED_ENTITY_RE = re.compile(r"\"([^\"]{2,})\"|(?<!\w)'([^']{2,})'(?!\w)")
-_TITLE_ENTITY_RE = re.compile(r"\b(?:[A-Z][\w'-]*)(?:\s+[A-Z][\w'-]*)+\b")
+# Lowercase connectors allowed INSIDE a capitalized phrase: without them
+# "Via del Campo" splits into the useless fragments "Via" + "Campo" and the
+# Lucene OR-query drifts to unrelated nodes ("Campo Base", "via Roma").
+_TITLE_CONNECTORS = (
+    "di|del|della|delle|dei|degli|dello|da|dal|dalla|e|ed|il|lo|la|le|gli|"
+    "of|the|and|for|de|van|von|der"
+)
+_TITLE_ENTITY_RE = re.compile(
+    rf"\b[A-Z][\w'-]*(?:\s+(?:(?:{_TITLE_CONNECTORS})\s+)*[A-Z][\w'-]*)+\b"
+)
 _SINGLE_TOKEN_ENTITY_RE = re.compile(r"\b[A-Z][\w'-]{2,}\b")
 _TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
 # Matches years (1900-2099) and quantities with explicit units so factual/numerical
@@ -25,62 +34,45 @@ _NUMERIC_TERM_RE = re.compile(
     r"\b(?:(?:19|20)\d{2}|\d+(?:[.,]\d+)?\s*(?:%|kg|Mt|Gt|million|billion|tonnes|°C))(?!\w)",
     re.IGNORECASE,
 )
+# Cap on lowercase content keywords added per query: enough to cover the
+# topic terms of a long question without flooding the Lucene OR-query.
+_MAX_KEYWORD_TERMS = 8
 
-_QUESTION_STOPWORDS = {
-    "chi",
-    "che",
-    "cos",
-    "come",
-    "cosa",
-    "quando",
-    "dove",
-    "quale",
-    "quali",
-    "perche",
-    "sono",
-    "hanno",
-    "del",
-    "della",
-    "delle",
-    "dei",
-    "degli",
-    "nel",
-    "nella",
-    "nelle",
-    "sul",
-    "sulla",
-    "con",
-    "per",
-    "tra",
-    "fra",
-    "una",
-    "uno",
-    "gli",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "how",
-    "why",
-    "does",
-    "is",
-    "are",
-    "did",
-    "was",
-    "were",
-    "will",
-    "can",
-    "could",
-    "should",
-    "would",
-    "has",
-    "have",
-    "had",
-    "the",
-    "a",
-    "an",
+# Function words only. Deliberately NOT stopwords: "via", "campo", "stato",
+# "stati" — they occur inside real entity names ("Via del Campo", "Stati
+# Uniti") and dropping them would corrupt phrase candidates at the edges.
+_QUESTION_STOPWORDS_IT = {
+    "chi", "che", "cos", "come", "cosa", "quando", "dove", "quale", "quali",
+    "qual", "quanto", "quanta", "quanti", "quante", "perche", "perché",
+    "sono", "hanno", "essere", "viene", "vengono", "puo", "può", "possono",
+    "il", "lo", "la", "le", "gli", "un", "una", "uno",
+    "di", "del", "della", "delle", "dei", "degli", "dello",
+    "da", "dal", "dalla", "dalle", "dai", "dagli",
+    "in", "nel", "nella", "nelle", "nei", "negli",
+    "su", "sul", "sulla", "sulle", "sui", "sugli", "sullo",
+    "al", "alla", "alle", "ai", "agli", "allo",
+    "con", "per", "tra", "fra", "cui", "non", "anche", "ogni", "sia",
+    "questo", "questa", "questi", "queste", "quello", "quella",
+    "piu", "più", "meno", "senza", "dopo", "prima", "due", "tre",
+    "ed",
 }
+_QUESTION_STOPWORDS_EN = {
+    "what", "when", "where", "which", "who", "whom", "whose", "how", "why",
+    "does", "do", "did", "is", "are", "was", "were", "be", "been", "being",
+    "will", "can", "could", "should", "would", "may", "might", "must",
+    "shall", "has", "have", "had",
+    "the", "a", "an", "this", "that", "these", "those",
+    "in", "on", "at", "by", "to", "of", "and", "or", "but", "if", "as",
+    "than", "then", "from", "with", "without", "within", "into", "over",
+    "under", "between", "among", "through", "during", "before", "after",
+    "about", "against", "per",
+    "it", "its", "they", "their", "them", "there", "here",
+    "we", "our", "you", "your",
+    "not", "no", "nor", "also", "only", "both", "each", "every", "any",
+    "some", "all", "such", "same", "other", "another", "more", "most",
+    "two", "three", "four", "say", "says", "said", "according", "following",
+}
+_QUESTION_STOPWORDS = _QUESTION_STOPWORDS_IT | _QUESTION_STOPWORDS_EN
 
 _PLACEHOLDER_ENTITIES = {
     "entita a",
@@ -490,27 +482,44 @@ class KGRetriever:
             candidates = self._extract_entity_candidates(query_text)
             terms.extend(candidates)
 
-            # If no clear entity-like candidates were found, extract keyword tokens
-            # from the question instead of using the entire question text as a single
-            # search term (which later is used as an exact entity and therefore
-            # typically yields no matches).
-            if not candidates:
-                tokens = [t for t in _TOKEN_RE.findall(query_text) if len(t) >= 3]
-                # filter common stopwords and short tokens, preserve order
-                filtered = [t for t in tokens if t.lower() not in _QUESTION_STOPWORDS]
-                # prefer multi-word title-like candidates first
-                if len(filtered) <= 1 and len(tokens) <= 8:
-                    # for short questions, keep full question as a term
-                    terms.append(query_text)
-                else:
-                    # include up to 6 token candidates to improve retrieval
-                    for tok in filtered[:6]:
-                        terms.append(tok)
+            # Content keywords are ALWAYS added alongside entity candidates: a
+            # capitalized hit like "Via del Campo" must not silence the lowercase
+            # content terms ("biogas", "digestate") that identify the topic —
+            # candidates alone drift the Lucene query onto homonym nodes.
+            covered = {
+                tok.lower()
+                for candidate in candidates
+                for tok in _TOKEN_RE.findall(candidate)
+            }
+            keywords = [
+                tok
+                for tok in _TOKEN_RE.findall(query_text)
+                if len(tok) >= 3
+                and tok.lower() not in _QUESTION_STOPWORDS
+                and tok.lower() not in covered
+            ]
+            terms.extend(keywords[:_MAX_KEYWORD_TERMS])
 
         if not terms and query_text:
             terms.append(query_text)
 
         return self._unique_values(terms)
+
+    @staticmethod
+    def _trim_stopword_edges(phrase: str) -> str:
+        """Strip leading/trailing stopword tokens from a capitalized phrase.
+
+        Sentence-initial function words are capitalized too, so the title regex
+        captures "In the Via del Campo". As a quoted Lucene phrase that never
+        matches the node "VIA DEL CAMPO"; trimming the edges (never the inside)
+        recovers the real entity name.
+        """
+        tokens = phrase.split()
+        while tokens and tokens[0].lower() in _QUESTION_STOPWORDS:
+            tokens.pop(0)
+        while tokens and tokens[-1].lower() in _QUESTION_STOPWORDS:
+            tokens.pop()
+        return " ".join(tokens)
 
     def _extract_entity_candidates(self, text: str) -> list[str]:
         candidates: list[str] = []
@@ -521,18 +530,21 @@ class KGRetriever:
                 candidates.append(value)
 
         for phrase in _TITLE_ENTITY_RE.findall(text):
-            value = phrase.strip()
-            if not value:
-                continue
-            # Sentence-initial function words are capitalized too ("Che Cosa"):
-            # drop phrases made entirely of stopwords.
-            tokens = [tok.lower() for tok in _TOKEN_RE.findall(value)]
-            if tokens and all(tok in _QUESTION_STOPWORDS for tok in tokens):
-                continue
-            candidates.append(value)
+            value = self._trim_stopword_edges(phrase.strip())
+            if value:
+                candidates.append(value)
 
+        # Single capitalized tokens already inside a phrase candidate are noise:
+        # "Via" and "Campo" alone match "via Roma" / "Campo Base" instead of
+        # reinforcing "Via del Campo".
+        covered = {
+            tok.lower()
+            for candidate in candidates
+            for tok in _TOKEN_RE.findall(candidate)
+        }
         for token in _SINGLE_TOKEN_ENTITY_RE.findall(text):
-            if token.lower() not in _QUESTION_STOPWORDS:
+            low = token.lower()
+            if low not in _QUESTION_STOPWORDS and low not in covered:
                 candidates.append(token)
 
         for term in _NUMERIC_TERM_RE.findall(text):
