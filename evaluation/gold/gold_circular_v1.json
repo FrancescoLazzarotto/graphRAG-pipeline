@@ -1,0 +1,2359 @@
+{
+  "_meta": {
+    "title": "Gold Standard — Circular Economy for Food RAG Evaluation",
+    "n_queries": 30,
+    "language": "queries and expected answers in English; alt_labels may include Italian surface forms from IT source docs",
+    "field_docs": {
+      "expected_entities[].normalised_label": "canonical lowercase form the shared resolver targets (concept-level match key)",
+      "expected_entities[].alt_labels": "accepted concept-level variants (synonyms, plural, Italian forms). Empty = only normalised_label accepted",
+      "expected_entities[].uri": "canonical vocabulary IRI, or null for benchmark-local concepts",
+      "expected_entities[].mapping_status": "'exact' = counts at grounding-level; 'benchmark_local_extension' = concept-level only",
+      "expected_entities[].aligned_to": "broader CEON/AGROVOC class the local concept is aligned to (proposed alignment, not asserted equivalence)",
+      "scoring.concept_level": "pipeline-agnostic retrieval metric (normalised labels)",
+      "scoring.grounding_level": "interoperability metric (resolved canonical URIs); external-structure pipelines expected to lead here",
+      "scoring.distractor_expected": "true = correct behaviour is abstention (empty entity set + no fabricated answer)"
+    },
+    "resolver_rules": [
+      "lowercase; strip whitespace/punctuation",
+      "singular/plural folding via lexicon (not blind -s strip)",
+      "match against skos:prefLabel AND skos:altLabel",
+      "no fuzzy/edit-distance matching",
+      "applied SYMMETRICALLY to all pipelines (ontology-grounded, graph-RAG, plain-text)"
+    ],
+    "alt_labels_provenance": {
+      "generated": "2026-07-16",
+      "sources": [
+        "AGROVOC skos:prefLabel/altLabel/hiddenLabel (IT+EN) fetched from agrovoc.fao.org for entities with an AGROVOC URI",
+        "ChEBI labels via EBI OLS4, restricted to morphological variants of the preferred label (systematic chemical nomenclature excluded)",
+        "curated IT/EN lexicon for urn:ceff: benchmark-local concepts, which have no external vocabulary"
+      ],
+      "independence": "No surface form was taken from the evaluated KG, from any pipeline run, or from any system output. Built before the evaluation runs, per protocol §6.",
+      "invariants": [
+        "no alt_label equals its own normalised_label",
+        "no surface form maps to two different gold concepts"
+      ],
+      "known_terminology_conflicts": [
+        "AGROVOC gives 'Pula di riso' as the Italian prefLabel of rice husks (c_24892) and 'Crusca di riso' for rice bran (c_77d35680). The corpus and this gold use 'lolla' for husks and 'pula' for bran. Gold/corpus usage is authoritative here; 'pula di riso' is blocked on husks to keep 'pula' unambiguous. Flagged for expert review."
+      ]
+    },
+    "frozen_at": "2026-07-17T09:05:00+02:00",
+    "frozen_note": "v1 freeze for the first full gold run. Pre-registration decisions D1-D6 recorded in docs/gold_eval_implementation_plan.md; colleague sign-off pending — any change after sign-off bumps the version, never edits this file.",
+    "source_file": "gold.json (working copy from collega, alt_labels populated 2026-07-16)"
+  },
+  "queries": [
+    {
+      "query_id": "Q01",
+      "query_type": "factual_simple",
+      "query": "What are the three C's of the Circular Economy for Food framework?",
+      "expected_answer": "The three C's are Capital, Cyclicality, and Co-evolution. Together they form the CEFF conceptual trajectory for designing circular food systems.",
+      "expected_entities": [
+        {
+          "label": "Capital",
+          "normalised_label": "capital",
+          "alt_labels": [
+            "capitale"
+          ],
+          "uri": "urn:ceff:Capital",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/value/Value",
+          "note": "The supplied corpus defines the concept; CEON has no native class with this exact CEFF label."
+        },
+        {
+          "label": "Cyclicality",
+          "normalised_label": "cyclicality",
+          "alt_labels": [
+            "ciclicita",
+            "ciclicità",
+            "cyclicity"
+          ],
+          "uri": "urn:ceff:Cyclicality",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Co-evolution",
+          "normalised_label": "co-evolution",
+          "alt_labels": [
+            "co-evoluzione",
+            "coevolution",
+            "coevoluzione"
+          ],
+          "uri": "urn:ceff:CoEvolution",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "100",
+          "pdf_page": "7",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Introduces the 3 C’s as Capital, Cyclicality and Co-evolution."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q02",
+      "query_type": "factual_simple",
+      "query": "How many Sustainable Development Goals does food act as a connecting unit for?",
+      "expected_answer": "Food acts as a connecting unit for all 17 Sustainable Development Goals.",
+      "expected_entities": [
+        {
+          "label": "Sustainable Development Goals",
+          "normalised_label": "sustainable development goals",
+          "alt_labels": [
+            "obiettivi di sviluppo sostenibile",
+            "sdg",
+            "sdgs",
+            "sustainable development goal"
+          ],
+          "uri": "urn:ceff:SustainableDevelopmentGoal",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": null,
+          "note": "The expected cardinality is the literal value 17; no exact CEON class is claimed."
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "99",
+          "pdf_page": "6",
+          "role": "primary",
+          "section": "Relationships With the 17 Sustainable Development Goals (SDGs)",
+          "evidence": "States that the “wedding cake” model treats food as the basic connecting unit for all 17 SDGs."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q03",
+      "query_type": "factual_simple",
+      "query": "What percentage of vinification waste do grape stalks (raspi) represent?",
+      "expected_answer": "Grape stalks represent 30% of vinification waste. The report also gives an approximate yield of 3–4 kg of stalks per 100 kg of wine.",
+      "expected_entities": [
+        {
+          "label": "Grape stalk",
+          "normalised_label": "grape stalk",
+          "alt_labels": [
+            "grape stalks",
+            "grape stems",
+            "raspi",
+            "raspi d'uva",
+            "raspo"
+          ],
+          "uri": "urn:ceff:GrapeStalk",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": "No exact AGROVOC concept is claimed; the entity is a winemaking by-product and is broader-related to agricultural waste."
+        },
+        {
+          "label": "Winemaking",
+          "normalised_label": "winemaking",
+          "alt_labels": [
+            "tecniche di vinificazione",
+            "vinification techniques",
+            "vinificazione",
+            "wine production",
+            "wine-making"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_8405",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "126",
+          "pdf_page": "126",
+          "role": "primary",
+          "section": "3.2 Le problematiche emergenti",
+          "evidence": "Reports that grape stalks are 30% of vinification waste and gives the 3–4 kg per 100 kg figure."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q04",
+      "query_type": "factual_simple",
+      "query": "What is whey (siero di latte) and how is it produced?",
+      "expected_answer": "Whey is the liquid fraction produced when milk coagulates and the curd is subsequently separated.",
+      "expected_entities": [
+        {
+          "label": "Whey",
+          "normalised_label": "whey",
+          "alt_labels": [
+            "milk whey",
+            "siero",
+            "siero di latte",
+            "siero di latte in pasta",
+            "whey paste"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_8376",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Milk coagulation",
+          "normalised_label": "milk coagulation",
+          "alt_labels": [
+            "coagulazione",
+            "coagulazione del latte",
+            "milk clotting"
+          ],
+          "uri": "urn:ceff:MilkCoagulation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        },
+        {
+          "label": "Curd separation",
+          "normalised_label": "curd separation",
+          "alt_labels": [
+            "curd drainage",
+            "separazione della cagliata",
+            "spurgo della cagliata"
+          ],
+          "uri": "urn:ceff:CurdSeparation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "154",
+          "pdf_page": "154",
+          "role": "primary",
+          "section": "4.2 Le problematiche emergenti",
+          "evidence": "Defines whey as the liquid fraction resulting from milk coagulation and subsequent separation of the curd."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q05",
+      "query_type": "cross_vocab_relational",
+      "query": "What are the four implementation cycles of metabolisation, and how do they differ?",
+      "expected_answer": "Metabolisation contains four implementation cycles: short, where an output leaves and re-enters a production system with physical and temporal proximity; long, where the output’s use value is extended across several consecutive cycles; cascading, where output-to-input upcycling links distant segments of the same value chain or different industrial sectors; and pure, where resource quality is maintained through the value chain and dangerous or non-metabolisable substances are absent.",
+      "expected_entities": [
+        {
+          "label": "Metabolisation",
+          "normalised_label": "metabolisation",
+          "alt_labels": [
+            "metabolization",
+            "metabolizzazione"
+          ],
+          "uri": "urn:ceff:Metabolisation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Short metabolisation cycle",
+          "normalised_label": "short metabolisation cycle",
+          "alt_labels": [
+            "ciclo corto",
+            "ciclo di metabolizzazione corto",
+            "short cycle",
+            "short metabolization cycle"
+          ],
+          "uri": "urn:ceff:ShortMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Long metabolisation cycle",
+          "normalised_label": "long metabolisation cycle",
+          "alt_labels": [
+            "ciclo di metabolizzazione lungo",
+            "ciclo lungo",
+            "long cycle",
+            "long metabolization cycle"
+          ],
+          "uri": "urn:ceff:LongMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Cascading metabolisation cycle",
+          "normalised_label": "cascading metabolisation cycle",
+          "alt_labels": [
+            "cascade cycle",
+            "cascading cycle",
+            "cascading metabolization cycle",
+            "ciclo a cascata"
+          ],
+          "uri": "urn:ceff:CascadingMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Pure metabolisation cycle",
+          "normalised_label": "pure metabolisation cycle",
+          "alt_labels": [
+            "ciclo puro",
+            "pure cycle",
+            "pure metabolization cycle"
+          ],
+          "uri": "urn:ceff:PureMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "Metabolisation has-subconcept ShortMetabolisationCycle.",
+        "Metabolisation has-subconcept LongMetabolisationCycle.",
+        "Metabolisation has-subconcept CascadingMetabolisationCycle.",
+        "Metabolisation has-subconcept PureMetabolisationCycle."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Defines all four cycles inline."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q06",
+      "query_type": "cross_vocab_relational",
+      "query": "How does Cyclicality relate to its sub-concepts of extension, metabolisation and renewability?",
+      "expected_answer": "Cyclicality is the parent principle that encompasses Extension, Metabolisation, and Renewability. Extension expands producer responsibility across the whole product lifecycle; Metabolisation upcycles outputs so they remain resources for the same or another system; Renewability requires actions to remain in harmony with natural regenerative cycles, preferably using renewable energy.",
+      "expected_entities": [
+        {
+          "label": "Cyclicality",
+          "normalised_label": "cyclicality",
+          "alt_labels": [
+            "ciclicita",
+            "ciclicità",
+            "cyclicity"
+          ],
+          "uri": "urn:ceff:Cyclicality",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Extension",
+          "normalised_label": "extension",
+          "alt_labels": [
+            "estensione",
+            "extended producer responsibility",
+            "responsabilità estesa del produttore"
+          ],
+          "uri": "urn:ceff:Extension",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Metabolisation",
+          "normalised_label": "metabolisation",
+          "alt_labels": [
+            "metabolization",
+            "metabolizzazione"
+          ],
+          "uri": "urn:ceff:Metabolisation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Renewability",
+          "normalised_label": "renewability",
+          "alt_labels": [
+            "rinnovabilita",
+            "rinnovabilità"
+          ],
+          "uri": "urn:ceff:Renewability",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "Cyclicality has-component Extension.",
+        "Cyclicality has-component Metabolisation.",
+        "Cyclicality has-component Renewability."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Says Cyclicality encompasses these three fundamental concepts and defines each."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q07",
+      "query_type": "cross_vocab_relational",
+      "query": "Which types of Capital are described as inseparable, and what links them?",
+      "expected_answer": "Natural Capital, Cultural Capital, and Economic Capital are described as inseparable. They are supported and kept in dialogue through Relational Capital.",
+      "expected_entities": [
+        {
+          "label": "Natural Capital",
+          "normalised_label": "natural capital",
+          "alt_labels": [
+            "capitale naturale"
+          ],
+          "uri": "urn:ceff:NaturalCapital",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/value/EnvironmentalValue",
+          "note": null
+        },
+        {
+          "label": "Cultural Capital",
+          "normalised_label": "cultural capital",
+          "alt_labels": [
+            "capitale culturale"
+          ],
+          "uri": "urn:ceff:CulturalCapital",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/value/SocialValue",
+          "note": null
+        },
+        {
+          "label": "Economic Capital",
+          "normalised_label": "economic capital",
+          "alt_labels": [
+            "capitale economico"
+          ],
+          "uri": "urn:ceff:EconomicCapital",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/value/EconomicValue",
+          "note": null
+        },
+        {
+          "label": "Relational Capital",
+          "normalised_label": "relational capital",
+          "alt_labels": [
+            "capitale relazionale"
+          ],
+          "uri": "urn:ceff:RelationalCapital",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/value/SocialValue",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "RelationalCapital links NaturalCapital, CulturalCapital, and EconomicCapital."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Explicitly calls the first three inseparable and says Relational Capital supports their dialogue."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q08",
+      "query_type": "cross_vocab_relational",
+      "query": "Trace the valorisation path of rice husk (lolla): from which process does it come and what can it become?",
+      "expected_answer": "Rice husk is the outer, non-edible layer separated during rice processing/dehusking. The report describes its valorisation as an additive natural filler in bioplastic production; its low water absorption, processability, and visual qualities make it suitable for this use.",
+      "expected_entities": [
+        {
+          "label": "Rice husks",
+          "normalised_label": "rice husks",
+          "alt_labels": [
+            "lolla",
+            "lolla di riso",
+            "rice husk",
+            "rice hulls"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_24892",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Rice",
+          "normalised_label": "rice",
+          "alt_labels": [
+            "paddy",
+            "riso",
+            "risone"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_6599",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Rice dehusking",
+          "normalised_label": "rice dehusking",
+          "alt_labels": [
+            "decorticazione del riso",
+            "dehusking",
+            "husking",
+            "sbramatura"
+          ],
+          "uri": "urn:ceff:RiceDehusking",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        },
+        {
+          "label": "Bioplastic",
+          "normalised_label": "bioplastic",
+          "alt_labels": [
+            "bioplastica",
+            "bioplastiche",
+            "bioplastics"
+          ],
+          "uri": "urn:ceff:Bioplastic",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "RiceDehusking has-output RiceHusks.",
+        "BioplasticProduction has-input RiceHusks.",
+        "BioplasticProduction has-output Bioplastic."
+      ],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "184",
+          "pdf_page": "184",
+          "role": "primary",
+          "section": "5.2 Le problematiche emergenti",
+          "evidence": "Identifies lolla as the non-edible outer layer of the rice grain and a rice-processing by-product."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "185",
+          "pdf_page": "185",
+          "role": "primary",
+          "section": "5.2 Le problematiche emergenti",
+          "evidence": "Describes lolla as an additive filler for bioplastics and states the relevant material advantages."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q09",
+      "query_type": "cross_vocab_relational",
+      "query": "How does the co-evolution principle connect to the concept of industrial symbiosis in the food system?",
+      "expected_answer": "Co-evolution is modelled on mutualistic symbiosis: actors collaborate through a win–win relationship that benefits every participant, including the environment. Industrial symbiosis is an operational expression of that principle, because firms or sectors exchange materials, energy, information, knowledge, or technologies so that one actor’s output can become another’s resource. The Piedmont report also shows the inverse condition: when firms are geographically dispersed, such territorial synergies are harder to establish.",
+      "expected_entities": [
+        {
+          "label": "Co-evolution",
+          "normalised_label": "co-evolution",
+          "alt_labels": [
+            "co-evoluzione",
+            "coevolution",
+            "coevoluzione"
+          ],
+          "uri": "urn:ceff:CoEvolution",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Symbiosis",
+          "normalised_label": "symbiosis",
+          "alt_labels": [
+            "simbiosi"
+          ],
+          "uri": "urn:ceff:Symbiosis",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Industrial symbiosis",
+          "normalised_label": "industrial symbiosis",
+          "alt_labels": [
+            "simbiosi industriale"
+          ],
+          "uri": "urn:ceff:IndustrialSymbiosis",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Collaboration",
+          "normalised_label": "collaboration",
+          "alt_labels": [
+            "collaborazione"
+          ],
+          "uri": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "vocabulary": "CEON",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "IndustrialSymbiosis operationalises CoEvolution.",
+        "IndustrialSymbiosis is-a Collaboration."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "102",
+          "pdf_page": "9",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Defines co-evolution through mutualistic symbiosis and a collaborative win–win paradigm."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "70",
+          "pdf_page": "70",
+          "role": "primary",
+          "section": "1.4.7 Le 3C della CEFF",
+          "evidence": "Names symbiosis among the priorities of co-evolution."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "205",
+          "pdf_page": "205",
+          "role": "primary",
+          "section": "6.1 Una sintesi della filiera piemontese",
+          "evidence": "Explains that geographical distance among bottling firms makes territorial synergies/industrial symbiosis more difficult."
+        },
+        {
+          "doc": "Fassio & Tecco, “Circular Economy for Food: A Systemic Interpretation…” (Systems 7(3), 2019)",
+          "page": "11",
+          "pdf_page": "11",
+          "role": "corroborating",
+          "section": "Results and discussion",
+          "evidence": "Corroborates that industrial-symbiosis relations share knowledge, expertise, or technology."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q10",
+      "query_type": "domain_specialist",
+      "query": "What valuable compounds can be extracted from grape pomace, and what are their applications?",
+      "expected_answer": "The high-value compounds explicitly extracted from grape pomace are polyphenols with high antioxidant capacity, obtained from grape skins and seeds. The report’s surrounding discussion of grape residues also identifies phenolic acids and flavonoids as polyphenol classes. Applications include medical/pharmaceutical research and cosmetics, where antioxidant and free-radical-scavenging properties are used in skin-care products.",
+      "expected_entities": [
+        {
+          "label": "Grape pomace",
+          "normalised_label": "grape pomace",
+          "alt_labels": [
+            "grape marc",
+            "vinacce",
+            "vinaccia",
+            "vinacce d'uva"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_909cff15",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Polyphenol",
+          "normalised_label": "polyphenol",
+          "alt_labels": [
+            "polifenoli",
+            "polifenolo",
+            "polyphenols"
+          ],
+          "uri": "http://purl.obolibrary.org/obo/CHEBI_26195",
+          "vocabulary": "ChEBI",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Flavonoid",
+          "normalised_label": "flavonoid",
+          "alt_labels": [
+            "flavonoidi",
+            "flavonoids"
+          ],
+          "uri": "http://purl.obolibrary.org/obo/CHEBI_47916",
+          "vocabulary": "ChEBI",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Phenolic acid",
+          "normalised_label": "phenolic acid",
+          "alt_labels": [
+            "acidi fenolici",
+            "acido fenolico",
+            "phenolic acids"
+          ],
+          "uri": "urn:ceff:PhenolicAcid",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/ChemicalSubstance",
+          "note": "Used because no exact external class was asserted in this benchmark."
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "126",
+          "pdf_page": "126",
+          "role": "primary",
+          "section": "3.2 Le problematiche emergenti",
+          "evidence": "Reports antioxidant polyphenolic molecules in pomace; in the adjacent discussion of grape stalks, it identifies phenolic acids and flavonoids as polyphenol classes."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "133",
+          "pdf_page": "133",
+          "role": "primary",
+          "section": "POLIPHENOLIA case history",
+          "evidence": "Describes extraction from Piedmont grape skins/seeds and medical and cosmetic applications."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q11",
+      "query_type": "domain_specialist",
+      "query": "What is scotta and how does it differ from whey?",
+      "expected_answer": "Whey is the liquid fraction formed by milk coagulation and curd separation. Scotta is a later, downstream residue produced during ricotta processing. Thus, scotta is not simply a synonym for whey: it results from further processing of whey to make ricotta.",
+      "expected_entities": [
+        {
+          "label": "Whey",
+          "normalised_label": "whey",
+          "alt_labels": [
+            "milk whey",
+            "siero",
+            "siero di latte",
+            "siero di latte in pasta",
+            "whey paste"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_8376",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Scotta",
+          "normalised_label": "scotta",
+          "alt_labels": [
+            "ricotta whey",
+            "second whey",
+            "siero di ricotta"
+          ],
+          "uri": "urn:ceff:Scotta",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://aims.fao.org/aos/agrovoc/c_4827",
+          "note": "No exact AGROVOC concept was asserted; aligned broadly to milk by-products."
+        },
+        {
+          "label": "Ricotta processing",
+          "normalised_label": "ricotta processing",
+          "alt_labels": [
+            "lavorazione della ricotta",
+            "produzione di ricotta",
+            "ricotta production"
+          ],
+          "uri": "urn:ceff:RicottaProcessing",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "RicottaProcessing has-output Scotta.",
+        "Whey and Scotta are distinct dairy by-products."
+      ],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "154",
+          "pdf_page": "154",
+          "role": "primary",
+          "section": "4.2 Le problematiche emergenti",
+          "evidence": "Defines whey and separately defines scotta as the residue from ricotta processing."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q12",
+      "query_type": "domain_specialist",
+      "query": "What pharmaceutical properties have been found in rice bran (pula), and which compounds are responsible?",
+      "expected_answer": "The report states that sterols in rice bran can be used to produce substances that help reduce cholesterol. It also reports recently demonstrated antitumour pharmaceutical properties. However, the text does not identify the specific compound responsible for the antitumour effect, so that attribution should not be inferred.",
+      "expected_entities": [
+        {
+          "label": "Rice bran",
+          "normalised_label": "rice bran",
+          "alt_labels": [
+            "pula",
+            "pula di riso",
+            "crusca di riso"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_77d35680",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Sterol",
+          "normalised_label": "sterol",
+          "alt_labels": [
+            "steroli",
+            "sterols"
+          ],
+          "uri": "http://purl.obolibrary.org/obo/CHEBI_15889",
+          "vocabulary": "ChEBI",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Cholesterol",
+          "normalised_label": "cholesterol",
+          "alt_labels": [
+            "colesterolo"
+          ],
+          "uri": "http://purl.obolibrary.org/obo/CHEBI_16113",
+          "vocabulary": "ChEBI",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "184",
+          "pdf_page": "184",
+          "role": "primary",
+          "section": "5.2 Le problematiche emergenti",
+          "evidence": "Links rice-bran sterols to cholesterol-reducing substances and separately reports antitumour pharmaceutical properties."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q13",
+      "query_type": "domain_specialist",
+      "query": "What is buttermilk (latticello), from which process does it originate, and in what quantity?",
+      "expected_answer": "Buttermilk is a dairy by-product generated during pasta-filata cheese production and during butter churning. The report estimates approximately 1,300 kg of buttermilk for each tonne of butter or cheese produced.",
+      "expected_entities": [
+        {
+          "label": "Buttermilk",
+          "normalised_label": "buttermilk",
+          "alt_labels": [
+            "latticello"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_9513",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Butter churning",
+          "normalised_label": "butter churning",
+          "alt_labels": [
+            "burrificazione",
+            "churning",
+            "zangolatura"
+          ],
+          "uri": "urn:ceff:ButterChurning",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        },
+        {
+          "label": "Pasta-filata cheese production",
+          "normalised_label": "pasta-filata cheese production",
+          "alt_labels": [
+            "lavorazione della pasta filata",
+            "pasta filata",
+            "produzione di formaggi a pasta filata"
+          ],
+          "uri": "urn:ceff:PastaFilataCheeseProduction",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "154",
+          "pdf_page": "154",
+          "role": "primary",
+          "section": "4.2 Le problematiche emergenti",
+          "evidence": "Defines latticello, names both originating processes, and gives the 1,300 kg-per-tonne quantity."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q14",
+      "query_type": "distractor",
+      "query": "What is the annual production volume of grape pomace in the Veneto region?",
+      "expected_answer": "Not answerable from the supplied corpus. The report analyses Piedmont and provides no annual grape-pomace production figure for Veneto.",
+      "expected_entities": [],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "scope of report",
+          "pdf_page": "1",
+          "role": "primary",
+          "section": "Title and regional scope",
+          "evidence": "The report is explicitly about the Piedmont agri-food system; no Veneto annual pomace volume is supplied."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": true
+      }
+    },
+    {
+      "query_id": "Q15",
+      "query_type": "distractor",
+      "query": "According to the framework, which of the three C's is the most important?",
+      "expected_answer": "The corpus asserts no ranking among the three C’s. Capital, Cyclicality, and Co-evolution are presented as an integrated conceptual framework, so no single C can be identified as “the most important” from these sources.",
+      "expected_entities": [],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "100",
+          "pdf_page": "7",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Introduces the three C’s as one shared trajectory, without ranking them."
+        },
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Describes internal interdependence, including inseparable capital dimensions."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": true
+      }
+    },
+    {
+      "query_id": "Q16",
+      "query_type": "factual_simple",
+      "query": "In the Via del Campo biogas case, what two input materials feed the plant and in what proportions?",
+      "expected_answer": "The plant is fed with animal manure (60%) and crops (40%).",
+      "expected_entities": [
+        {
+          "label": "Animal manure",
+          "normalised_label": "animal manure",
+          "alt_labels": [
+            "effluenti zootecnici",
+            "letame",
+            "liquame",
+            "livestock manure",
+            "manure",
+            "reflui zootecnici"
+          ],
+          "uri": "urn:ceff:AnimalManure",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": "No exact AGROVOC identifier is claimed in this benchmark."
+        },
+        {
+          "label": "Crop biomass",
+          "normalised_label": "crop biomass",
+          "alt_labels": [
+            "biomassa colturale",
+            "biomassa vegetale",
+            "biomasse agricole",
+            "crop biomasses"
+          ],
+          "uri": "urn:ceff:CropBiomass",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Biogas",
+          "normalised_label": "biogas",
+          "alt_labels": [
+            "bio-gas"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_9262",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "171",
+          "pdf_page": "171",
+          "role": "primary",
+          "section": "VIA DEL CAMPO case",
+          "evidence": "Gives the two inputs and their 60/40 proportions."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q17",
+      "query_type": "factual_simple",
+      "query": "By how much can digestate reduce chemical fertiliser use according to the Via del Campo case?",
+      "expected_answer": "According to the case, using digestate in the fields can reduce chemical fertiliser use by 90%.",
+      "expected_entities": [
+        {
+          "label": "Digestate",
+          "normalised_label": "digestate",
+          "alt_labels": [
+            "digestato"
+          ],
+          "uri": "urn:ceff:Digestate",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Chemical fertiliser",
+          "normalised_label": "chemical fertiliser",
+          "alt_labels": [
+            "chemical fertilizer",
+            "concime chimico",
+            "fertilizzante chimico",
+            "fertilizzanti chimici",
+            "mineral fertiliser"
+          ],
+          "uri": "urn:ceff:ChemicalFertiliser",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/ChemicalSubstance",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "171",
+          "pdf_page": "171",
+          "role": "primary",
+          "section": "VIA DEL CAMPO case",
+          "evidence": "States that digestate used as field fertiliser reduces chemical fertiliser use by 90%."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q18",
+      "query_type": "factual_simple",
+      "query": "What percentage of mineral-water bottles in Italy are made of plastic?",
+      "expected_answer": "Approximately 80% of the bottles used to package mineral water in Italy are plastic.",
+      "expected_entities": [
+        {
+          "label": "Plastic bottle",
+          "normalised_label": "plastic bottle",
+          "alt_labels": [
+            "bottiglia di plastica",
+            "bottiglie di plastica",
+            "bottiglie in pet",
+            "pet bottle",
+            "plastic bottles"
+          ],
+          "uri": "urn:ceff:PlasticBottle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Mineral water",
+          "normalised_label": "mineral water",
+          "alt_labels": [
+            "acqua minerale",
+            "acque minerali"
+          ],
+          "uri": "urn:ceff:MineralWater",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/resourceODP/Resource",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "205",
+          "pdf_page": "205",
+          "role": "primary",
+          "section": "6.1 Una sintesi della filiera piemontese",
+          "evidence": "Reports that around 80% of mineral-water bottles used in Italy are plastic."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q19",
+      "query_type": "factual_simple",
+      "query": "On average, how much milk is wasted per person per week in Italian households?",
+      "expected_answer": "Italian households waste an average of 92 g of milk per person per week.",
+      "expected_entities": [
+        {
+          "label": "Milk waste",
+          "normalised_label": "milk waste",
+          "alt_labels": [
+            "latte sprecato",
+            "milk wastage",
+            "spreco di latte",
+            "wasted milk"
+          ],
+          "uri": "urn:ceff:MilkWaste",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/resourceODP/Resource",
+          "note": "Modelled as a discarded food resource; no exact AGROVOC concept is claimed."
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "155",
+          "pdf_page": "155",
+          "role": "primary",
+          "section": "4.2 Le problematiche emergenti",
+          "evidence": "Reports 92 g of milk wasted per person per week in Italy."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q20",
+      "query_type": "cross_vocab_relational",
+      "query": "Trace the circular loop in the Via del Campo case: from field input back to field output.",
+      "expected_answer": "The loop is: fields produce animal feed and a dedicated or secondary crop → animals and crops supply manure and crop biomass → those inputs enter the biogas plant → anaerobic digestion produces biogas and digestate → digestate returns to the fields as fertiliser. The cogeneration unit also converts biogas into electricity and recoverable heat.",
+      "expected_entities": [
+        {
+          "label": "Field",
+          "normalised_label": "field",
+          "alt_labels": [
+            "agricultural field",
+            "campi",
+            "campo",
+            "terreno agricolo"
+          ],
+          "uri": "urn:ceff:AgriculturalField",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/resourceODP/Resource",
+          "note": null
+        },
+        {
+          "label": "Animal manure",
+          "normalised_label": "animal manure",
+          "alt_labels": [
+            "effluenti zootecnici",
+            "letame",
+            "liquame",
+            "livestock manure",
+            "manure",
+            "reflui zootecnici"
+          ],
+          "uri": "urn:ceff:AnimalManure",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Crop biomass",
+          "normalised_label": "crop biomass",
+          "alt_labels": [
+            "biomassa colturale",
+            "biomassa vegetale",
+            "biomasse agricole",
+            "crop biomasses"
+          ],
+          "uri": "urn:ceff:CropBiomass",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Anaerobic digester",
+          "normalised_label": "anaerobic digester",
+          "alt_labels": [
+            "anaerobic digesters",
+            "digestore",
+            "digestore anaerobico",
+            "digestori anaerobici"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_b88af936",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Biogas",
+          "normalised_label": "biogas",
+          "alt_labels": [
+            "bio-gas"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_9262",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Digestate",
+          "normalised_label": "digestate",
+          "alt_labels": [
+            "digestato"
+          ],
+          "uri": "urn:ceff:Digestate",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "AgriculturalField supplies AnimalFeed and CropBiomass.",
+        "AnaerobicDigestion has-input AnimalManure and CropBiomass.",
+        "AnaerobicDigestion has-output Biogas and Digestate.",
+        "Digestate is-applied-to AgriculturalField as fertiliser."
+      ],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "171",
+          "pdf_page": "171",
+          "role": "primary",
+          "section": "VIA DEL CAMPO case",
+          "evidence": "Narrates the complete field–feed/crop–biogas–digestate–field loop and the energy co-products."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q21",
+      "query_type": "cross_vocab_relational",
+      "query": "Which five priorities enable co-evolution, and how do they collectively give resilience to the circular paradigm?",
+      "expected_answer": "The five priorities are solidarity, dialogue, cooperation, sharing, and symbiosis. Solidarity addresses inequality and access to quality food; dialogue reconnects human economic activity with natural cycles; cooperation aligns communities around shared values and goals; sharing circulates materials, energy, and information; and symbiosis creates mutually beneficial relationships among firms, communities, territories, and natural systems. Together, these priorities build the collaborative capacity and mutual benefit that give the circular paradigm resilience.",
+      "expected_entities": [
+        {
+          "label": "Co-evolution",
+          "normalised_label": "co-evolution",
+          "alt_labels": [
+            "co-evoluzione",
+            "coevolution",
+            "coevoluzione"
+          ],
+          "uri": "urn:ceff:CoEvolution",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Solidarity",
+          "normalised_label": "solidarity",
+          "alt_labels": [
+            "solidarieta",
+            "solidarietà"
+          ],
+          "uri": "urn:ceff:Solidarity",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Dialogue",
+          "normalised_label": "dialogue",
+          "alt_labels": [
+            "dialog",
+            "dialogo"
+          ],
+          "uri": "urn:ceff:Dialogue",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Cooperation",
+          "normalised_label": "cooperation",
+          "alt_labels": [
+            "cooperazione"
+          ],
+          "uri": "urn:ceff:Cooperation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Sharing",
+          "normalised_label": "sharing",
+          "alt_labels": [
+            "condivisione"
+          ],
+          "uri": "urn:ceff:Sharing",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Symbiosis",
+          "normalised_label": "symbiosis",
+          "alt_labels": [
+            "simbiosi"
+          ],
+          "uri": "urn:ceff:Symbiosis",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "Each of Solidarity, Dialogue, Cooperation, Sharing, and Symbiosis supports CoEvolution."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "102",
+          "pdf_page": "9",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Lists and defines all five priorities and says they give resilience to the circular economic paradigm."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "70",
+          "pdf_page": "70",
+          "role": "corroborating",
+          "section": "1.4.7 Le 3C della CEFF",
+          "evidence": "Provides the Italian formulation of the same five priorities."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q22",
+      "query_type": "cross_vocab_relational",
+      "query": "How does the geographic dispersion of water-bottling firms in Piedmont hinder industrial symbiosis?",
+      "expected_answer": "Bottling firms are constrained by the locations of authorised mineral-water sources, so they are not necessarily close to one another. This spatial dispersion raises logistical and coordination barriers and therefore makes territorial synergies and industrial-symbiosis exchanges more difficult.",
+      "expected_entities": [
+        {
+          "label": "Water-bottling firm",
+          "normalised_label": "water-bottling firm",
+          "alt_labels": [
+            "aziende di imbottigliamento",
+            "bottling company",
+            "imbottigliatori",
+            "imprese di imbottigliamento",
+            "water bottling firms"
+          ],
+          "uri": "urn:ceff:WaterBottlingFirm",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CVN",
+          "note": null
+        },
+        {
+          "label": "Industrial symbiosis",
+          "normalised_label": "industrial symbiosis",
+          "alt_labels": [
+            "simbiosi industriale"
+          ],
+          "uri": "urn:ceff:IndustrialSymbiosis",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/Collaboration",
+          "note": null
+        },
+        {
+          "label": "Mineral-water source",
+          "normalised_label": "mineral-water source",
+          "alt_labels": [
+            "fonte",
+            "mineral water source",
+            "sorgente",
+            "sorgente di acqua minerale",
+            "sorgenti",
+            "spring"
+          ],
+          "uri": "urn:ceff:MineralWaterSource",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/resourceODP/Resource",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "GeographicDispersion hinders IndustrialSymbiosis.",
+        "AuthorisedWaterSourceLocation constrains WaterBottlingFirmLocation."
+      ],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "205",
+          "pdf_page": "205",
+          "role": "primary",
+          "section": "6.1 Una sintesi della filiera piemontese",
+          "evidence": "Links firm location to authorised water sources and explicitly says distance complicates territorial synergies/industrial symbiosis."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q23",
+      "query_type": "cross_vocab_relational",
+      "query": "Connect the concept of Extension (extended producer responsibility) to a concrete by-product reuse example in the wine chain.",
+      "expected_answer": "Extension requires a business to take responsibility for the product’s whole lifecycle, from raw-material origin through end of life, while enabling waste prevention and correct recovery. A concrete wine-chain application is the return of wine lees, grape pomace, and pruning residues to agricultural soil as nutrients/fertiliser. This is an application-level inference: lifecycle responsibility is translated into planned recovery of production outputs rather than disposal.",
+      "expected_entities": [
+        {
+          "label": "Extension",
+          "normalised_label": "extension",
+          "alt_labels": [
+            "estensione",
+            "extended producer responsibility",
+            "responsabilità estesa del produttore"
+          ],
+          "uri": "urn:ceff:Extension",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Wine lees",
+          "normalised_label": "wine lees",
+          "alt_labels": [
+            "fecce",
+            "fecce di vino",
+            "lees",
+            "feccia",
+            "wine dregs"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_28445",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Grape pomace",
+          "normalised_label": "grape pomace",
+          "alt_labels": [
+            "grape marc",
+            "vinacce",
+            "vinaccia",
+            "vinacce d'uva"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_909cff15",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Pruning residue",
+          "normalised_label": "pruning residue",
+          "alt_labels": [
+            "pruning residues",
+            "residui di potatura",
+            "sarmenti",
+            "vine shoots"
+          ],
+          "uri": "urn:ceff:PruningResidue",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://aims.fao.org/aos/agrovoc/c_8683",
+          "note": null
+        },
+        {
+          "label": "Soil fertilisation",
+          "normalised_label": "soil fertilisation",
+          "alt_labels": [
+            "concimazione",
+            "fertilizzazione del suolo",
+            "soil fertilization"
+          ],
+          "uri": "urn:ceff:SoilFertilisation",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "Extension is-instantiated-by planned SoilFertilisation using wine-chain by-products."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Defines Extension as responsibility for the entire lifecycle and end of life."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "128",
+          "pdf_page": "128",
+          "role": "primary",
+          "section": "3.2 Le problematiche emergenti",
+          "evidence": "Reports that lees, pomace, and pruning waste are returned to soil for nutrients and fertilisation."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q24",
+      "query_type": "cross_vocab_relational",
+      "query": "How does the 'cascading' metabolisation cycle differ from the 'short' cycle, with a food-chain example?",
+      "expected_answer": "A short cycle keeps output recovery physically and temporally close to the point where it leaves and re-enters production. An illustrative corpus-grounded example is a winery returning lees, pomace, or pruning residues to vineyard soil. A cascading cycle transfers an output as an upcycled input across distant value-chain segments or into another industrial sector—for example, grape pomace moving from winemaking into cosmetics or packaging/material applications. The distinction is therefore local/rapid recirculation versus cross-segment or cross-sector valorisation.",
+      "expected_entities": [
+        {
+          "label": "Short metabolisation cycle",
+          "normalised_label": "short metabolisation cycle",
+          "alt_labels": [
+            "ciclo corto",
+            "ciclo di metabolizzazione corto",
+            "short cycle",
+            "short metabolization cycle"
+          ],
+          "uri": "urn:ceff:ShortMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Cascading metabolisation cycle",
+          "normalised_label": "cascading metabolisation cycle",
+          "alt_labels": [
+            "cascade cycle",
+            "cascading cycle",
+            "cascading metabolization cycle",
+            "ciclo a cascata"
+          ],
+          "uri": "urn:ceff:CascadingMetabolisationCycle",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/cvn/CircularStrategy",
+          "note": null
+        },
+        {
+          "label": "Grape pomace",
+          "normalised_label": "grape pomace",
+          "alt_labels": [
+            "grape marc",
+            "vinacce",
+            "vinaccia",
+            "vinacce d'uva"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_909cff15",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Wine lees",
+          "normalised_label": "wine lees",
+          "alt_labels": [
+            "fecce",
+            "fecce di vino",
+            "lees",
+            "feccia",
+            "wine dregs"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_28445",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        }
+      ],
+      "expected_relations": [
+        "ShortMetabolisationCycle and CascadingMetabolisationCycle are sibling sub-concepts of Metabolisation."
+      ],
+      "source_verified": [
+        {
+          "doc": "Fassio, “The 3 C’s of the Circular Economy for Food” (DiiD 73, 2021)",
+          "page": "101",
+          "pdf_page": "8",
+          "role": "primary",
+          "section": "A New Conceptual Framework for the Circular Economy for Food (CEFF)",
+          "evidence": "Defines short and cascading cycles."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "128",
+          "pdf_page": "128",
+          "role": "primary",
+          "section": "3.2 Le problematiche emergenti",
+          "evidence": "Provides the local soil-return example and mentions packaging applications."
+        },
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "133",
+          "pdf_page": "133",
+          "role": "primary",
+          "section": "POLIPHENOLIA case history",
+          "evidence": "Provides the cross-sector cosmetics example."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q25",
+      "query_type": "domain_specialist",
+      "query": "What are fecce (wine lees), and what valuable substances do they contain?",
+      "expected_answer": "Wine lees are fermentation sediments that may still contain up to 75% wine; the remaining fraction is mainly fermented sediment from grape seeds, grape skins, and microorganisms such as yeasts. They are rich in cream of tartar (potassium bitartrate), calcium tartrate, ferments, and colouring substances.",
+      "expected_entities": [
+        {
+          "label": "Wine lees",
+          "normalised_label": "wine lees",
+          "alt_labels": [
+            "fecce",
+            "fecce di vino",
+            "lees",
+            "feccia",
+            "wine dregs"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_28445",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Potassium bitartrate (cream of tartar)",
+          "normalised_label": "potassium bitartrate (cream of tartar)",
+          "alt_labels": [
+            "bitartrato di potassio",
+            "cream of tartar",
+            "cremor tartaro",
+            "cremortartaro",
+            "potassium bitartrate",
+            "potassium hydrogen tartrate"
+          ],
+          "uri": "http://purl.obolibrary.org/obo/CHEBI_32034",
+          "vocabulary": "ChEBI",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Calcium tartrate",
+          "normalised_label": "calcium tartrate",
+          "alt_labels": [
+            "tartrato di calcio"
+          ],
+          "uri": "urn:ceff:CalciumTartrate",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/ChemicalSubstance",
+          "note": null
+        },
+        {
+          "label": "Yeast",
+          "normalised_label": "yeast",
+          "alt_labels": [
+            "lieviti",
+            "lievito",
+            "yeasts"
+          ],
+          "uri": "urn:ceff:Yeast",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "126",
+          "pdf_page": "126",
+          "role": "primary",
+          "section": "3.2 Le problematiche emergenti",
+          "evidence": "Defines the composition of wine lees and lists the valuable substances they contain."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q26",
+      "query_type": "domain_specialist",
+      "query": "What are fanghi (sludge) in dairy processing, and what operations generate them?",
+      "expected_answer": "Dairy sludge is what remains after on-site wastewater treatment. It mainly derives from curd cooling, cheese washing, washing equipment and facilities, and brine salting of cheese.",
+      "expected_entities": [
+        {
+          "label": "Dairy sludge",
+          "normalised_label": "dairy sludge",
+          "alt_labels": [
+            "cheese sludge",
+            "fanghi",
+            "fanghi caseari",
+            "fanghi di lavorazione",
+            "sludge"
+          ],
+          "uri": "urn:ceff:DairySludge",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Wastewater treatment",
+          "normalised_label": "wastewater treatment",
+          "alt_labels": [
+            "depurazione",
+            "depurazione delle acque",
+            "trattamento delle acque reflue"
+          ],
+          "uri": "urn:ceff:WastewaterTreatment",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        },
+        {
+          "label": "Brine salting",
+          "normalised_label": "brine salting",
+          "alt_labels": [
+            "salamoia",
+            "salatura in salamoia",
+            "salting"
+          ],
+          "uri": "urn:ceff:BrineSalting",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "154",
+          "pdf_page": "154",
+          "role": "primary",
+          "section": "4.2 Le problematiche emergenti",
+          "evidence": "Defines fanghi and enumerates the operations generating the wastewater residues."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q27",
+      "query_type": "domain_specialist",
+      "query": "Why is rice husk (lolla) preferred over other natural fillers for bioplastics?",
+      "expected_answer": "Rice husk has lower water absorption than other natural fillers, which often take up moisture during high-temperature processing. It is also easy to process within plastic materials and can give the final material a more attractive appearance.",
+      "expected_entities": [
+        {
+          "label": "Rice husks",
+          "normalised_label": "rice husks",
+          "alt_labels": [
+            "lolla",
+            "lolla di riso",
+            "rice husk",
+            "rice hulls"
+          ],
+          "uri": "http://aims.fao.org/aos/agrovoc/c_24892",
+          "vocabulary": "AGROVOC",
+          "mapping_status": "exact",
+          "aligned_to": null,
+          "note": null
+        },
+        {
+          "label": "Bioplastic",
+          "normalised_label": "bioplastic",
+          "alt_labels": [
+            "bioplastica",
+            "bioplastiche",
+            "bioplastics"
+          ],
+          "uri": "urn:ceff:Bioplastic",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        },
+        {
+          "label": "Natural filler",
+          "normalised_label": "natural filler",
+          "alt_labels": [
+            "cariche naturali",
+            "filler naturale",
+            "filler naturali",
+            "natural fillers",
+            "riempitivo naturale"
+          ],
+          "uri": "urn:ceff:NaturalFiller",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/material/Material",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "185",
+          "pdf_page": "185",
+          "role": "primary",
+          "section": "5.2 Le problematiche emergenti",
+          "evidence": "Compares rice husk with other natural fillers and identifies low moisture absorption, processability, and aesthetics."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q28",
+      "query_type": "domain_specialist",
+      "query": "What happens to rice straw (paglia di riso) and why is open-field burning restricted?",
+      "expected_answer": "Rice straw is still often burned in the field, which makes the supply chain less environmentally sustainable by increasing PM10 particulate levels. Piedmont therefore prohibits open-field burning of crop residues from 1 September to 31 March.",
+      "expected_entities": [
+        {
+          "label": "Rice straw",
+          "normalised_label": "rice straw",
+          "alt_labels": [
+            "paglia di riso",
+            "rice straws"
+          ],
+          "uri": "urn:ceff:RiceStraw",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://aims.fao.org/aos/agrovoc/c_8683",
+          "note": "No exact AGROVOC class was asserted; aligned broadly to agricultural wastes."
+        },
+        {
+          "label": "PM10",
+          "normalised_label": "pm10",
+          "alt_labels": [
+            "particolato",
+            "particulate matter",
+            "pm 10",
+            "polveri sottili"
+          ],
+          "uri": "urn:ceff:PM10",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": null,
+          "note": "Represented locally to avoid asserting an unverified ENVO identifier."
+        },
+        {
+          "label": "Open-field burning",
+          "normalised_label": "open-field burning",
+          "alt_labels": [
+            "abbruciamento",
+            "abbruciamento in campo",
+            "bruciatura in campo",
+            "combustione in campo",
+            "field burning",
+            "open burning"
+          ],
+          "uri": "urn:ceff:OpenFieldBurning",
+          "vocabulary": "CEFF benchmark extension",
+          "mapping_status": "benchmark_local_extension",
+          "aligned_to": "http://w3id.org/CEON/ontology/processODP/Process",
+          "note": null
+        }
+      ],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "185",
+          "pdf_page": "185",
+          "role": "primary",
+          "section": "5.2 Le problematiche emergenti",
+          "evidence": "States that rice straw is often burned, links this to higher PM10, and gives the regional prohibition period."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": false
+      }
+    },
+    {
+      "query_id": "Q29",
+      "query_type": "distractor",
+      "query": "What is the exact market price per tonne of grape pomace in Piedmont in 2023?",
+      "expected_answer": "Not answerable from the supplied corpus. The documents contain no exact 2023 market price per tonne for grape pomace in Piedmont.",
+      "expected_entities": [],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "wine-chain sections",
+          "pdf_page": "119",
+          "role": "primary",
+          "section": "Chapter 3",
+          "evidence": "Discusses quantities, uses, barriers, and valorisation opportunities but does not provide the requested 2023 market price."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": true
+      }
+    },
+    {
+      "query_id": "Q30",
+      "query_type": "distractor",
+      "query": "Which of the six Piedmont supply chains produces the most CO2 emissions?",
+      "expected_answer": "Not answerable from the supplied corpus. The report does not provide a harmonised cross-chain CO₂ inventory or rank the supply chains by emissions. It also analyses five selected chains—wine, milk and cheese, rice, water, and beef—not six.",
+      "expected_entities": [],
+      "expected_relations": [],
+      "source_verified": [
+        {
+          "doc": "Economia Circolare nel sistema agroalimentare piemontese (Regione Piemonte/UNISG report)",
+          "page": "report-wide scope",
+          "pdf_page": "5",
+          "role": "primary",
+          "section": "Index and chain chapters",
+          "evidence": "The five selected chains are analysed separately; no comparable emissions ranking is supplied."
+        }
+      ],
+      "scoring": {
+        "concept_level": {
+          "note": "precision/recall on normalised_label + alt_labels; computed at eval time"
+        },
+        "grounding_level": {
+          "note": "precision/recall on resolved canonical URIs (mapping_status==exact only)"
+        },
+        "judge_dimensions": {
+          "factual_correctness": null,
+          "completeness": null
+        },
+        "distractor_expected": true
+      }
+    }
+  ]
+}
