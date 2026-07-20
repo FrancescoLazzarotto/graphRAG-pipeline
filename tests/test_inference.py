@@ -7,15 +7,19 @@ These cover the behaviour changed by the inference-focused fixes:
 - A4: triple ranker weights reflect the signals actually available
 - A3: experiment runner no longer emits always-constant metric columns
 - A8: a single shared strategy-preset applier
+- gold: runs emit query_id so the evaluator can join to the gold by id
 """
 
 from __future__ import annotations
+
+import argparse
+import json
 
 import pytest
 
 from graphrag.agent.compression import ContextCompressor
 from graphrag.config import AgentConfig
-from graphrag.experiments.runner import ExperimentResult, ExperimentRunner
+from graphrag.experiments.runner import ExperimentResult, ExperimentRunner, Question
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.refusal import looks_like_refusal
 from graphrag.strategies import STRATEGY_PRESETS, apply_strategy
@@ -134,6 +138,179 @@ def test_runner_summary_stats_has_no_dead_metrics():
     stats = runner.summary_stats()["default"]
     assert "avg_confidence" not in stats
     assert "reflection_pass_rate" not in stats
+
+
+# --------------------------------------------------------------------------- #
+# gold - query_id propagation into run artifacts
+# --------------------------------------------------------------------------- #
+def test_runner_accepts_plain_strings_for_backwards_compat():
+    """The legacy list[str] call must keep working, with an empty query_id."""
+    runner = ExperimentRunner(questions=["q1", "q2"])
+    batch = runner.run_agent(agent=_StubAgent(), label="default")
+
+    assert [q.text for q in runner.questions] == ["q1", "q2"]
+    assert [r.question for r in batch] == ["q1", "q2"]
+    assert all(r.query_id == "" for r in batch)
+
+
+def test_runner_emits_query_id_in_jsonl(tmp_path):
+    runner = ExperimentRunner(
+        questions=[Question(text="What is whey?", query_id="Q01")]
+    )
+    runner.run_agent(agent=_StubAgent(), label="default")
+
+    path = tmp_path / "results.jsonl"
+    runner.export_jsonl(str(path))
+    row = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+
+    assert row["query_id"] == "Q01"
+    assert row["question"] == "What is whey?"
+
+
+def test_runner_emits_query_id_in_csv(tmp_path):
+    runner = ExperimentRunner(questions=[Question(text="q1", query_id="Q07")])
+    runner.run_agent(agent=_StubAgent(), label="default")
+
+    path = tmp_path / "results.csv"
+    runner.export_csv(str(path))
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    assert lines[0].split(",")[0] == "query_id"
+    assert lines[1].split(",")[0] == "Q07"
+
+
+def _args(questions_file: str = "", question: str = "q?") -> argparse.Namespace:
+    return argparse.Namespace(questions_file=questions_file, question=question)
+
+
+def test_load_questions_plain_text_is_backwards_compatible(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.txt"
+    path.write_text("First question?\nSecond question?\n\n", encoding="utf-8")
+
+    questions = _load_questions(_args(str(path)))
+
+    assert [q.text for q in questions] == ["First question?", "Second question?"]
+    assert all(q.query_id == "" for q in questions)
+
+
+def test_load_questions_text_with_tab_ids(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.txt"
+    path.write_text("Q01\tFirst question?\nQ02\tSecond question?\n", encoding="utf-8")
+
+    questions = _load_questions(_args(str(path)))
+
+    assert [(q.query_id, q.text) for q in questions] == [
+        ("Q01", "First question?"),
+        ("Q02", "Second question?"),
+    ]
+
+
+def test_load_questions_from_gold_json(tmp_path):
+    """A gold file can be handed straight to --questions-file."""
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "gold.json"
+    path.write_text(
+        json.dumps(
+            {
+                "_meta": {"n_queries": 2},
+                "queries": [
+                    {"query_id": "Q01", "query": "What is whey?"},
+                    {"query_id": "Q02", "query": "What is scotta?"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    questions = _load_questions(_args(str(path)))
+
+    assert [(q.query_id, q.text) for q in questions] == [
+        ("Q01", "What is whey?"),
+        ("Q02", "What is scotta?"),
+    ]
+
+
+def test_load_questions_from_jsonl(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.jsonl"
+    path.write_text(
+        '{"query_id": "Q01", "query": "First?"}\n'
+        '{"query_id": "Q02", "question": "Second?"}\n',
+        encoding="utf-8",
+    )
+
+    questions = _load_questions(_args(str(path)))
+
+    assert [(q.query_id, q.text) for q in questions] == [
+        ("Q01", "First?"),
+        ("Q02", "Second?"),
+    ]
+
+
+def test_load_questions_from_csv(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.csv"
+    path.write_text("query_id,query\nQ01,First?\nQ02,Second?\n", encoding="utf-8")
+
+    questions = _load_questions(_args(str(path)))
+
+    assert [(q.query_id, q.text) for q in questions] == [
+        ("Q01", "First?"),
+        ("Q02", "Second?"),
+    ]
+
+
+def test_load_questions_rejects_duplicate_ids(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.jsonl"
+    path.write_text(
+        '{"query_id": "Q01", "query": "First?"}\n'
+        '{"query_id": "Q01", "query": "Second?"}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate query_id"):
+        _load_questions(_args(str(path)))
+
+
+def test_load_questions_empty_file_raises(tmp_path):
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.txt"
+    path.write_text("\n\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="empty"):
+        _load_questions(_args(str(path)))
+
+
+def test_load_questions_missing_file_raises():
+    from graphrag.cli import _load_questions
+
+    with pytest.raises(FileNotFoundError):
+        _load_questions(_args("/nonexistent/questions.txt"))
+
+
+def test_load_questions_warns_when_no_ids(tmp_path, caplog):
+    """A run that cannot be joined by id must say so before it burns GPU hours."""
+    import logging
+
+    from graphrag.cli import _load_questions
+
+    path = tmp_path / "questions.txt"
+    path.write_text("First question?\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="graphrag.cli"):
+        _load_questions(_args(str(path)))
+
+    assert "declares no query_id" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -349,3 +526,56 @@ def test_quoted_entities_still_extracted_from_real_quotes():
     )
     assert "Materia Rinnovabile" in candidates
     assert "Mimica Touch" in candidates
+
+
+def test_title_phrase_keeps_lowercase_connectors_whole():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates(
+        "In the Via del Campo biogas case, what two input materials feed the plant?"
+    )
+    assert "Via del Campo" in candidates
+    # The sentence-initial function words must be trimmed off the phrase edge
+    # and the fragments must not survive as standalone candidates.
+    assert "In the Via del Campo" not in candidates
+    assert "Via" not in candidates
+    assert "Campo" not in candidates
+
+
+def test_content_keywords_survive_entity_candidates():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    terms = retriever._build_search_terms(
+        query_text=(
+            "In the Via del Campo biogas case, what two input materials "
+            "feed the plant and in what proportions?"
+        ),
+        configured_entity="",
+    )
+    lowered = [t.lower() for t in terms]
+    # Before the fix the capitalized match ("Via", "Campo") silenced every
+    # lowercase content term and the Lucene query drifted to homonym nodes.
+    assert "via del campo" in lowered
+    assert "biogas" in lowered
+    assert "what" not in lowered
+    assert "via" not in lowered  # bare fragment must not be a term
+
+
+def test_english_question_without_capitals_yields_keywords():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    terms = retriever._build_search_terms(
+        query_text="What pharmaceutical properties have been found in rice bran (pula)?",
+        configured_entity="",
+    )
+    lowered = [t.lower() for t in terms]
+    assert "rice" in lowered
+    assert "bran" in lowered
+    assert "pula" in lowered
+    assert "what" not in lowered
+    assert "been" not in lowered
+
+
+def test_italian_title_phrase_still_extracted():
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates(
+        "Quali strategie propone la Regione Piemonte per gli scarti alimentari?"
+    )
+    assert "Regione Piemonte" in candidates
