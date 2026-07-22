@@ -51,3 +51,7 @@ ruff_output.txt
 test_experiment.log
 lib/
 documents/
+
+# Gold protocol / raw hand-off (kept local)
+gold_entity_eval_protocol.md
+gold_original_from_collega_20260716.json
