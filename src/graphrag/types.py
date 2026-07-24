@@ -24,6 +24,14 @@ class RAGState(TypedDict, total=False):
     rewrite_count: int
     text_context: str
     kg_triples: list[Triple]
+    # Retrieved evidence lists. Declared as state channels so LangGraph
+    # propagates them from the retrieve node to the final state (undeclared keys
+    # are dropped); the experiment runner serialises these for provenance/answer
+    # analysis, and the *_count fields below mirror their lengths.
+    retrieved_nodes: list[dict[str, Any]]
+    retrieved_subgraph: list[dict[str, Any]]
+    retrieved_shortest_path: list[dict[str, Any]]
+    retrieved_text_sources: list[dict[str, Any]]
     retrieved_nodes_count: int
     retrieved_neighbors_count: int
     retrieved_subgraph_count: int

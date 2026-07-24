@@ -209,13 +209,19 @@ class KGRAGAgent:
             mm = str(mode).upper() if mode is not None else "HYBRID"
             if mm == "TEXT":
                 text_sections: list[str] = []
+                text_sources: list[dict[str, Any]] = []
                 for candidate_query in retrieval_queries:
-                    value = str(self.kg_retriever.retrieve_context(candidate_query)).strip()
+                    # retrieve() (not retrieve_context()) so the text chunks'
+                    # provenance tags travel with the context for later analysis.
+                    batch = self.kg_retriever.retrieve(candidate_query)
+                    value = str(batch.get("context_text", "")).strip()
                     if value:
                         text_sections.append(value)
+                    text_sources.extend(batch.get("text_sources", []) or [])
 
                 context = self._merge_context_sections(text_sections)
                 retrieved_data["context_text"] = context
+                retrieved_data["text_sources"] = text_sources
 
             elif mm in {"KG", "HYBRID"}:
                 nodes: list[dict[str, Any]] = []
@@ -224,6 +230,7 @@ class KGRAGAgent:
                 subgraph: list[dict[str, Any]] = []
                 shortest_path: list[dict[str, Any]] = []
                 context_sections: list[str] = []
+                text_sources: list[dict[str, Any]] = []
 
                 node_seen: set[tuple[str, str]] = set()
                 neighbor_seen: set[tuple[str, str]] = set()
@@ -268,6 +275,7 @@ class KGRAGAgent:
                     candidate_context = str(batch.get("context_text", "")).strip()
                     if candidate_context:
                         context_sections.append(candidate_context)
+                    text_sources.extend(batch.get("text_sources", []) or [])
 
                 if (
                     self.config.rerank_merged_results
@@ -291,6 +299,7 @@ class KGRAGAgent:
                     "neighbors": neighbors,
                     "subgraph": subgraph,
                     "shortest_path": shortest_path,
+                    "text_sources": text_sources,
                 }
 
             elif mm == "MULTIHOP":
