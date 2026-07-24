@@ -358,10 +358,18 @@ class KGRAGAgent:
             if isinstance(retrieved_data, dict)
             else []
         )
+        text_sources = (
+            retrieved_data.get("text_sources", [])
+            if isinstance(retrieved_data, dict)
+            else []
+        )
 
         result = {
             "text_context": compressed_context,
             "kg_triples": triples if isinstance(triples, list) else [],
+            "retrieved_text_sources": text_sources
+            if isinstance(text_sources, list)
+            else [],
             "retrieved_nodes": nodes if isinstance(nodes, list) else [],
             "retrieved_nodes_count": len(nodes) if isinstance(nodes, list) else 0,
             "retrieved_neighbors": neighbors if isinstance(neighbors, list) else [],

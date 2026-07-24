@@ -46,6 +46,9 @@ class ExperimentResult:
     contexts: list[str] = field(default_factory=list)
     retrieved_triples: list[dict[str, Any]] = field(default_factory=list)
     retrieved_entities: list[dict[str, Any] | str] = field(default_factory=list)
+    # Provenance of retrieved text chunks ({"source", "chunk_id"}); lets the
+    # provenance analysis attribute the text channel to its origin documents.
+    retrieved_text_sources: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -86,6 +89,7 @@ class ExperimentRunner:
                 state=state,
                 triples=retrieved_triples,
             )
+            retrieved_text_sources = self._extract_text_sources(state)
 
             answer = state.get("answer", "")
             result = ExperimentResult(
@@ -111,6 +115,7 @@ class ExperimentRunner:
                 contexts=contexts,
                 retrieved_triples=retrieved_triples,
                 retrieved_entities=retrieved_entities,
+                retrieved_text_sources=retrieved_text_sources,
                 metadata=metadata,
             )
             batch.append(result)
@@ -166,10 +171,16 @@ class ExperimentRunner:
             for item in value:
                 if not isinstance(item, dict):
                     continue
+                rel_props = item.get("relationship_properties", {})
+                if not isinstance(rel_props, dict):
+                    rel_props = {}
                 triple = {
                     "subject": str(item.get("subject", "")),
                     "predicate": str(item.get("predicate", "")),
                     "object": str(item.get("object", "")),
+                    # Origin document of this edge (rel prop), kept so provenance
+                    # analysis can tell gold-doc facts from cross-document ones.
+                    "source_doc": str(rel_props.get("source_doc", "")),
                 }
                 key_tuple = self._triple_key(item)
                 if key_tuple in seen:
@@ -228,6 +239,35 @@ class ExperimentRunner:
                 entities.append(value)
 
         return entities
+
+    @staticmethod
+    def _extract_text_sources(state: dict[str, Any]) -> list[dict[str, str]]:
+        """Collect the provenance of retrieved text chunks from agent state.
+
+        Each entry is ``{"source": "<path>#page=N#chunk=M", "chunk_id": "..."}``
+        as emitted by the text retriever. Only the provenance tag is kept here;
+        the chunk text itself already lives in ``contexts``.
+
+        Args:
+            state: Final agent state.
+
+        Returns:
+            Text-chunk provenance records; empty when no text channel ran.
+        """
+        raw = state.get("retrieved_text_sources", [])
+        if not isinstance(raw, list):
+            return []
+        sources: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source", "")).strip()
+            if not source:
+                continue
+            sources.append(
+                {"source": source, "chunk_id": str(item.get("chunk_id", ""))}
+            )
+        return sources
 
     @staticmethod
     def _is_insufficient(answer: str) -> bool:

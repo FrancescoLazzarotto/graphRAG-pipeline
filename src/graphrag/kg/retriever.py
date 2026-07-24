@@ -174,12 +174,22 @@ class KGRetriever:
             subgraph = self._rank_triples(subgraph, query_text)
 
         text_chunks: list[str] = []
+        text_sources: list[dict[str, str]] = []
         if self.config.use_text_retriever and self.text_pipeline is not None:
             retrieved = self.text_pipeline.retrieve(
                 query=query_text,
                 top_k=self.config.text_retriever_top_k,
             )
-            text_chunks = [chunk.content for chunk in retrieved if chunk.content.strip()]
+            for chunk in retrieved:
+                if not chunk.content.strip():
+                    continue
+                text_chunks.append(chunk.content)
+                # Keep each chunk's source tag ("<path>#page=N#chunk=M") so
+                # downstream provenance analysis can attribute retrieved text to
+                # its origin document; the chunk text itself stays in the context.
+                text_sources.append(
+                    {"source": chunk.source or "", "chunk_id": chunk.chunk_id}
+                )
 
         context_sections = self._build_context_sections(
             query_text=query_text,
@@ -201,6 +211,7 @@ class KGRetriever:
             "neighbors": neighbors,
             "subgraph": subgraph,
             "shortest_path": shortest_path,
+            "text_sources": text_sources,
             "context_sections": context_sections,
             "context_text": "\n\n".join(
                 section for section in context_sections if section

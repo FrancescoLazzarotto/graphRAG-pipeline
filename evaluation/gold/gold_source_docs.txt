@@ -1,0 +1,21 @@
+# Whitelist of the source documents the gold standard rests on.
+# One file basename per line, exactly as it appears in the KG's
+# relationship `source_doc` property AND as the text corpus filename.
+# Lines starting with '#' and blank lines are ignored.
+#
+# Used by scripts/provenance_precision.py to classify retrieved evidence as
+# gold-provenance vs cross-document. VERIFY these match your gold before trusting
+# the numbers -- run `provenance_precision.py --list-docs ...` to see every
+# source_doc actually present in a run, then reconcile.
+#
+# Mapping gold source_verified label -> KG/text filename (checked 2026-07-24):
+#   "Economia Circolare ... agroalimentare piemontese"  -> REPORT MATTM_Definitivo.pdf
+#   "Fassio, 3 C's ... (DiiD 73, 2021)"                  -> F.Fassio - DiiD 2021.pdf
+#   "Fassio & Tecco, ... (Systems 7(3), 2019)"           -> F.Fassio, N.Tecco, CEFF and SDGs in Systems.pdf
+#
+# WARNING: do NOT add "Circular Economy for Food, Fassio Tecco.pdf" -- that is a
+# different Fassio/Tecco document, not the Systems 2019 paper the gold cites.
+
+REPORT MATTM_Definitivo.pdf
+F.Fassio - DiiD 2021.pdf
+F.Fassio, N.Tecco, CEFF and SDGs in Systems.pdf
