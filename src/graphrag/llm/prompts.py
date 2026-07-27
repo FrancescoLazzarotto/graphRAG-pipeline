@@ -43,6 +43,59 @@ class PromptLibrary:
             "If you mention a fact, tie it to an exact node, triple, or other "
             "explicit evidence from the context."
         )
+        if config.cite_evidence:
+            system_message += (
+                " Evidence items in the context are numbered: reference them by "
+                "their id so each specific claim stays traceable to its source "
+                "document."
+            )
+
+        if config.always_include_limits:
+            limits_block = (
+                "Always include a short section titled 'Limits and confidence' "
+                "assessing how strong the supporting evidence is. "
+            )
+            # Only meaningful without the citation protocol below, which replaces
+            # the trailing evidence section with per-claim reference tags.
+            no_inline_block = (
+                "Keep the main paragraphs free of inline triple citations in "
+                "parentheses; cite nodes and triples only in the dedicated "
+                "evidence section. "
+            )
+        else:
+            limits_block = (
+                "If context is sparse, include a short section titled "
+                "'Limits and confidence'. "
+            )
+            no_inline_block = ""
+
+        if config.cite_evidence:
+            # Deliberately restrictive: a tag on every sentence reads as noise
+            # and stops carrying information. Citations belong on claims a
+            # reader could want to check.
+            evidence_block = (
+                "Evidence items in the context are numbered: [S1], [S2], ... for "
+                "source passages and [T1], [T2], ... for knowledge-graph facts. "
+                "Put the id of the evidence you used in square brackets at the end "
+                "of the sentence it supports. "
+                "Cite only claims carrying specific content: figures, percentages, "
+                "dates, proper names, article or standard numbers, definitions, and "
+                "statements attributable to an author or a document. "
+                "Do not cite generic, connective or summarising sentences, and use at "
+                "most one tag per sentence. "
+                "When several evidence items support the same claim, cite the single "
+                "most specific one instead of stacking ids: never put more than two "
+                "ids in a tag. "
+                "Never write an id that is not in the context, and never cite the "
+                "entity sections, which carry no source. "
+                "Do not write a source list at the end: it is generated automatically. "
+            )
+        else:
+            evidence_block = (
+                no_inline_block
+                + "When possible, add a short 'Evidence in graph' section with the "
+                "exact node or triple names that support the answer. "
+            )
 
         human_message_template = (
             f"Target audience: {config.target_audience}.\n"
@@ -53,20 +106,9 @@ class PromptLibrary:
             "If context has at least some factual evidence, provide the best "
             "grounded answer possible in 1-2 short paragraphs. "
             "Avoid a checklist style unless the user explicitly asks for a list. "
-            + (
-                "Always include a short section titled 'Limits and confidence' "
-                "assessing how strong the supporting evidence is. "
-                "Keep the main paragraphs free of inline triple citations in "
-                "parentheses; cite nodes and triples only in the dedicated "
-                "evidence section. "
-                if config.always_include_limits
-                else "If context is sparse, include a short section titled "
-                "'Limits and confidence'. "
-            )
-            +
-            "When possible, add a short 'Evidence in graph' section with the "
-            "exact node or triple names that support the answer. "
-            "State that context is insufficient only when context is empty or "
+            + limits_block
+            + evidence_block
+            + "State that context is insufficient only when context is empty or "
             "lacks factual evidence."
         )
 

@@ -51,11 +51,25 @@ MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "512"))
 # for a 'Limits and confidence' section on every answer, not only sparse ones.
 SHOW_FULL_ANSWER = os.environ.get("DEMO_SHOW_FULL_ANSWER", "1") == "1"
 ALWAYS_LIMITS = os.environ.get("DEMO_ALWAYS_LIMITS", "1") == "1"
+# WP1: numbered evidence in the context, [S1]/[T1] tags on specific claims, and a
+# source list built from what the model actually cited. Replaces the old
+# 'Verifica nel grafo' block, which listed the top-4 triples regardless of use.
+CITE_EVIDENCE = os.environ.get("DEMO_CITE_EVIDENCE", "1") == "1"
+CITATION_POLICY = os.environ.get("DEMO_CITATION_POLICY", "mark")
 # Separates the prose body from the raw evidence block in stored messages;
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
 EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
 TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
+# Stage0 runs feeding the text index, most authoritative first. Explicit on
+# purpose: auto-discovery picked the newest run, which is the 2-document repair
+# run, so the text channel saw 2 of the 22 circular-food documents. Older runs
+# in the same artifacts folder hold the previous food-security corpus and must
+# stay out.
+TEXT_STAGE0_RUNS = os.environ.get(
+    "DEMO_TEXT_STAGE0_RUNS",
+    "run_fix2docs_20260710,run_full_circular_20260707",
+)
 ENV_FILE = os.environ.get("DEMO_ENV_FILE", str(ROOT / "kg_pipeline" / ".env"))
 LOG_DIR = Path(os.environ.get("DEMO_LOG_DIR", str(ROOT / "artifacts" / "demo_sessions")))
 # Comma-separated vLLM endpoints offered in the model selector; each is probed
@@ -75,6 +89,7 @@ def _build_text_pipeline(backend: str) -> object | None:
         dense_embedding_model="intfloat/multilingual-e5-base",
         vector_index_dir=str(ROOT / "artifacts" / "vector_index"),
         text_docs_dir="",
+        text_stage0_runs=TEXT_STAGE0_RUNS,
     )
     return graphrag_cli._build_text_pipeline(ns)
 
@@ -115,6 +130,8 @@ def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
     base = AgentConfig(
         max_content_tokens=MAX_CONTEXT_TOKENS,
         always_include_limits=ALWAYS_LIMITS,
+        cite_evidence=CITE_EVIDENCE,
+        citation_policy=CITATION_POLICY,
     )
     config = apply_strategy(base, STRATEGY)
 
@@ -154,6 +171,13 @@ def _ask(agent: KGRAGAgent, model_id: str, question: str) -> str:
         elapsed = time.perf_counter() - started
         record["answer"] = answer
         record["latency_s"] = round(elapsed, 2)
+        # Phantom-reference rate per model: the WP1 acceptance metric, and the
+        # number that will compare Qwen2.5-32B with Qwen3-30B on hallucination.
+        citation_report = result.get("citation_report")
+        if isinstance(citation_report, dict):
+            record["citation_report"] = citation_report
+        # With cite_evidence the source list is part of the answer body and stays
+        # inline; only the legacy triple dump goes into the collapsed expander.
         body, sep, evidence = answer.partition("\nVerifica nel grafo:")
         shown = body.strip() + f"\n\n*[{elapsed:.0f}s]*"
         if sep and SHOW_FULL_ANSWER:

@@ -5,6 +5,7 @@ import csv
 import dataclasses
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -65,6 +66,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Enable LLM adaptive routing step before retrieval",
     )
     parser.add_argument(
+        "--cite-evidence",
+        action="store_true",
+        help=(
+            "Number retrieved evidence, ask the model for [S1]/[T1] tags on "
+            "specific claims, and verify every tag against the index"
+        ),
+    )
+    parser.add_argument(
+        "--citation-policy",
+        choices=("mark", "strip"),
+        default="mark",
+        help="What to do with a reference tag absent from the evidence index",
+    )
+    parser.add_argument(
         "--max-new-tokens",
         type=int,
         default=256,
@@ -119,6 +134,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
              "If omitted, auto-discovers from the latest KG pipeline stage0 artifacts.",
     )
     parser.add_argument(
+        "--text-stage0-runs",
+        default=os.environ.get("GRAPHRAG_TEXT_STAGE0_RUNS", ""),
+        help="Comma-separated kg_pipeline/artifacts run names feeding the text index, "
+             "most authoritative first (later runs cannot shadow earlier ones on the "
+             "same filename). Defaults to every run, newest first.",
+    )
+    parser.add_argument(
         "--text-retriever-backend",
         default="tfidf",
         choices=("tfidf", "dense"),
@@ -166,6 +188,8 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         enable_adaptive_routing_step=args.enable_adaptive_routing_step,
         recursion_limit=args.recursion_limit,
         max_content_tokens=args.max_context_tokens,
+        cite_evidence=getattr(args, "cite_evidence", False),
+        citation_policy=getattr(args, "citation_policy", "mark"),
     )
 
 
@@ -188,52 +212,179 @@ def _build_text_pipeline(args: argparse.Namespace) -> StandardTextRAGPipeline | 
         logger.info("Text pipeline: indexed %d chunks from %s", n, docs_dir)
         return pipeline
 
-    # Auto-discover from the latest KG stage0 artifacts.
+    # Build from KG stage0 artifacts. Which run(s) to read matters: picking the
+    # single most recent one silently indexed the 2-document repair run
+    # (run_fix2docs_20260710) instead of the 22-document corpus, so the text
+    # channel of the `hybrid` strategy was blind to 20 of 22 documents.
     kg_artifacts = Path("kg_pipeline/artifacts")
-    if kg_artifacts.exists():
-        run_dirs = sorted(
-            [p for p in kg_artifacts.iterdir() if p.is_dir() and p.name.startswith("run_")],
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for run_dir in run_dirs:
-            stage0 = run_dir / "stage0_documents.json"
-            if not stage0.exists():
-                continue
-            try:
-                import json as _json
-                from graphrag.text_rag.manager import TextChunk
-                docs = _json.loads(stage0.read_text(encoding="utf-8"))
-                if not isinstance(docs, list):
-                    docs = []
-                chunks: list[TextChunk] = []
-                for doc_idx, doc in enumerate(docs, start=1):
-                    text = str(doc.get("markdown_text", "") or "").strip()
-                    filename = str(doc.get("filename", f"doc_{doc_idx}"))
-                    if not text:
-                        continue
-                    step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
-                    for c_idx, start in enumerate(range(0, len(text), step), start=1):
-                        fragment = text[start : start + DEFAULT_CHUNK_SIZE].strip()
-                        if len(fragment) >= DEFAULT_MIN_CHUNK_CHARS:
-                            chunks.append(TextChunk(
-                                chunk_id=f"d{doc_idx:04d}-c{c_idx:04d}",
-                                content=fragment,
-                                source=filename,
-                            ))
-                if chunks:
-                    pipeline.retriever.add_chunks(chunks)
-                    logger.info(
-                        "Text pipeline: indexed %d chunks from %s (stage0)",
-                        len(chunks), run_dir.name,
-                    )
-                    return pipeline
-            except Exception as exc:
-                logger.warning("Failed to load stage0 from %s: %s", run_dir, exc)
-                continue
+    if not kg_artifacts.exists():
+        logger.warning("No text documents found; text_only strategy will have empty context")
+        return None
 
-    logger.warning("No text documents found; text_only strategy will have empty context")
-    return None
+    run_dirs = _resolve_stage0_runs(args, kg_artifacts)
+    if not run_dirs:
+        logger.warning("No text documents found; text_only strategy will have empty context")
+        return None
+
+    import json as _json
+    from graphrag.text_rag.manager import TextChunk
+
+    chunks: list[TextChunk] = []
+    seen_files: set[str] = set()
+    indexed_runs: list[str] = []
+
+    for run_dir in run_dirs:
+        stage0 = run_dir / "stage0_documents.json"
+        if not stage0.exists():
+            continue
+        try:
+            docs = _json.loads(stage0.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to load stage0 from %s: %s", run_dir, exc)
+            continue
+        if not isinstance(docs, list):
+            continue
+
+        added = 0
+        for doc_idx, doc in enumerate(docs, start=1):
+            filename = str(doc.get("filename", f"doc_{doc_idx}"))
+            # Runs are listed most authoritative first: a document reprocessed
+            # in a later repair run must not be shadowed by its older version.
+            if filename in seen_files:
+                continue
+            doc_chunks = _stage0_document_chunks(doc, doc_idx, filename, TextChunk)
+            if not doc_chunks:
+                continue
+            seen_files.add(filename)
+            chunks.extend(doc_chunks)
+            added += 1
+
+        if added:
+            indexed_runs.append(f"{run_dir.name} (+{added} docs)")
+
+    if not chunks:
+        logger.warning("No text documents found; text_only strategy will have empty context")
+        return None
+
+    pipeline.retriever.add_chunks(chunks)
+    logger.info(
+        "Text pipeline: indexed %d chunks from %d documents — %s",
+        len(chunks),
+        len(seen_files),
+        ", ".join(indexed_runs),
+    )
+    return pipeline
+
+
+def _resolve_stage0_runs(args: argparse.Namespace, kg_artifacts: Path) -> list[Path]:
+    """Pick which stage0 run directories feed the text index.
+
+    Args:
+        args: Parsed CLI namespace; ``--text-stage0-runs`` wins when given.
+        kg_artifacts: The ``kg_pipeline/artifacts`` directory.
+
+    Returns:
+        Run directories, most authoritative first. Explicit selection is taken
+        verbatim; otherwise every run is offered newest-first and the caller
+        deduplicates by filename.
+    """
+    logger = logging.getLogger("graphrag.cli")
+    requested = str(getattr(args, "text_stage0_runs", "") or "").strip()
+    if requested:
+        selected: list[Path] = []
+        for name in (part.strip() for part in requested.split(",")):
+            if not name:
+                continue
+            candidate = kg_artifacts / name
+            if candidate.is_dir():
+                selected.append(candidate)
+            else:
+                logger.warning("--text-stage0-runs: %s not found, skipped", name)
+        return selected
+
+    available = sorted(
+        [p for p in kg_artifacts.iterdir() if p.is_dir() and p.name.startswith("run_")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not available:
+        return []
+
+    # Only the newest run by default. Unioning every run looks tempting but
+    # mixes corpora: this project's artifacts hold both the circular-food runs
+    # and the older food-security ones, and a domain the graph no longer covers
+    # would leak into the text channel. Callers who want a union say so.
+    if len(available) > 1:
+        logger.warning(
+            "Text index built from %s only. Other runs are available (%s); pass "
+            "--text-stage0-runs to combine them explicitly.",
+            available[0].name,
+            ", ".join(p.name for p in available[1:6]),
+        )
+    return available[:1]
+
+
+def _stage0_document_chunks(
+    doc: dict, doc_idx: int, filename: str, chunk_cls: type
+) -> list:
+    """Chunk one stage0 document, keeping page provenance when available.
+
+    ``page_chunks`` carries ``{page_number, text}`` per page, so chunks can be
+    tagged ``<file>#page=N#chunk=M`` — the format the citation layer parses into
+    a readable source label. Without it the answer can only name the document,
+    never the page, which is the first thing a domain expert asks for.
+
+    Args:
+        doc: One entry of ``stage0_documents.json``.
+        doc_idx: 1-based index, used to build unique chunk ids.
+        filename: Document file name, used as the source root.
+        chunk_cls: The ``TextChunk`` class (imported lazily by the caller).
+
+    Returns:
+        The document's chunks, empty when it carries no usable text.
+    """
+    step = DEFAULT_CHUNK_SIZE - DEFAULT_CHUNK_OVERLAP
+
+    def windows(text: str) -> list[str]:
+        out: list[str] = []
+        for start in range(0, len(text), step):
+            fragment = text[start : start + DEFAULT_CHUNK_SIZE].strip()
+            if len(fragment) >= DEFAULT_MIN_CHUNK_CHARS:
+                out.append(fragment)
+        return out
+
+    chunks: list = []
+    page_chunks = doc.get("page_chunks")
+    if isinstance(page_chunks, list) and page_chunks:
+        for page in page_chunks:
+            if not isinstance(page, dict):
+                continue
+            page_text = str(page.get("text", "") or "").strip()
+            if not page_text:
+                continue
+            page_number = page.get("page_number", "")
+            for c_idx, fragment in enumerate(windows(page_text), start=1):
+                chunks.append(
+                    chunk_cls(
+                        chunk_id=f"d{doc_idx:04d}-p{page_number}-c{c_idx:04d}",
+                        content=fragment,
+                        source=f"{filename}#page={page_number}#chunk={c_idx}",
+                    )
+                )
+        if chunks:
+            return chunks
+
+    text = str(doc.get("markdown_text", "") or "").strip()
+    if not text:
+        return []
+    return [
+        chunk_cls(
+            chunk_id=f"d{doc_idx:04d}-c{c_idx:04d}",
+            content=fragment,
+            source=filename,
+        )
+        for c_idx, fragment in enumerate(windows(text), start=1)
+    ]
 
 
 def _question_from_obj(obj: dict, where: str) -> Question:
@@ -582,6 +733,11 @@ def main() -> None:
         return
 
     config = _build_base_config(args)
+    # Single-question mode ignored --strategies until now, so `hybrid` silently
+    # ran without the text channel. "default" is a no-op deepcopy, so existing
+    # invocations are unaffected.
+    single_strategy = str(args.strategies or "default").split(",")[0].strip() or "default"
+    config = apply_strategy(config, single_strategy)
 
     text_pipeline = _build_text_pipeline(args) if config.use_text_retriever else None
     retriever = KGRetriever(kg_store=kg_manager, config=config, text_pipeline=text_pipeline)

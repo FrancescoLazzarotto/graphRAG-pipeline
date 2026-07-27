@@ -1,0 +1,482 @@
+"""Numbered evidence index, cited-context rendering and citation verification.
+
+WP1 of ``docs/demo_quality_plan_2026-07.md``. Three responsibilities, kept in
+one module because they share the reference-id vocabulary:
+
+1. :func:`build_evidence_index` turns retrieved text chunks and KG triples into
+   a list of :class:`EvidenceItem` with stable ids (``S1``, ``S2``, ``T1``...).
+2. :func:`render_cited_context` renders those items as the model-facing
+   context, each one carrying its source document and page range. Before this,
+   text chunks reached the model stripped of provenance, so the model could not
+   cite even when asked to.
+3. :func:`verify_citations` parses the reference tags the model produced and
+   checks them against the index. A model can invent prose; it cannot invent a
+   reference id it was never given, so unsupported tags are caught
+   deterministically at zero cost.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+logger = logging.getLogger("graphrag")
+
+# Matches a citation tag, including grouped forms like "[S1, T2]". Lowercase is
+# accepted because models emit it occasionally; ids are normalised on parse.
+_CITATION_RE = re.compile(r"\[((?:[STst]\s?\d{1,3})(?:\s*[,;]\s*[STst]\s?\d{1,3})*)\]")
+_REF_RE = re.compile(r"([STst])\s?(\d{1,3})")
+# "<path>#page=N#chunk=M" — the tag StandardTextRAGPipeline attaches to chunks.
+_CHUNK_SOURCE_RE = re.compile(r"^(?P<path>.*?)(?:#page=(?P<page>[^#]*))?(?:#chunk=(?P<chunk>.*))?$")
+
+UNVERIFIED_MARK_IT = "[riferimento non verificato]"
+UNVERIFIED_MARK_EN = "[unverified reference]"
+
+
+@dataclass(slots=True)
+class EvidenceItem:
+    """One citable unit of retrieved evidence."""
+
+    ref_id: str
+    kind: str  # "text" | "triple"
+    text: str
+    source_doc: str = ""
+    pages: str = ""
+    chunk_id: str = ""
+    metadata: str = ""
+
+    def source_label(self) -> str:
+        """Human-readable provenance, e.g. ``REPORT.pdf | p. 129``."""
+        bits = [bit for bit in (self.source_doc, self.pages) if bit]
+        return " | ".join(bits)
+
+
+@dataclass(slots=True)
+class CitationReport:
+    """Outcome of verifying the reference tags emitted by the model."""
+
+    answer: str
+    cited_refs: list[str] = field(default_factory=list)
+    phantom_refs: list[str] = field(default_factory=list)
+    total_citations: int = 0
+
+    @property
+    def phantom_rate(self) -> float:
+        if self.total_citations <= 0:
+            return 0.0
+        return len(self.phantom_refs) / float(self.total_citations)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "cited_refs": list(self.cited_refs),
+            "phantom_refs": list(self.phantom_refs),
+            "total_citations": self.total_citations,
+            "phantom_rate": round(self.phantom_rate, 4),
+        }
+
+
+def parse_chunk_source(source: str) -> tuple[str, str]:
+    """Split a chunk source tag into ``(document name, page label)``.
+
+    Args:
+        source: Tag in the form ``<path>#page=N#chunk=M`` (any part optional).
+
+    Returns:
+        The document basename and a ``p. N`` label, both possibly empty.
+    """
+    raw = str(source or "").strip()
+    if not raw:
+        return ("", "")
+
+    match = _CHUNK_SOURCE_RE.match(raw)
+    if not match:
+        return (Path(raw).name, "")
+
+    path = (match.group("path") or "").strip()
+    page = (match.group("page") or "").strip()
+    doc = Path(path).name if path else ""
+    return (doc, f"p. {page}" if page else "")
+
+
+def _triple_provenance(triple: dict[str, Any]) -> tuple[str, str, str]:
+    """Return ``(source_doc, pages, metadata)`` for a KG triple."""
+    props = triple.get("relationship_properties", {})
+    if not isinstance(props, dict):
+        return ("", "", "")
+
+    source_doc = str(props.get("source_doc", "") or props.get("source", "") or "").strip()
+    page_range = str(props.get("page_range", "") or "").strip()
+
+    meta: list[str] = []
+    for key in ("mention_count", "confidence", "year", "value", "unit"):
+        value = props.get(key)
+        if value in (None, "", 0):
+            continue
+        meta.append(f"{key}={value}")
+
+    return (
+        Path(source_doc).name if source_doc else "",
+        f"p. {page_range}" if page_range else "",
+        ", ".join(meta),
+    )
+
+
+def _triple_text(triple: dict[str, Any]) -> str:
+    subject = str(triple.get("subject", "")).strip()
+    predicate = str(triple.get("predicate", "")).strip()
+    obj = str(triple.get("object", "")).strip()
+    if not (subject or predicate or obj):
+        return ""
+    return f"({subject}, {predicate}, {obj})"
+
+
+def build_evidence_index(
+    text_chunks: Sequence[dict[str, Any]] = (),
+    triples: Sequence[dict[str, Any]] = (),
+    max_text_items: int = 12,
+    max_triple_items: int = 30,
+) -> list[EvidenceItem]:
+    """Assign stable reference ids to retrieved evidence.
+
+    Text chunks become ``S1..Sn`` and triples ``T1..Tn``, in retrieval order —
+    which is relevance order, so low numbers carry the strongest signal.
+    Duplicates (same chunk id, same content, same triple) collapse onto a single
+    id: the same fact retrieved by two sub-queries must not be citable twice.
+
+    Args:
+        text_chunks: Dicts with ``content`` and optionally ``source``/``chunk_id``.
+        triples: KG triples, already merged and ranked by the caller.
+        max_text_items: Cap on text evidence entries.
+        max_triple_items: Cap on triple evidence entries.
+
+    Returns:
+        Evidence items in rendering order: text first, then triples.
+    """
+    items: list[EvidenceItem] = []
+
+    seen_text: set[str] = set()
+    for chunk in text_chunks:
+        if len(seen_text) >= max_text_items:
+            break
+        if not isinstance(chunk, dict):
+            continue
+        content = str(chunk.get("content", "") or "").strip()
+        if not content:
+            continue
+        chunk_id = str(chunk.get("chunk_id", "") or "").strip()
+        key = chunk_id or " ".join(content.split()).lower()[:400]
+        if key in seen_text:
+            continue
+        seen_text.add(key)
+
+        source_doc, pages = parse_chunk_source(str(chunk.get("source", "") or ""))
+        items.append(
+            EvidenceItem(
+                ref_id=f"S{len(seen_text)}",
+                kind="text",
+                text=content,
+                source_doc=source_doc,
+                pages=pages,
+                chunk_id=chunk_id,
+            )
+        )
+
+    seen_triples: set[tuple[str, str, str]] = set()
+    for triple in triples:
+        if len(seen_triples) >= max_triple_items:
+            break
+        if not isinstance(triple, dict):
+            continue
+        text = _triple_text(triple)
+        if not text:
+            continue
+        key = (
+            str(triple.get("subject", "")).strip().lower(),
+            str(triple.get("predicate", "")).strip().lower(),
+            str(triple.get("object", "")).strip().lower(),
+        )
+        if key in seen_triples:
+            continue
+        seen_triples.add(key)
+
+        source_doc, pages, metadata = _triple_provenance(triple)
+        items.append(
+            EvidenceItem(
+                ref_id=f"T{len(seen_triples)}",
+                kind="triple",
+                text=text,
+                source_doc=source_doc,
+                pages=pages,
+                metadata=metadata,
+            )
+        )
+
+    return items
+
+
+def evidence_to_dicts(items: Sequence[EvidenceItem]) -> list[dict[str, Any]]:
+    """Serialise evidence items so they can travel in the (JSON-dumpable) state."""
+    return [
+        {
+            "ref_id": item.ref_id,
+            "kind": item.kind,
+            "text": item.text,
+            "source_doc": item.source_doc,
+            "pages": item.pages,
+            "chunk_id": item.chunk_id,
+            "metadata": item.metadata,
+        }
+        for item in items
+    ]
+
+
+def evidence_from_dicts(rows: Sequence[dict[str, Any]]) -> list[EvidenceItem]:
+    """Rebuild evidence items from their serialised form."""
+    items: list[EvidenceItem] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref_id = str(row.get("ref_id", "") or "").strip()
+        if not ref_id:
+            continue
+        items.append(
+            EvidenceItem(
+                ref_id=ref_id,
+                kind=str(row.get("kind", "") or "text"),
+                text=str(row.get("text", "") or ""),
+                source_doc=str(row.get("source_doc", "") or ""),
+                pages=str(row.get("pages", "") or ""),
+                chunk_id=str(row.get("chunk_id", "") or ""),
+                metadata=str(row.get("metadata", "") or ""),
+            )
+        )
+    return items
+
+
+def render_cited_context(
+    query: str,
+    evidence: Sequence[EvidenceItem],
+    entity_sections: Sequence[tuple[str, str]] = (),
+) -> str:
+    """Render the model-facing context with one numbered block per evidence item.
+
+    Args:
+        query: The (possibly rewritten) question, kept at the top as today.
+        evidence: Items from :func:`build_evidence_index`.
+        entity_sections: ``(title, body)`` pairs for non-citable context such as
+            matched nodes and neighbours — names without provenance, which must
+            not become reference ids.
+
+    Returns:
+        The full context string.
+    """
+    sections: list[str] = []
+    if query:
+        sections.append(f"Query: {query}")
+
+    text_items = [item for item in evidence if item.kind == "text"]
+    triple_items = [item for item in evidence if item.kind == "triple"]
+
+    if text_items:
+        blocks: list[str] = []
+        for item in text_items:
+            header = f"[{item.ref_id}]"
+            label = item.source_label()
+            if label:
+                header += f" <{label}>"
+            blocks.append(f"{header}\n{item.text}")
+        sections.append("Evidence — source passages:\n" + "\n\n".join(blocks))
+
+    if triple_items:
+        lines: list[str] = []
+        for item in triple_items:
+            line = f"[{item.ref_id}] {item.text}"
+            label = item.source_label()
+            if label:
+                line += f" <{label}>"
+            if item.metadata:
+                line += f" [{item.metadata}]"
+            lines.append(line)
+        sections.append("Evidence — knowledge graph facts:\n" + "\n".join(lines))
+
+    for title, body in entity_sections:
+        value = str(body or "").strip()
+        if value:
+            sections.append(f"{title}\n{value}")
+
+    return "\n\n".join(section for section in sections if section)
+
+
+def _iter_citation_groups(answer: str) -> Iterable[tuple[int, int, list[str]]]:
+    """Yield ``(start, end, refs)`` for each run of citation tags.
+
+    Adjacent tags separated only by punctuation — ``[T1], [T4], [T6]`` or the
+    range form ``[S1]-[S5]`` — are one citation on one claim, so they collapse
+    into a single group. Treating them separately would let a model sidestep the
+    per-tag cap simply by closing and reopening the brackets.
+    """
+    group_start: int | None = None
+    group_end = 0
+    refs: list[str] = []
+
+    for match in _CITATION_RE.finditer(answer):
+        found = [
+            f"{kind.upper()}{int(number)}"
+            for kind, number in _REF_RE.findall(match.group(1))
+        ]
+        if not found:
+            continue
+
+        gap = answer[group_end : match.start()] if group_start is not None else None
+        if gap is not None and re.fullmatch(r"[\s,;:./\\|–—-]*", gap):
+            refs.extend(found)
+            group_end = match.end()
+            continue
+
+        if group_start is not None:
+            yield (group_start, group_end, refs)
+        group_start = match.start()
+        group_end = match.end()
+        refs = list(found)
+
+    if group_start is not None:
+        yield (group_start, group_end, refs)
+
+
+def verify_citations(
+    answer: str,
+    evidence: Sequence[EvidenceItem],
+    policy: str = "mark",
+    language: str = "it",
+    max_refs_per_tag: int = 2,
+) -> CitationReport:
+    """Check every reference tag in ``answer`` against the evidence index.
+
+    Args:
+        answer: Raw model output.
+        evidence: The index the model was given for this turn.
+        policy: ``"mark"`` flags unsupported tags in place; ``"strip"`` deletes
+            them. Marking is the default because a silently deleted citation
+            leaves an unsupported claim looking supported.
+        language: ``"it"`` or ``"en"``, for the marker wording.
+        max_refs_per_tag: Ids kept per tag. Models happily emit ``[T4, T5, T6]``
+            for one claim, which turns the answer and the source list into
+            noise; the surplus is trimmed to the most relevant (first) ids.
+
+    Returns:
+        A report carrying the processed answer and the citation counts.
+    """
+    known = {item.ref_id for item in evidence}
+    cited: list[str] = []
+    phantom: list[str] = []
+    total = 0
+    replacements: list[tuple[int, int, str]] = []
+    keep_per_tag = max(1, int(max_refs_per_tag))
+
+    for start, end, refs in _iter_citation_groups(answer):
+        total += len(refs)
+        # Dedup inside the group: "[T1], [T1]" is one citation, not two.
+        unique_refs: list[str] = []
+        for ref in refs:
+            if ref not in unique_refs:
+                unique_refs.append(ref)
+        valid = [ref for ref in unique_refs if ref in known]
+        invalid = [ref for ref in unique_refs if ref not in known]
+        trimmed = valid[:keep_per_tag]
+
+        for ref in trimmed:
+            if ref not in cited:
+                cited.append(ref)
+        for ref in invalid:
+            if ref not in phantom:
+                phantom.append(ref)
+
+        rewritten = f"[{', '.join(trimmed)}]" if trimmed else ""
+        if not invalid and len(valid) == len(trimmed) and answer[start:end] == rewritten:
+            continue
+
+        if trimmed:
+            # Keep the part of the citation that checks out, drop the rest.
+            replacement = rewritten
+        elif policy == "strip":
+            replacement = ""
+        else:
+            mark = UNVERIFIED_MARK_IT if language == "it" else UNVERIFIED_MARK_EN
+            replacement = mark
+        replacements.append((start, end, replacement))
+
+    processed = answer
+    for start, end, replacement in reversed(replacements):
+        processed = processed[:start] + replacement + processed[end:]
+
+    if phantom:
+        logger.warning(
+            "Citation gate: %d/%d reference tags not in the evidence index (%s)",
+            len(phantom),
+            total,
+            ", ".join(phantom[:10]),
+        )
+
+    return CitationReport(
+        answer=re.sub(r"[ \t]{2,}", " ", processed).strip(),
+        cited_refs=cited,
+        phantom_refs=phantom,
+        total_citations=total,
+    )
+
+
+def render_reference_list(
+    evidence: Sequence[EvidenceItem],
+    cited_refs: Sequence[str],
+    language: str = "it",
+    fallback_limit: int = 4,
+    max_items: int = 8,
+) -> str:
+    """Render the closing source list for the references actually used.
+
+    When the model cited nothing, falls back to the top evidence items so the
+    reader still sees where the answer came from.
+
+    Args:
+        evidence: The index for this turn.
+        cited_refs: Reference ids surviving :func:`verify_citations`.
+        language: ``"it"`` or ``"en"``.
+        fallback_limit: How many items to show when nothing was cited.
+        max_items: Longest list rendered; the remainder is summarised on one
+            line. A twenty-entry list is a wall, not a set of sources.
+
+    Returns:
+        The formatted section, or an empty string when there is no evidence.
+    """
+    by_id = {item.ref_id: item for item in evidence}
+    used = [by_id[ref] for ref in cited_refs if ref in by_id]
+    if not used:
+        used = list(evidence)[:fallback_limit]
+    if not used:
+        return ""
+
+    shown = used[: max(1, int(max_items))]
+    hidden = len(used) - len(shown)
+
+    title = "Fonti" if language == "it" else "Sources"
+    lines: list[str] = []
+    for item in shown:
+        label = item.source_label() or (
+            "fonte non disponibile" if language == "it" else "source unavailable"
+        )
+        if item.kind == "triple":
+            lines.append(f"- [{item.ref_id}] {item.text} — {label}")
+        else:
+            lines.append(f"- [{item.ref_id}] {label}")
+
+    if hidden > 0:
+        lines.append(
+            f"- (+{hidden} altre evidenze citate)"
+            if language == "it"
+            else f"- (+{hidden} further cited items)"
+        )
+
+    return f"{title}:\n" + "\n".join(lines)

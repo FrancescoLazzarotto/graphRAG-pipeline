@@ -175,6 +175,7 @@ class KGRetriever:
 
         text_chunks: list[str] = []
         text_sources: list[dict[str, str]] = []
+        text_units: list[dict[str, str]] = []
         if self.config.use_text_retriever and self.text_pipeline is not None:
             retrieved = self.text_pipeline.retrieve(
                 query=query_text,
@@ -189,6 +190,15 @@ class KGRetriever:
                 # its origin document; the chunk text itself stays in the context.
                 text_sources.append(
                     {"source": chunk.source or "", "chunk_id": chunk.chunk_id}
+                )
+                # Same chunk with content attached: the citation pipeline (WP1)
+                # needs text and provenance in a single unit to number them.
+                text_units.append(
+                    {
+                        "content": chunk.content,
+                        "source": chunk.source or "",
+                        "chunk_id": chunk.chunk_id,
+                    }
                 )
 
         context_sections = self._build_context_sections(
@@ -212,6 +222,7 @@ class KGRetriever:
             "subgraph": subgraph,
             "shortest_path": shortest_path,
             "text_sources": text_sources,
+            "text_chunks": text_units,
             "context_sections": context_sections,
             "context_text": "\n\n".join(
                 section for section in context_sections if section

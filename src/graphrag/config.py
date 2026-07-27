@@ -72,6 +72,18 @@ class AgentConfig:
     # context is sparse; enable to request it on every answer (demo UX). Off
     # by default to keep existing baselines unchanged.
     always_include_limits: bool = False
+    # WP1 (docs/demo_quality_plan_2026-07.md): retrieved evidence is rendered as
+    # numbered blocks carrying document and page, the answer prompt asks for
+    # [S1]/[T1] tags on specific claims, and a post-generation gate checks every
+    # tag against the index. Off by default so gold runs and experiment
+    # baselines keep the previous prompt and context format.
+    cite_evidence: bool = False
+    # What to do with a reference tag the model invented: "mark" flags it in
+    # place, "strip" deletes it. Marking is the default because deleting leaves
+    # an unsupported claim looking like ordinary prose.
+    citation_policy: str = "mark"
+    evidence_max_text_items: int = 12
+    evidence_max_triple_items: int = 30
     # Triples carry no per-edge confidence yet (see KG-side item B8), so the
     # confidence weight is 0.0 and lexical/mention absorb it. Keeping the field
     # lets a future confidence signal be re-enabled without code changes.

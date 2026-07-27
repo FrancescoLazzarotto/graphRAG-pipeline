@@ -42,6 +42,11 @@ class RAGState(TypedDict, total=False):
     relevance: Literal["relevant", "not_relevant"]
     confidence: float
     confidence_retries: int
+    # Numbered, citable evidence for this turn (WP1). Serialised as plain dicts
+    # so the state stays JSON-dumpable for the experiment runner; rebuild the
+    # dataclasses with graphrag.agent.evidence.evidence_from_dicts.
+    evidence_index: list[dict[str, Any]]
+    citation_report: dict[str, Any]
     answer: str
     provenance: list[ProvenanceRecord]
     reflection_passed: bool

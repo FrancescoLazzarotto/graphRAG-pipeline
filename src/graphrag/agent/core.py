@@ -12,6 +12,15 @@ from langgraph.graph import END, START, StateGraph
 
 from graphrag.agent.cache import LRUCache
 from graphrag.agent.compression import ContextCompressor
+from graphrag.agent.evidence import (
+    EvidenceItem,
+    build_evidence_index,
+    evidence_from_dicts,
+    evidence_to_dicts,
+    render_cited_context,
+    render_reference_list,
+    verify_citations,
+)
 from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -210,6 +219,7 @@ class KGRAGAgent:
             if mm == "TEXT":
                 text_sections: list[str] = []
                 text_sources: list[dict[str, Any]] = []
+                text_chunks: list[dict[str, Any]] = []
                 for candidate_query in retrieval_queries:
                     # retrieve() (not retrieve_context()) so the text chunks'
                     # provenance tags travel with the context for later analysis.
@@ -218,10 +228,12 @@ class KGRAGAgent:
                     if value:
                         text_sections.append(value)
                     text_sources.extend(batch.get("text_sources", []) or [])
+                    text_chunks.extend(batch.get("text_chunks", []) or [])
 
                 context = self._merge_context_sections(text_sections)
                 retrieved_data["context_text"] = context
                 retrieved_data["text_sources"] = text_sources
+                retrieved_data["text_chunks"] = text_chunks
 
             elif mm in {"KG", "HYBRID"}:
                 nodes: list[dict[str, Any]] = []
@@ -231,6 +243,7 @@ class KGRAGAgent:
                 shortest_path: list[dict[str, Any]] = []
                 context_sections: list[str] = []
                 text_sources: list[dict[str, Any]] = []
+                text_chunks: list[dict[str, Any]] = []
 
                 node_seen: set[tuple[str, str]] = set()
                 neighbor_seen: set[tuple[str, str]] = set()
@@ -276,6 +289,7 @@ class KGRAGAgent:
                     if candidate_context:
                         context_sections.append(candidate_context)
                     text_sources.extend(batch.get("text_sources", []) or [])
+                    text_chunks.extend(batch.get("text_chunks", []) or [])
 
                 if (
                     self.config.rerank_merged_results
@@ -300,6 +314,7 @@ class KGRAGAgent:
                     "subgraph": subgraph,
                     "shortest_path": shortest_path,
                     "text_sources": text_sources,
+                    "text_chunks": text_chunks,
                 }
 
             elif mm == "MULTIHOP":
@@ -343,6 +358,29 @@ class KGRAGAgent:
                 retrieved_data = self.kg_retriever.retrieve(query)
                 context = str(retrieved_data.get("context_text", ""))
 
+        # WP1: renumber the merged evidence and re-render the context so every
+        # citable unit reaches the model with its document and page attached.
+        # Runs after the merge, never per batch: ids must be unique across all
+        # retrieval queries of the turn.
+        evidence_items: list[EvidenceItem] = []
+        if self.config.cite_evidence and isinstance(retrieved_data, dict):
+            evidence_items = build_evidence_index(
+                text_chunks=retrieved_data.get("text_chunks", []) or [],
+                triples=[
+                    *(retrieved_data.get("triples", []) or []),
+                    *(retrieved_data.get("subgraph", []) or []),
+                    *(retrieved_data.get("shortest_path", []) or []),
+                ],
+                max_text_items=self.config.evidence_max_text_items,
+                max_triple_items=self.config.evidence_max_triple_items,
+            )
+            if evidence_items:
+                context = render_cited_context(
+                    query=query,
+                    evidence=evidence_items,
+                    entity_sections=self._entity_sections(retrieved_data),
+                )
+
         compressed_context = self.compressor.compress(context)
         triples = (
             retrieved_data.get("triples", [])
@@ -375,6 +413,7 @@ class KGRAGAgent:
 
         result = {
             "text_context": compressed_context,
+            "evidence_index": evidence_to_dicts(evidence_items),
             "kg_triples": triples if isinstance(triples, list) else [],
             "retrieved_text_sources": text_sources
             if isinstance(text_sources, list)
@@ -510,6 +549,45 @@ class KGRAGAgent:
             seen.add(key)
             merged.append(value)
         return "\n\n".join(merged)
+
+    def _entity_sections(
+        self, retrieved_data: dict[str, Any]
+    ) -> list[tuple[str, str]]:
+        """Build the non-citable context blocks (matched nodes, neighbours).
+
+        Entity names carry no document provenance, so they must not receive a
+        reference id: a claim tagged with a bare node name would look sourced
+        without being traceable to a document.
+
+        Args:
+            retrieved_data: The merged retrieval payload for this turn.
+
+        Returns:
+            ``(title, body)`` pairs, skipping empty or unformattable sections.
+        """
+        if not self.kg_retriever:
+            return []
+
+        sections: list[tuple[str, str]] = []
+        for title, key in (
+            ("Entities in the graph (no source — do not cite):", "nodes"),
+            ("Neighbouring entities (no source — do not cite):", "neighbors"),
+        ):
+            rows = retrieved_data.get(key, []) or []
+            if not isinstance(rows, list) or not rows:
+                continue
+            try:
+                body = str(self.kg_retriever.kg_store.nodes_to_text(rows))
+            except (AttributeError, TypeError, ValueError):
+                logger.warning(
+                    "Node formatting failed; dropping the %r context section.",
+                    key,
+                    exc_info=True,
+                )
+                continue
+            if body.strip():
+                sections.append((title, body))
+        return sections
 
     def _format_triples_for_context(self, triples: list[dict[str, Any]]) -> str:
         if not triples:
@@ -685,6 +763,36 @@ class KGRAGAgent:
                     triples=state.get("kg_triples", []) or [],
                     language=LLMManager._detect_query_language(query),
                 )
+            evidence_items = evidence_from_dicts(
+                state.get("evidence_index", []) or []
+            )
+            if self.config.cite_evidence and evidence_items:
+                # The citation gate replaces the old verification block: the
+                # source list is now derived from what the model actually cited,
+                # not from the top-4 retrieved triples.
+                language = LLMManager._detect_query_language(query)
+                report = verify_citations(
+                    answer=answer,
+                    evidence=evidence_items,
+                    policy=self.config.citation_policy,
+                    language=language,
+                )
+                answer = report.answer
+                references = render_reference_list(
+                    evidence=evidence_items,
+                    cited_refs=report.cited_refs,
+                    language=language,
+                )
+                if references:
+                    answer = answer.rstrip() + "\n\n" + references
+                logger.info(
+                    "Citation gate: %d tags, %d distinct valid, %d phantom",
+                    report.total_citations,
+                    len(report.cited_refs),
+                    len(report.phantom_refs),
+                )
+                return {"answer": answer, "citation_report": report.as_dict()}
+
             verification_section = self._build_verification_section(
                 triples=state.get("kg_triples", []) or [],
                 nodes=state.get("retrieved_nodes", []) or [],
