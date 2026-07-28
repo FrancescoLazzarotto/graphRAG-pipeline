@@ -234,6 +234,33 @@ class PromptLibrary:
         )
 
     @staticmethod
+    def followup_rewrite_prompt(config: AgentConfig) -> ChatPromptTemplate:
+        """Make an elliptical follow-up self-contained, for retrieval only.
+
+        WP7 (`docs/demo_quality_plan_2026-07.md` §9.3). The output never reaches
+        the answer prompt: it only feeds the retriever, so the instructions
+        optimise for search terms, not for phrasing. The "repeat it unchanged"
+        escape hatch matters — the detector is allowed to fire on a question
+        that turns out to need nothing, and the model must be free to say so.
+        """
+        return ChatPromptTemplate.from_template(
+            "You rewrite a follow-up question so that it can be understood on its own, "
+            "outside the conversation.\n"
+            "Topics active in this conversation: {entities}\n"
+            "Previous question: {previous_question}\n"
+            "Follow-up question: {question}\n\n"
+            "Rules:\n"
+            "- Keep the user's intent and the user's language.\n"
+            "- Resolve pronouns and implicit references using the active topics above.\n"
+            "- Use a topic only when the follow-up actually refers to it, and ignore "
+            "the others: an unrelated topic pulls retrieval away from the question.\n"
+            "- Add only the missing context. Do not add facts, and do not answer.\n"
+            "- If the follow-up already stands on its own, repeat it unchanged.\n"
+            "- Reply with the rewritten question only, on a single line.\n\n"
+            "Rewritten question:"
+        )
+
+    @staticmethod
     def decomposition_prompt(config: AgentConfig) -> ChatPromptTemplate:
         if config.decomposition_prompt:
             return ChatPromptTemplate.from_template(config.decomposition_prompt)
