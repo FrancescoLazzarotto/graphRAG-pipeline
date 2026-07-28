@@ -130,7 +130,8 @@ class PromptLibrary:
         if config.always_include_limits:
             limits_block = (
                 f"Always include a short section titled '{limits_title}' "
-                "assessing how strong the supporting evidence is. "
+                "assessing how strong the supporting evidence is, in at most "
+                "three sentences: it closes the answer, it is not the answer. "
             )
             # Only meaningful without the citation protocol below, which replaces
             # the trailing evidence section with per-claim reference tags.
@@ -165,6 +166,8 @@ class PromptLibrary:
                 "ids in a tag. "
                 "Never write an id that is not in the context, and never cite the "
                 "entity sections, which carry no source. "
+                "When consecutive sentences rest on the same evidence, cite it "
+                "once for the whole passage instead of repeating it. "
                 "Do not write a source list at the end: it is generated automatically. "
             )
         else:
