@@ -16,7 +16,10 @@ from graphrag.agent.evidence import (
     evidence_to_dicts,
     parse_chunk_source,
     render_cited_context,
+    render_display_citations,
+    render_grouped_reference_list,
     render_reference_list,
+    short_doc_label,
     verify_citations,
 )
 from graphrag.config import AgentConfig
@@ -280,6 +283,101 @@ def test_render_reference_list_falls_back_when_nothing_was_cited():
 
 def test_render_reference_list_empty_without_evidence():
     assert render_reference_list([], cited_refs=[]) == ""
+
+
+# --- reader-facing citation labels ----------------------------------------
+
+
+def test_short_doc_label_strips_filename_noise():
+    assert short_doc_label("SEeD for Change.pdf") == "SEeD for Change"
+    assert short_doc_label("sustainability-16-08960-v2 it.pdf") == "sustainability-16-08960"
+    assert short_doc_label("Materia 45 ita web.pdf") == "Materia 45"
+    assert short_doc_label("REPORT MATTM_Definitivo.pdf") == "REPORT MATTM"
+    # Long titles cut at the comma, which drops the authors and keeps the title.
+    assert short_doc_label("Circular Economy for Food, Fassio Tecco.pdf") == (
+        "Circular Economy for Food"
+    )
+    assert short_doc_label("F.Fassio per Regione Piemonte su Sustainability (web) it.pdf") == (
+        "F.Fassio per Regione Piemonte su…"
+    )
+    assert short_doc_label("") == ""
+
+
+def test_display_citations_replace_ids_with_document_and_page():
+    evidence = build_evidence_index(
+        text_chunks=[_chunk("testo", "SEeD for Change.pdf#page=3#chunk=1", "c1")],
+        triples=[_triple("SEeD", "IMPLEMENTS", "UNI ISO 20121", source_doc="SEeD for Change.pdf", page_range="3-4")],
+    )
+    rendered = render_display_citations(
+        "SEeD nasce nel 2005 [S1]. Applica UNI ISO 20121 [T1].", evidence
+    )
+
+    assert "[SEeD for Change, p. 3]" in rendered
+    assert "[SEeD for Change, p. 3-4]" in rendered
+    assert "[S1]" not in rendered
+
+
+def test_display_citations_merge_pages_of_the_same_document():
+    evidence = build_evidence_index(
+        text_chunks=[_chunk("testo", "SEeD for Change.pdf#page=3#chunk=1", "c1")],
+        triples=[
+            _triple("A", "REL", "B", source_doc="SEeD for Change.pdf", page_range="3-4")
+        ],
+    )
+    rendered = render_display_citations("Affermazione [S1, T1].", evidence)
+
+    assert rendered == "Affermazione [SEeD for Change, p. 3, 3-4]."
+
+
+def test_display_citations_collapse_ids_sharing_a_label():
+    # A passage and a triple from the same page must not print the same source
+    # twice inside one tag.
+    evidence = build_evidence_index(
+        text_chunks=[_chunk("testo", "a.pdf#page=7#chunk=1", "c1")],
+        triples=[_triple("A", "REL", "B", source_doc="a.pdf", page_range="7")],
+    )
+    rendered = render_display_citations("Affermazione [S1, T1].", evidence)
+
+    assert rendered == "Affermazione [a, p. 7]."
+
+
+def test_display_citations_leave_unknown_ids_untouched():
+    evidence = build_evidence_index(triples=[_triple("A", "REL", "B")])
+
+    assert render_display_citations("Claim [T9].", evidence) == "Claim [T9]."
+
+
+def test_grouped_reference_list_keeps_every_document():
+    evidence = build_evidence_index(
+        text_chunks=[
+            _chunk("uno", "SEeD for Change.pdf#page=1#chunk=1", "c1"),
+            _chunk("due", "SEeD for Change.pdf#page=3#chunk=2", "c2"),
+            _chunk("tre", "REPORT MATTM.pdf#page=13#chunk=3", "c3"),
+        ],
+        triples=[
+            _triple(f"S{i}", "REL", f"O{i}", source_doc="SEeD for Change.pdf", page_range="3-4")
+            for i in range(1, 10)
+        ],
+    )
+    rendered = render_grouped_reference_list(
+        evidence, cited_refs=[f"T{i}" for i in range(1, 10)] + ["S1", "S2", "S3"]
+    )
+
+    # The flat list capped at 8 entries dropped whole documents; grouping cannot.
+    assert "- **SEeD for Change.pdf**" in rendered
+    assert "- **REPORT MATTM.pdf**" in rendered
+    assert "passaggi citati: p. 1, p. 3" in rendered
+    assert "+5 altri" in rendered
+
+
+def test_grouped_reference_list_falls_back_when_nothing_was_cited():
+    evidence = build_evidence_index(
+        text_chunks=[_chunk("uno", "a.pdf#page=1#chunk=1", "c1")]
+    )
+    rendered = render_grouped_reference_list(evidence, cited_refs=[], language="en")
+
+    assert rendered.startswith("Sources:")
+    assert "cited passages: p. 1" in rendered
 
 
 # --- prompt invariants ----------------------------------------------------
