@@ -727,7 +727,7 @@ class KGRAGAgent:
                 effective_query = (
                     query
                     + "\n\nIstruzione: rispondi direttamente usando solo il contesto disponibile. "
-                    + "Se il contesto e limitato, fornisci comunque la migliore risposta possibile e aggiungi una breve sezione 'Limiti e fiducia'."
+                    + "Se il contesto e limitato, fornisci comunque la migliore risposta possibile e aggiungi una breve sezione 'Limiti e affidabilità'."
                 )
             else:
                 effective_query = (
