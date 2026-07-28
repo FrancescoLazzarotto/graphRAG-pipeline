@@ -84,6 +84,11 @@ class AgentConfig:
     citation_policy: str = "mark"
     evidence_max_text_items: int = 12
     evidence_max_triple_items: int = 30
+    # How verified references are shown to the reader. "id" keeps [S1]/[T3],
+    # which is what experiment artifacts and the citation metrics parse;
+    # "label" rewrites them as "[SEeD for Change, p. 3]" after the gate has run,
+    # because a reader cannot check "S3" against anything.
+    citation_display: str = "id"
     # WP5 (docs/demo_quality_plan_2026-07.md): the language detected on the
     # question becomes an explicit constraint in the answer prompt, written in
     # the target language, and a single retry fires when the answer comes back
