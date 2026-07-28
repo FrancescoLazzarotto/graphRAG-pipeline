@@ -84,6 +84,12 @@ class AgentConfig:
     citation_policy: str = "mark"
     evidence_max_text_items: int = 12
     evidence_max_triple_items: int = 30
+    # WP5 (docs/demo_quality_plan_2026-07.md): the language detected on the
+    # question becomes an explicit constraint in the answer prompt, written in
+    # the target language, and a single retry fires when the answer comes back
+    # in the other language. Off by default: it changes the rendered prompt, so
+    # gold runs and experiment baselines opt in explicitly.
+    enforce_language: bool = False
     # Triples carry no per-edge confidence yet (see KG-side item B8), so the
     # confidence weight is 0.0 and lexical/mention absorb it. Keeping the field
     # lets a future confidence signal be re-enabled without code changes.
