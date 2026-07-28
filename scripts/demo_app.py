@@ -53,7 +53,7 @@ MAX_CONTEXT_TOKENS = int(os.environ.get("DEMO_MAX_CONTEXT_TOKENS", "6000"))
 # WP2: 512 tokens fit a summary, not a detailed answer with citations; the
 # expert's recurring complaint was genericity, and the previous cap left no room
 # for figures, names and per-claim references.
-MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "1536"))
+MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "2048"))
 # WP2: HIGH drops the "1-2 short paragraphs" instruction and adds the
 # specificity rule. WP5: the answer language is pinned to the question language.
 COMPLEXITY = OUTPUT_COMPLEXITY(os.environ.get("DEMO_COMPLEXITY", "high"))
@@ -67,6 +67,9 @@ ALWAYS_LIMITS = os.environ.get("DEMO_ALWAYS_LIMITS", "1") == "1"
 # 'Verifica nel grafo' block, which listed the top-4 triples regardless of use.
 CITE_EVIDENCE = os.environ.get("DEMO_CITE_EVIDENCE", "1") == "1"
 CITATION_POLICY = os.environ.get("DEMO_CITATION_POLICY", "mark")
+# "label" shows "[SEeD for Change, p. 3]" instead of "[S1]": the reader asked
+# what S and T meant, which is the answer to whether the ids belong on screen.
+CITATION_DISPLAY = os.environ.get("DEMO_CITATION_DISPLAY", "label")
 # Separates the prose body from the raw evidence block in stored messages;
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
@@ -143,6 +146,7 @@ def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
         always_include_limits=ALWAYS_LIMITS,
         cite_evidence=CITE_EVIDENCE,
         citation_policy=CITATION_POLICY,
+        citation_display=CITATION_DISPLAY,
         complexity=COMPLEXITY,
         enforce_language=ENFORCE_LANGUAGE,
     )
