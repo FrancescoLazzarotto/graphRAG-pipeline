@@ -53,6 +53,22 @@ class EvidenceItem:
         bits = [bit for bit in (self.source_doc, self.pages) if bit]
         return " | ".join(bits)
 
+    def display_label(self) -> str:
+        """Short in-text citation, e.g. ``REPORT MATTM, p. 129``.
+
+        Used when reference tags are rendered for a reader instead of as
+        ``[S1]``/``[T1]``: "S3" says nothing to the person reading the answer,
+        the document name and page are what they can go and check.
+
+        Returns:
+            The label, or the reference id when there is no provenance at all.
+        """
+        doc = short_doc_label(self.source_doc)
+        pages = self.pages.strip()
+        if doc and pages:
+            return f"{doc}, {pages}"
+        return doc or pages or self.ref_id
+
 
 @dataclass(slots=True)
 class CitationReport:
@@ -76,6 +92,51 @@ class CitationReport:
             "total_citations": self.total_citations,
             "phantom_rate": round(self.phantom_rate, 4),
         }
+
+
+def short_doc_label(document: str, max_chars: int = 34) -> str:
+    """Shorten a document filename into something readable inside a sentence.
+
+    Drops the extension and the noise that filenames accumulate ("(web)", a
+    trailing language marker, version suffixes), then truncates on a word
+    boundary. The full filename stays in the closing source list.
+
+    Args:
+        document: Document basename, e.g. ``F.Fassio ... (web) it.pdf``.
+        max_chars: Longest label before truncation.
+
+    Returns:
+        The shortened label, possibly empty when ``document`` is empty.
+    """
+    name = Path(str(document or "").strip()).stem
+    name = re.sub(r"\((?:web|pdf|online)\)", " ", name, flags=re.IGNORECASE)
+    name = re.sub(r"[-_]?v\d+(?=\s|$)", " ", name)
+    name = re.sub(r"\s{2,}", " ", name).strip(" -_,")
+    # Filenames end in a pile of publication markers ("… ita web", "…_8-18-PB"):
+    # they identify the file, not the document, and eat the label's budget.
+    while True:
+        stripped = re.sub(
+            r"[\s_-]+(?:it|ita|en|eng|web|online|def|definitivo|pb)$",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if stripped == name:
+            break
+        name = stripped
+    name = re.sub(r"_+", " ", name).strip(" -,")
+    name = re.sub(r"\s{2,}", " ", name)
+    if len(name) <= max_chars:
+        return name
+
+    # "Circular Economy for Food, Fassio Tecco" -> the title, not the authors:
+    # cutting at the comma reads better than cutting mid-name.
+    head = name.split(",", 1)[0].strip()
+    if 12 <= len(head) <= max_chars:
+        return head
+
+    cut = name[:max_chars].rsplit(" ", 1)[0].rstrip(" -,")
+    return f"{cut or name[:max_chars]}…"
 
 
 def parse_chunk_source(source: str) -> tuple[str, str]:
@@ -492,4 +553,113 @@ def render_reference_list(
             else f"- (+{hidden} further cited items)"
         )
 
+    return f"{title}:\n" + "\n".join(lines)
+
+
+def render_display_citations(answer: str, evidence: Sequence[EvidenceItem]) -> str:
+    """Replace ``[S1]``/``[T3]`` tags with document-and-page labels.
+
+    Runs *after* :func:`verify_citations`, so every id left in the text is known:
+    the ids are what the deterministic gate needs, the label is what the reader
+    needs. Ids sharing a label collapse into one, which is what happens when a
+    passage and a triple come from the same page.
+
+    Args:
+        answer: The verified answer.
+        evidence: The index for this turn.
+
+    Returns:
+        The answer with reader-facing citation labels.
+    """
+    by_id = {item.ref_id: item for item in evidence}
+
+    def _replace(match: re.Match[str]) -> str:
+        # Ids from the same document merge into one label with both pages:
+        # "[SEeD for Change, p. 3; SEeD for Change, p. 3-4]" names the same
+        # source twice, which is how a citation stops being readable.
+        pages_by_doc: dict[str, list[str]] = {}
+        for kind, number in _REF_RE.findall(match.group(1)):
+            item = by_id.get(f"{kind.upper()}{int(number)}")
+            if item is None:
+                return match.group(0)
+            doc = short_doc_label(item.source_doc) or item.ref_id
+            pages = pages_by_doc.setdefault(doc, [])
+            page = re.sub(r"^p\.\s*", "", item.pages.strip())
+            if page and page not in pages:
+                pages.append(page)
+
+        if not pages_by_doc:
+            return match.group(0)
+
+        labels = [
+            f"{doc}, p. {', '.join(pages)}" if pages else doc
+            for doc, pages in pages_by_doc.items()
+        ]
+        return f"[{'; '.join(labels)}]"
+
+    return _CITATION_RE.sub(_replace, str(answer or ""))
+
+
+def render_grouped_reference_list(
+    evidence: Sequence[EvidenceItem],
+    cited_refs: Sequence[str],
+    language: str = "it",
+    fallback_limit: int = 4,
+    max_triples_per_doc: int = 4,
+) -> str:
+    """Render the closing source list grouped by document.
+
+    One entry per document instead of one per evidence item: the flat list hit
+    its cap on answers citing a dozen items and dropped the tail, which is the
+    part the reader was least likely to have already seen in the text.
+
+    Args:
+        evidence: The index for this turn.
+        cited_refs: Reference ids surviving :func:`verify_citations`.
+        language: ``"it"`` or ``"en"``.
+        fallback_limit: How many items to show when nothing was cited.
+        max_triples_per_doc: Graph facts spelled out per document; the rest are
+            counted on the same line.
+
+    Returns:
+        The formatted section, or an empty string when there is no evidence.
+    """
+    by_id = {item.ref_id: item for item in evidence}
+    used = [by_id[ref] for ref in cited_refs if ref in by_id]
+    if not used:
+        used = list(evidence)[:fallback_limit]
+    if not used:
+        return ""
+
+    italian = language == "it"
+    grouped: dict[str, list[EvidenceItem]] = {}
+    for item in sorted(used, key=_reference_sort_key):
+        key = item.source_doc or ("documento non indicato" if italian else "unnamed document")
+        grouped.setdefault(key, []).append(item)
+
+    lines: list[str] = []
+    for document, items in grouped.items():
+        lines.append(f"- **{document}**")
+        pages = [item.pages for item in items if item.kind == "text" and item.pages]
+        if pages:
+            unique_pages = list(dict.fromkeys(pages))
+            label = "passaggi citati" if italian else "cited passages"
+            lines.append(f"  - {label}: {', '.join(unique_pages)}")
+
+        triples = [item for item in items if item.kind == "triple"]
+        if triples:
+            label = "fatti dal grafo" if italian else "graph facts"
+            shown = triples[: max(1, int(max_triples_per_doc))]
+            rendered = "; ".join(
+                f"{item.text} ({item.pages})" if item.pages else item.text
+                for item in shown
+            )
+            hidden = len(triples) - len(shown)
+            if hidden > 0:
+                rendered += (
+                    f"; +{hidden} altri" if italian else f"; +{hidden} more"
+                )
+            lines.append(f"  - {label}: {rendered}")
+
+    title = "Fonti" if italian else "Sources"
     return f"{title}:\n" + "\n".join(lines)
