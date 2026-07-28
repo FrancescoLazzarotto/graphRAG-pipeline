@@ -21,6 +21,11 @@ from graphrag.llm.refusal import looks_like_refusal
 
 logger = logging.getLogger("graphrag")
 
+# Orthographic markers of Italian used to break ties on short questions, where
+# function words alone are too thin a signal (WP5).
+_ITALIAN_ACCENTED = re.compile(r"[àèéìòù]")
+_ITALIAN_ELISION = re.compile(r"\b(?:l|dell|nell|all|sull|dall|un|quell|c|d)'")
+
 
 class LLMManager:
     _LARGE_MODEL_THRESHOLD_B = 30.0
@@ -518,7 +523,10 @@ class LLMManager:
         # PromptLibrary is the single source of truth for prompts: both the
         # vLLM and local HF backends must see the same prompt so their answers
         # stay comparable across experiments.
-        prompt = PromptLibrary.answer_prompt(config)
+        prompt = PromptLibrary.answer_prompt(
+            config,
+            language=response_language if config.enforce_language else None,
+        )
         rendered = prompt.invoke(
             {
                 "question": query,
@@ -560,7 +568,90 @@ class LLMManager:
         # to answer. Preserve the model's refusal so failures remain transparent
         # to the caller instead of being converted into questionable lists.
 
+        if config.enforce_language and answer:
+            answer = self._enforce_answer_language(
+                model=model,
+                query=query,
+                context=context,
+                config=config,
+                answer=answer,
+                target_language=response_language,
+            )
+
         return {"answer": answer}
+
+    def _enforce_answer_language(
+        self,
+        model: Any,
+        query: str,
+        context: str,
+        config: AgentConfig,
+        answer: str,
+        target_language: str,
+    ) -> str:
+        """Regenerate once when the answer came back in the wrong language (WP5).
+
+        A single retry: a second wrong-language answer means the constraint is
+        not what is failing, and further calls only add latency.
+
+        Args:
+            model: The already-loaded chat model.
+            query: The user question, as sent to the first attempt.
+            context: The retrieved context, unchanged.
+            config: Agent configuration.
+            answer: The answer produced by the first attempt.
+            target_language: ``"it"`` or ``"en"``, detected on the question.
+
+        Returns:
+            The retried answer when it is in the target language, otherwise the
+            original one — a wrong-language answer still beats a worse answer.
+        """
+        if self._detect_text_language(answer) == target_language:
+            return answer
+
+        logger.warning(
+            "Answer language mismatch: expected=%s. Retrying once with a "
+            "reinforced constraint.",
+            target_language,
+        )
+        try:
+            retry_prompt = PromptLibrary.answer_prompt(
+                config, language=target_language, reinforce_language=True
+            ).invoke({"question": query, "context": context})
+            output = self._invoke_with_retry(model, retry_prompt)
+            retried = str(
+                output.content if hasattr(output, "content") else output
+            ).strip()
+        except Exception as exc:  # noqa: BLE001 - best effort, keep first answer
+            logger.warning("Language retry failed: %s", exc)
+            return answer
+
+        if retried and self._detect_text_language(retried) == target_language:
+            logger.info("Language retry produced a %s answer", target_language)
+            return retried
+
+        logger.warning(
+            "Language retry did not fix the language; keeping the first answer"
+        )
+        return answer
+
+    @staticmethod
+    def _detect_text_language(text: str) -> str:
+        """Detect the language of generated prose.
+
+        Strips what carries no language signal but plenty of foreign tokens:
+        reference tags and the trailing source list, whose document titles are
+        mostly English even under an Italian answer.
+
+        Args:
+            text: The generated answer.
+
+        Returns:
+            ``"it"`` or ``"en"``.
+        """
+        body = re.split(r"\n\s*(?:Fonti|Sources)\s*:", str(text or ""))[0]
+        body = re.sub(r"\[[STst]\s*\d+(?:\s*,\s*[STst]\s*\d+)*\]", " ", body)
+        return LLMManager._detect_query_language(body)
 
     @staticmethod
     def _detect_query_language(query: str) -> str:
@@ -615,6 +706,37 @@ class LLMManager:
             "da",
             "su",
             "un",
+            # Imperative openings the expert uses in follow-ups ("Mi indichi…",
+            # "Approfondisci…"): often the only Italian tokens in a short turn.
+            "mi",
+            "dimmi",
+            "dammi",
+            "elenca",
+            "indica",
+            "indichi",
+            "spiega",
+            "approfondisci",
+            "riporta",
+            "esempi",
+            "secondo",
+            "per",
+            "con",
+            "questo",
+            "questa",
+            "questi",
+            "queste",
+            "quel",
+            "quella",
+            "anche",
+            "invece",
+            "quindi",
+            "senza",
+            "sulle",
+            "sui",
+            "nelle",
+            "negli",
+            "alle",
+            "agli",
         }
         english_markers = {
             "the",
@@ -642,6 +764,14 @@ class LLMManager:
         tokens = re.findall(r"[a-zà-öø-ÿ']+", text)
         it_score = sum(1 for token in tokens if token in italian_markers)
         en_score = sum(1 for token in tokens if token in english_markers)
+
+        # Short questions carry almost no function words ("Definizione di SEeD?",
+        # "Cos'è la coevoluzione?"): orthography is then the strongest remaining
+        # signal, and neither pattern occurs in English.
+        if _ITALIAN_ACCENTED.search(text):
+            it_score += 1
+        if _ITALIAN_ELISION.search(text):
+            it_score += 1
 
         return "it" if it_score > en_score else "en"
 
