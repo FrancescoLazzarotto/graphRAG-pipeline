@@ -18,6 +18,8 @@ from graphrag.agent.evidence import (
     evidence_from_dicts,
     evidence_to_dicts,
     render_cited_context,
+    render_display_citations,
+    render_grouped_reference_list,
     render_reference_list,
     verify_citations,
 )
@@ -778,11 +780,23 @@ class KGRAGAgent:
                     language=language,
                 )
                 answer = report.answer
-                references = render_reference_list(
-                    evidence=evidence_items,
-                    cited_refs=report.cited_refs,
-                    language=language,
-                )
+                if self.config.citation_display == "label":
+                    # Reader-facing rendering: ids for the gate, document and
+                    # page for the person reading the answer. Grouping the
+                    # source list by document also stops the flat list from
+                    # dropping its tail on heavily cited answers.
+                    answer = render_display_citations(answer, evidence_items)
+                    references = render_grouped_reference_list(
+                        evidence=evidence_items,
+                        cited_refs=report.cited_refs,
+                        language=language,
+                    )
+                else:
+                    references = render_reference_list(
+                        evidence=evidence_items,
+                        cited_refs=report.cited_refs,
+                        language=language,
+                    )
                 if references:
                     answer = answer.rstrip() + "\n\n" + references
                 logger.info(
