@@ -23,6 +23,7 @@ from graphrag.agent.evidence import (
     render_reference_list,
     verify_citations,
 )
+from graphrag.agent.memory import ConversationMemory, is_follow_up
 from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -1163,13 +1164,94 @@ class KGRAGAgent:
 
         return terms[:12]
 
-    def invoke(self, question: str) -> dict:
+    def _rewrite_with_memory(
+        self, question: str, memory: ConversationMemory
+    ) -> str:
+        """Make an elliptical follow-up self-contained, for retrieval only.
+
+        WP7 (`docs/demo_quality_plan_2026-07.md` §9.3). Returns `question`
+        unchanged on any doubt: a bad rewrite would silently degrade retrieval,
+        and the original question is always a valid fallback.
+        """
+        if self.llm is None:
+            return question
+
+        entities = memory.seed_entities()
+        if not entities:
+            return question
+
+        prompt = PromptLibrary.followup_rewrite_prompt(self.config)
+        rendered = prompt.invoke(
+            {
+                "question": question,
+                "entities": ", ".join(entities),
+                "previous_question": memory.last_question or "(none)",
+            }
+        )
+        try:
+            model = self.llm.load_llm()
+            output = model.invoke(rendered)
+        except Exception as exc:  # noqa: BLE001 - a failed rewrite must not lose the turn
+            logger.warning("Follow-up rewrite failed (%s); keeping the question.", exc)
+            return question
+
+        raw = str(output.content if hasattr(output, "content") else output)
+        rewritten = ""
+        for line in raw.splitlines():
+            candidate = line.strip().strip("\"'").removeprefix("Rewritten question:")
+            candidate = candidate.strip().strip("\"'")
+            if candidate:
+                rewritten = candidate
+                break
+
+        # A rewrite that ran long stopped rewriting and started answering.
+        if not rewritten or len(rewritten) > max(400, len(question) * 4):
+            logger.warning(
+                "Discarding an implausible follow-up rewrite (%d chars).", len(rewritten)
+            )
+            return question
+
+        if rewritten != question:
+            logger.info("Follow-up rewritten for retrieval: %r -> %r", question, rewritten)
+        return rewritten
+
+    def invoke(
+        self, question: str, memory: ConversationMemory | None = None
+    ) -> dict:
+        """Answer one question, optionally in the context of a conversation.
+
+        Args:
+            question: The question as typed by the user.
+            memory: Intra-session memory (WP7). With `None` — the default, and
+                what every CLI, gold and experiment run uses — the behaviour is
+                identical to before WP7, down to the rendered prompt.
+
+        Returns:
+            The final graph state, plus `latency_ms` and, when memory is active,
+            the original question, the question sent to retrieval and the
+            entities that resolved it.
+        """
         start = time.perf_counter()
         initial_state = {
             "question": question,
             "run_id": str(uuid.uuid4()),
             "rewrite_count": 0,
         }
+
+        # Memory steers retrieval only: `_retrieve` and `_grade` read
+        # `rewritten_question`, `_generate` reads `question`. The expert's
+        # literal wording keeps driving the answer and its language.
+        follow_up = False
+        retrieval_question = question
+        seed_entities: list[str] = []
+        if memory is not None:
+            seed_entities = memory.seed_entities()
+            follow_up = is_follow_up(question, has_context=memory.has_context())
+            if follow_up:
+                retrieval_question = self._rewrite_with_memory(question, memory)
+                if retrieval_question != question:
+                    initial_state["rewritten_question"] = retrieval_question
+
         try:
             output = self.graph.invoke(
                 initial_state, config={"recursion_limit": self.config.recursion_limit}
@@ -1196,4 +1278,19 @@ class KGRAGAgent:
                 }
         latency_ms = (time.perf_counter() - start) * 1000.0
         output["latency_ms"] = latency_ms
+
+        if memory is not None:
+            output["original_question"] = question
+            output["retrieval_question"] = retrieval_question
+            output["memory_entities"] = seed_entities
+            output["follow_up"] = follow_up
+            memory.observe(
+                question=question,
+                answer=str(output.get("answer", "") or ""),
+                nodes=output.get("retrieved_nodes", []) or [],
+                triples=[
+                    *(output.get("kg_triples", []) or []),
+                    *(output.get("retrieved_subgraph", []) or []),
+                ],
+            )
         return output
