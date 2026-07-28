@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from graphrag import cli as graphrag_cli  # noqa: E402
 from graphrag.agent.core import KGRAGAgent  # noqa: E402
+from graphrag.agent.memory import ConversationMemory  # noqa: E402
 from graphrag.config import (  # noqa: E402
     AgentConfig,
     OUTPUT_COMPLEXITY,
@@ -70,6 +71,12 @@ CITATION_POLICY = os.environ.get("DEMO_CITATION_POLICY", "mark")
 # "label" shows "[SEeD for Change, p. 3]" instead of "[S1]": the reader asked
 # what S and T meant, which is the answer to whether the ids belong on screen.
 CITATION_DISPLAY = os.environ.get("DEMO_CITATION_DISPLAY", "label")
+# WP7: intra-session conversational memory. The expert reads an answer and asks
+# a follow-up ("mi indichi le strategie nel settore vino") whose subject came
+# from that answer; without memory the question reaches retrieval isolated.
+# Steers retrieval only — never a source of facts. Demo-only: every other entry
+# point passes no memory and behaves exactly as before.
+MEMORY = os.environ.get("DEMO_MEMORY", "1") == "1"
 # Separates the prose body from the raw evidence block in stored messages;
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
@@ -174,7 +181,12 @@ def _session_log_path() -> Path:
     return st.session_state.session_log
 
 
-def _ask(agent: KGRAGAgent, model_id: str, question: str) -> str:
+def _ask(
+    agent: KGRAGAgent,
+    model_id: str,
+    question: str,
+    memory: ConversationMemory | None = None,
+) -> str:
     started = time.perf_counter()
     record: dict[str, object] = {
         "ts": dt.datetime.now().isoformat(timespec="seconds"),
@@ -183,11 +195,18 @@ def _ask(agent: KGRAGAgent, model_id: str, question: str) -> str:
         "model_id": model_id,
     }
     try:
-        result = agent.invoke(question)
+        result = agent.invoke(question, memory=memory)
         answer = str(result.get("answer", "")).strip()
         elapsed = time.perf_counter() - started
         record["answer"] = answer
         record["latency_s"] = round(elapsed, 2)
+        # WP7: the question actually sent to retrieval, and what resolved it.
+        # Logged separately from `question` so a rewrite that hurt the answer
+        # can be recognised as such after the session.
+        if memory is not None:
+            record["follow_up"] = bool(result.get("follow_up"))
+            record["retrieval_question"] = result.get("retrieval_question", question)
+            record["memory_entities"] = result.get("memory_entities", [])
         # Phantom-reference rate per model: the WP1 acceptance metric, and the
         # number that will compare Qwen2.5-32B with Qwen3-30B on hallucination.
         citation_report = result.get("citation_report")
@@ -224,15 +243,31 @@ labels = list(models)
 default_index = next(
     (i for i, lbl in enumerate(labels) if models[lbl][0] == env_base_url), 0
 )
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+# WP7: one memory per browser session, never persisted. Created before the
+# sidebar so the reset button can clear it in the same run.
+if MEMORY and "memory" not in st.session_state:
+    st.session_state.memory = ConversationMemory()
+
 with st.sidebar:
     choice = st.selectbox("Modello", labels, index=default_index)
+    if MEMORY:
+        st.divider()
+        active = st.session_state.memory.seed_entities()
+        if active:
+            st.caption("In conversazione su: " + ", ".join(active))
+        else:
+            st.caption("Nessun argomento attivo.")
+        # Without a reset the entity list keeps steering retrieval towards the
+        # previous subject; an expert changing topic needs a clean slate.
+        if st.button("Nuovo argomento", use_container_width=True):
+            st.session_state.memory.reset()
+            st.rerun()
 base_url, model_id = models[choice]
 
 agent, model_id = _load_agent(base_url, model_id)
 st.caption(f"strategia: {STRATEGY} | modello: {model_id}")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 def _render(content: str) -> None:
     body, sep, evidence = content.partition(EVIDENCE_MARKER)
@@ -253,6 +288,11 @@ if question:
         st.markdown(question)
     with st.chat_message("assistant"):
         with st.spinner("Sto consultando il grafo e i documenti (10-30 secondi)..."):
-            answer = _ask(agent, model_id, question)
+            answer = _ask(
+                agent,
+                model_id,
+                question,
+                memory=st.session_state.memory if MEMORY else None,
+            )
         _render(answer)
     st.session_state.messages.append(("assistant", answer))
