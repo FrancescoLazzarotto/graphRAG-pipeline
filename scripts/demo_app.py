@@ -36,7 +36,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from graphrag import cli as graphrag_cli  # noqa: E402
 from graphrag.agent.core import KGRAGAgent  # noqa: E402
-from graphrag.config import AgentConfig, build_kg_config_from_env  # noqa: E402
+from graphrag.config import (  # noqa: E402
+    AgentConfig,
+    OUTPUT_COMPLEXITY,
+    build_kg_config_from_env,
+)
 from graphrag.kg.manager import KnowledgeGraphManager  # noqa: E402
 from graphrag.kg.retriever import KGRetriever  # noqa: E402
 from graphrag.llm.manager import LLMManager  # noqa: E402
@@ -46,7 +50,14 @@ logger = logging.getLogger("expert_demo")
 
 STRATEGY = os.environ.get("DEMO_STRATEGY", "hybrid")
 MAX_CONTEXT_TOKENS = int(os.environ.get("DEMO_MAX_CONTEXT_TOKENS", "6000"))
-MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "512"))
+# WP2: 512 tokens fit a summary, not a detailed answer with citations; the
+# expert's recurring complaint was genericity, and the previous cap left no room
+# for figures, names and per-claim references.
+MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "1536"))
+# WP2: HIGH drops the "1-2 short paragraphs" instruction and adds the
+# specificity rule. WP5: the answer language is pinned to the question language.
+COMPLEXITY = OUTPUT_COMPLEXITY(os.environ.get("DEMO_COMPLEXITY", "high"))
+ENFORCE_LANGUAGE = os.environ.get("DEMO_ENFORCE_LANGUAGE", "1") == "1"
 # Show the full model answer (including 'Verifica nel grafo'); ask the prompt
 # for a 'Limits and confidence' section on every answer, not only sparse ones.
 SHOW_FULL_ANSWER = os.environ.get("DEMO_SHOW_FULL_ANSWER", "1") == "1"
@@ -132,6 +143,8 @@ def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
         always_include_limits=ALWAYS_LIMITS,
         cite_evidence=CITE_EVIDENCE,
         citation_policy=CITATION_POLICY,
+        complexity=COMPLEXITY,
+        enforce_language=ENFORCE_LANGUAGE,
     )
     config = apply_strategy(base, STRATEGY)
 
