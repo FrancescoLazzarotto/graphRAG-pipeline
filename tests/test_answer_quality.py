@@ -224,6 +224,47 @@ def test_retry_failure_keeps_the_original_answer():
     assert answer == "SEeD is a systemic event design project."
 
 
+# --- token cap ------------------------------------------------------------
+
+
+def test_answer_cut_by_the_token_cap_loses_only_the_fragment():
+    answer = (
+        "SEeD è un progetto di design sistemico degli eventi. "
+        "Riduce l'impatto del 65%. "
+        "Pertanto, mentre l'interpretazione è ben fondata, la specifica"
+    )
+    trimmed = LLMManager._trim_to_last_sentence(answer)
+
+    assert trimmed.endswith("Riduce l'impatto del 65%.")
+    assert "la specifica" not in trimmed
+
+
+def test_complete_answer_is_left_alone():
+    answer = "Prima frase. Seconda frase."
+
+    assert LLMManager._trim_to_last_sentence(answer) == answer
+
+
+def test_trimming_never_reduces_the_answer_to_a_stub():
+    # One long sentence followed by a fragment: cutting back would throw away
+    # most of the answer to hide a few words.
+    answer = "Punto. " + "parola " * 60
+
+    assert LLMManager._trim_to_last_sentence(answer) == answer.rstrip()
+
+
+def test_token_limit_is_read_from_the_backend_metadata():
+    class _Output:
+        response_metadata = {"finish_reason": "length"}
+
+    class _Complete:
+        response_metadata = {"finish_reason": "stop"}
+
+    assert LLMManager._hit_token_limit(_Output()) is True
+    assert LLMManager._hit_token_limit(_Complete()) is False
+    assert LLMManager._hit_token_limit(object()) is False
+
+
 # --- source list ordering -------------------------------------------------
 
 
