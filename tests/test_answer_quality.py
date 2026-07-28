@@ -1,0 +1,247 @@
+"""Unit tests for answer granularity and answer language (WP2, WP5).
+
+Covers `docs/demo_quality_plan_2026-07.md` §4 and §7: a HIGH complexity answer
+drops the "1-2 short paragraphs" cap and asks for concrete data, the answer
+language is pinned to the question language with a directive written in that
+language, and a wrong-language answer triggers exactly one retry. Also guards
+the invariant that both features leave the prompt untouched when off, so gold
+runs and experiment baselines stay comparable.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from graphrag.agent.evidence import build_evidence_index, render_reference_list
+from graphrag.config import AgentConfig, OUTPUT_COMPLEXITY
+from graphrag.llm.manager import LLMManager
+from graphrag.llm.prompts import PromptLibrary
+
+
+class _FakeOutput:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _FakeModel:
+    """Returns the queued answers in order and records the prompts it saw."""
+
+    def __init__(self, *answers: str) -> None:
+        self._answers = list(answers)
+        self.prompts: list[Any] = []
+
+    def invoke(self, payload: Any) -> _FakeOutput:
+        self.prompts.append(payload)
+        return _FakeOutput(self._answers.pop(0) if self._answers else "")
+
+
+def _manager() -> LLMManager:
+    return LLMManager(model_id="test-model", use_vllm=True)
+
+
+# --- WP2: granularity -----------------------------------------------------
+
+
+def test_medium_complexity_keeps_the_short_answer_cap():
+    """The default path must render exactly the pre-WP2 prompt."""
+    for complexity in (OUTPUT_COMPLEXITY.LOW, OUTPUT_COMPLEXITY.MEDIUM):
+        rendered = str(PromptLibrary.answer_prompt(AgentConfig(complexity=complexity)))
+
+        assert "1-2 short paragraphs" in rendered
+        assert "Stay concrete" not in rendered
+
+
+def test_high_complexity_drops_the_cap_and_asks_for_specifics():
+    rendered = str(
+        PromptLibrary.answer_prompt(AgentConfig(complexity=OUTPUT_COMPLEXITY.HIGH))
+    )
+
+    assert "1-2 short paragraphs" not in rendered
+    assert "across several paragraphs" in rendered
+    # The rule that attacks the "fuffa": prefer the datum over the adjective.
+    assert "never generalise when a specific one is available" in rendered
+    assert "Provide a thorough, multi-paragraph analysis." in rendered
+
+
+def test_high_complexity_composes_with_citations():
+    config = AgentConfig(complexity=OUTPUT_COMPLEXITY.HIGH, cite_evidence=True)
+    rendered = str(PromptLibrary.answer_prompt(config))
+
+    assert "Stay concrete" in rendered
+    assert "[S1], [S2]" in rendered
+
+
+# --- WP5: language --------------------------------------------------------
+
+
+def test_prompt_unchanged_when_language_is_not_enforced():
+    config = AgentConfig()
+    assert str(PromptLibrary.answer_prompt(config)) == str(
+        PromptLibrary.answer_prompt(config, language=None)
+    )
+    assert "Rispondi SEMPRE in italiano" not in str(PromptLibrary.answer_prompt(config))
+
+
+def test_language_directive_is_written_in_the_target_language():
+    italian = PromptLibrary.language_directive("it")
+    english = PromptLibrary.language_directive("en")
+
+    assert italian.startswith("Rispondi SEMPRE in italiano")
+    assert english.startswith("ALWAYS answer in English")
+    assert PromptLibrary.language_directive("de") == ""
+
+
+def test_reinforced_directive_names_the_previous_failure():
+    reinforced = PromptLibrary.language_directive("it", reinforced=True)
+
+    assert reinforced.startswith("VINCOLO ASSOLUTO")
+    assert "Rispondi SEMPRE in italiano" in reinforced
+
+
+def test_limits_section_title_follows_the_answer_language():
+    config = AgentConfig(always_include_limits=True)
+
+    assert "Limiti e affidabilità" in str(
+        PromptLibrary.answer_prompt(config, language="it")
+    )
+    assert "Limits and confidence" in str(
+        PromptLibrary.answer_prompt(config, language="en")
+    )
+    assert "Limits and confidence" in str(PromptLibrary.answer_prompt(config))
+
+
+def test_language_constraint_appears_twice_in_the_prompt():
+    """Once in the system message, once as the last line before generation."""
+    rendered = str(PromptLibrary.answer_prompt(AgentConfig(), language="it"))
+
+    assert rendered.count("Rispondi SEMPRE in italiano") == 2
+
+
+def test_detects_short_italian_questions():
+    for question in (
+        "Cos'è SEeD?",
+        "Che cos'è la coevoluzione?",
+        "Definizione di capitale relazionale?",
+        "Mi indichi le strategie nel settore vino?",
+        "Approfondisci l'economia circolare in Piemonte",
+    ):
+        assert LLMManager._detect_query_language(question) == "it", question
+
+
+def test_english_questions_are_not_flipped():
+    for question in (
+        "What is SEeD?",
+        "Which supply chains are covered by the Piedmont strategy?",
+        "How does the CEFF framework relate to the SDGs?",
+        "Define relational capital.",
+    ):
+        assert LLMManager._detect_query_language(question) == "en", question
+
+
+def test_answer_language_ignores_reference_tags_and_source_list():
+    answer = (
+        "SEeD è un progetto di design sistemico degli eventi [S1]. "
+        "Il modello riduce l'impatto del 65% [T2].\n\n"
+        "Fonti:\n- [S1] SEeD for Change.pdf | p. 3\n"
+        "- [T2] (SEeD, IMPLEMENTS, UNI ISO 20121) — SEeD for Change.pdf | p. 4"
+    )
+
+    assert LLMManager._detect_text_language(answer) == "it"
+
+
+def test_wrong_language_answer_is_regenerated_once():
+    manager = _manager()
+    model = _FakeModel("SEeD is a systemic event design project for the fairs.")
+    config = AgentConfig(enforce_language=True)
+
+    answer = manager._enforce_answer_language(
+        model=model,
+        query="Che cos'è SEeD?",
+        context="…",
+        config=config,
+        answer="SEeD is a systemic event design project for the fairs.",
+        target_language="it",
+    )
+
+    # The queue is exhausted, so the retry returns "" and the first answer wins;
+    # what matters here is that exactly one extra call was made.
+    assert len(model.prompts) == 1
+    assert answer == "SEeD is a systemic event design project for the fairs."
+
+
+def test_retry_answer_replaces_the_original_when_the_language_is_fixed():
+    manager = _manager()
+    model = _FakeModel(
+        "SEeD è un progetto di design sistemico degli eventi, nato nel 2005."
+    )
+    config = AgentConfig(enforce_language=True)
+
+    answer = manager._enforce_answer_language(
+        model=model,
+        query="Che cos'è SEeD?",
+        context="…",
+        config=config,
+        answer="SEeD is a systemic event design project.",
+        target_language="it",
+    )
+
+    assert answer.startswith("SEeD è un progetto")
+    assert "VINCOLO ASSOLUTO" in str(model.prompts[0])
+
+
+def test_matching_language_skips_the_retry():
+    manager = _manager()
+    model = _FakeModel("mai chiamato")
+
+    answer = manager._enforce_answer_language(
+        model=model,
+        query="Che cos'è SEeD?",
+        context="…",
+        config=AgentConfig(enforce_language=True),
+        answer="SEeD è un progetto di design sistemico degli eventi.",
+        target_language="it",
+    )
+
+    assert model.prompts == []
+    assert answer == "SEeD è un progetto di design sistemico degli eventi."
+
+
+def test_retry_failure_keeps_the_original_answer():
+    class _BrokenModel:
+        def invoke(self, payload: Any) -> Any:
+            raise ValueError("backend down")
+
+    manager = _manager()
+    answer = manager._enforce_answer_language(
+        model=_BrokenModel(),
+        query="Che cos'è SEeD?",
+        context="…",
+        config=AgentConfig(enforce_language=True),
+        answer="SEeD is a systemic event design project.",
+        target_language="it",
+    )
+
+    assert answer == "SEeD is a systemic event design project."
+
+
+# --- source list ordering -------------------------------------------------
+
+
+def test_reference_list_shows_text_passages_before_triples():
+    """Text items carry document *and* page: they must survive the cap."""
+    evidence = build_evidence_index(
+        text_chunks=[
+            {"content": f"passo {i}", "source": f"doc{i}.pdf#page={i}#chunk=1", "chunk_id": f"c{i}"}
+            for i in range(1, 4)
+        ],
+        triples=[
+            {"subject": f"A{i}", "predicate": "REL", "object": f"B{i}"} for i in range(1, 10)
+        ],
+    )
+    # Citation order puts the triples first, as the model usually does.
+    cited = [f"T{i}" for i in range(1, 10)] + ["S1", "S2", "S3"]
+    rendered = render_reference_list(evidence, cited_refs=cited, max_items=8)
+
+    lines = [line for line in rendered.splitlines() if line.startswith("- [")]
+    assert [line[3:5] for line in lines[:3]] == ["S1", "S2", "S3"]
+    assert "(+4 altre evidenze citate)" in rendered
