@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import urllib.error
@@ -181,11 +182,73 @@ def _session_log_path() -> Path:
     return st.session_state.session_log
 
 
+# A chat is named after its first question; until then it needs a placeholder
+# that cannot be confused with the button that creates one.
+NEW_CHAT_TITLE = "(vuota)"
+
+
+def _new_chat() -> str:
+    """Start an empty conversation and make it current.
+
+    Each chat owns its transcript and its own memory: two threads of questions
+    must not resolve each other's follow-ups. Streamlit keeps this per browser
+    session, so a second tab is a second independent set of chats — and the
+    only way to have two questions running at the same time, since one session
+    processes one question at a time.
+    """
+    chat_id = uuid.uuid4().hex[:8]
+    st.session_state.chats[chat_id] = {
+        "title": NEW_CHAT_TITLE,
+        "messages": [],
+        "memory": ConversationMemory() if MEMORY else None,
+    }
+    st.session_state.chat_order.append(chat_id)
+    st.session_state.current_chat = chat_id
+    return chat_id
+
+
+def _init_chats() -> None:
+    if "chats" not in st.session_state:
+        st.session_state.chats = {}
+        st.session_state.chat_order = []
+        _new_chat()
+
+
+def _current_chat() -> dict:
+    return st.session_state.chats[st.session_state.current_chat]
+
+
+def _clear_chat(chat: dict) -> None:
+    """Empty a conversation without deleting it (the 'Azzera' button)."""
+    chat["messages"].clear()
+    chat["title"] = NEW_CHAT_TITLE
+    if chat["memory"] is not None:
+        chat["memory"].reset()
+
+
+def _delete_chat(chat_id: str) -> None:
+    st.session_state.chats.pop(chat_id, None)
+    st.session_state.chat_order.remove(chat_id)
+    if not st.session_state.chat_order:
+        _new_chat()
+    elif st.session_state.current_chat == chat_id:
+        st.session_state.current_chat = st.session_state.chat_order[-1]
+
+
+def _chat_label(text: str, max_chars: int = 30) -> str:
+    """Name a conversation after its first question."""
+    label = " ".join(str(text or "").split())
+    if len(label) <= max_chars:
+        return label
+    return label[:max_chars].rsplit(" ", 1)[0] + "…"
+
+
 def _ask(
     agent: KGRAGAgent,
     model_id: str,
     question: str,
     memory: ConversationMemory | None = None,
+    chat_id: str = "",
 ) -> str:
     started = time.perf_counter()
     record: dict[str, object] = {
@@ -193,6 +256,9 @@ def _ask(
         "question": question,
         "strategy": STRATEGY,
         "model_id": model_id,
+        # One log per browser session, several conversations inside it: the id
+        # is what separates two parallel threads of questions after the fact.
+        "chat_id": chat_id,
     }
     try:
         result = agent.invoke(question, memory=memory)
@@ -243,27 +309,49 @@ labels = list(models)
 default_index = next(
     (i for i, lbl in enumerate(labels) if models[lbl][0] == env_base_url), 0
 )
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-# WP7: one memory per browser session, never persisted. Created before the
-# sidebar so the reset button can clear it in the same run.
-if MEMORY and "memory" not in st.session_state:
-    st.session_state.memory = ConversationMemory()
+_init_chats()
 
 with st.sidebar:
     choice = st.selectbox("Modello", labels, index=default_index)
-    if MEMORY:
-        st.divider()
-        active = st.session_state.memory.seed_entities()
+
+    st.divider()
+    st.markdown("**Conversazioni**")
+    if st.button("+ Nuova chat", use_container_width=True):
+        _new_chat()
+        st.rerun()
+    for chat_id in list(st.session_state.chat_order):
+        entry = st.session_state.chats[chat_id]
+        is_current = chat_id == st.session_state.current_chat
+        if st.button(
+            entry["title"],
+            key=f"select_{chat_id}",
+            use_container_width=True,
+            type="primary" if is_current else "secondary",
+        ):
+            st.session_state.current_chat = chat_id
+            st.rerun()
+
+    chat = _current_chat()
+    st.divider()
+    clear_col, delete_col = st.columns(2)
+    if clear_col.button("Azzera", use_container_width=True):
+        _clear_chat(chat)
+        st.rerun()
+    if delete_col.button(
+        "Elimina",
+        use_container_width=True,
+        disabled=len(st.session_state.chat_order) == 1,
+    ):
+        _delete_chat(st.session_state.current_chat)
+        st.rerun()
+
+    if MEMORY and chat["memory"] is not None:
+        active = chat["memory"].seed_entities()
         if active:
             st.caption("In conversazione su: " + ", ".join(active))
         else:
             st.caption("Nessun argomento attivo.")
-        # Without a reset the entity list keeps steering retrieval towards the
-        # previous subject; an expert changing topic needs a clean slate.
-        if st.button("Nuovo argomento", use_container_width=True):
-            st.session_state.memory.reset()
-            st.rerun()
+
 base_url, model_id = models[choice]
 
 agent, model_id = _load_agent(base_url, model_id)
@@ -277,13 +365,15 @@ def _render(content: str) -> None:
             st.code(evidence, language=None)
 
 
-for role, content in st.session_state.messages:
+for role, content in chat["messages"]:
     with st.chat_message(role):
         _render(content)
 
 question = st.chat_input("Scrivi qui la tua domanda...")
 if question:
-    st.session_state.messages.append(("user", question))
+    if not chat["messages"]:
+        chat["title"] = _chat_label(question)
+    chat["messages"].append(("user", question))
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
@@ -292,7 +382,11 @@ if question:
                 agent,
                 model_id,
                 question,
-                memory=st.session_state.memory if MEMORY else None,
+                memory=chat["memory"],
+                chat_id=st.session_state.current_chat,
             )
         _render(answer)
-    st.session_state.messages.append(("assistant", answer))
+    chat["messages"].append(("assistant", answer))
+    # The sidebar rendered before the answer existed: rerun so the chat list
+    # shows the new title and the updated topics.
+    st.rerun()
