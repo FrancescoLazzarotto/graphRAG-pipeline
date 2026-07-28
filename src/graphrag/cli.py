@@ -12,7 +12,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from graphrag.agent.core import KGRAGAgent
-from graphrag.config import AgentConfig, DEFAULT_MODEL_ID, build_kg_config_from_env
+from graphrag.config import (
+    AgentConfig,
+    DEFAULT_MODEL_ID,
+    OUTPUT_COMPLEXITY,
+    build_kg_config_from_env,
+)
 from graphrag.experiments import ExperimentRunner, Question
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
@@ -78,6 +83,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=("mark", "strip"),
         default="mark",
         help="What to do with a reference tag absent from the evidence index",
+    )
+    parser.add_argument(
+        "--complexity",
+        choices=("low", "medium", "high"),
+        default="medium",
+        help=(
+            "Answer depth. 'high' drops the '1-2 short paragraphs' cap and adds "
+            "the specificity rule (figures, names, article numbers)"
+        ),
+    )
+    parser.add_argument(
+        "--enforce-language",
+        action="store_true",
+        help=(
+            "Constrain the answer to the language detected on the question, "
+            "written in that language, and retry once on a mismatch"
+        ),
     )
     parser.add_argument(
         "--max-new-tokens",
@@ -190,6 +212,8 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         max_content_tokens=args.max_context_tokens,
         cite_evidence=getattr(args, "cite_evidence", False),
         citation_policy=getattr(args, "citation_policy", "mark"),
+        complexity=OUTPUT_COMPLEXITY(getattr(args, "complexity", "medium")),
+        enforce_language=getattr(args, "enforce_language", False),
     )
 
 
