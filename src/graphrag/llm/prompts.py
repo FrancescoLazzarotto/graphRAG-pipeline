@@ -6,8 +6,73 @@ from graphrag.config import AgentConfig, OUTPUT_COMPLEXITY, OUTPUT_TONE
 
 
 class PromptLibrary:
+    # WP5: written in the target language on purpose — an Italian instruction
+    # holds an Italian answer far better than an English sentence asking for
+    # Italian, especially when the retrieved context is mostly English.
+    LANGUAGE_DIRECTIVES = {
+        "it": (
+            "Rispondi SEMPRE in italiano, anche quando il contesto e in inglese: "
+            "traduci le evidenze invece di cambiare lingua. Restano nella lingua "
+            "originale solo i nomi propri, i titoli dei documenti e i termini "
+            "tecnici privi di traduzione corrente."
+        ),
+        "en": (
+            "ALWAYS answer in English, even when the context is written in "
+            "Italian: translate the evidence instead of switching language. Only "
+            "proper names, document titles and technical terms with no current "
+            "translation stay in the original language."
+        ),
+    }
+    LANGUAGE_REINFORCEMENTS = {
+        "it": (
+            "VINCOLO ASSOLUTO: la risposta precedente era nella lingua sbagliata. "
+            "Scrivi TUTTA la risposta in italiano, dalla prima all'ultima parola. "
+        ),
+        "en": (
+            "ABSOLUTE CONSTRAINT: the previous answer was in the wrong language. "
+            "Write the ENTIRE answer in English, from first word to last. "
+        ),
+    }
+
     @staticmethod
-    def answer_prompt(config: AgentConfig) -> ChatPromptTemplate:
+    def language_directive(language: str, reinforced: bool = False) -> str:
+        """Return the answer-language constraint, written in that language.
+
+        Args:
+            language: ``"it"`` or ``"en"``; anything else yields an empty string.
+            reinforced: Prefix the stronger wording used on the retry that
+                follows a wrong-language answer.
+
+        Returns:
+            The directive, or an empty string when the language is unknown.
+        """
+        directive = PromptLibrary.LANGUAGE_DIRECTIVES.get(str(language or "").lower())
+        if not directive:
+            return ""
+        if reinforced:
+            return PromptLibrary.LANGUAGE_REINFORCEMENTS[language.lower()] + directive
+        return directive
+
+    @staticmethod
+    def answer_prompt(
+        config: AgentConfig,
+        language: str | None = None,
+        reinforce_language: bool = False,
+    ) -> ChatPromptTemplate:
+        """Build the answer prompt.
+
+        Args:
+            config: Agent configuration; ``complexity`` drives answer depth and
+                ``cite_evidence`` the citation protocol.
+            language: Target answer language (``"it"``/``"en"``). ``None`` keeps
+                the prompt byte-identical to the pre-WP5 one, which is what
+                existing baselines and gold runs must keep seeing.
+            reinforce_language: Use the stronger constraint (retry after a
+                wrong-language answer). Ignored when ``language`` is ``None``.
+
+        Returns:
+            The chat prompt template with ``question`` and ``context`` slots.
+        """
         if config.answer_prompt:
             return ChatPromptTemplate.from_template(config.answer_prompt)
 
@@ -43,6 +108,13 @@ class PromptLibrary:
             "If you mention a fact, tie it to an exact node, triple, or other "
             "explicit evidence from the context."
         )
+        language_block = (
+            PromptLibrary.language_directive(language, reinforced=reinforce_language)
+            if language
+            else ""
+        )
+        if language_block:
+            system_message += " " + language_block
         if config.cite_evidence:
             system_message += (
                 " Evidence items in the context are numbered: reference them by "
@@ -50,9 +122,14 @@ class PromptLibrary:
                 "document."
             )
 
+        # An English heading on top of an Italian answer is exactly the kind of
+        # language leak WP5 removes, so the title follows the answer language.
+        limits_title = (
+            "Limiti e affidabilità" if language == "it" else "Limits and confidence"
+        )
         if config.always_include_limits:
             limits_block = (
-                "Always include a short section titled 'Limits and confidence' "
+                f"Always include a short section titled '{limits_title}' "
                 "assessing how strong the supporting evidence is. "
             )
             # Only meaningful without the citation protocol below, which replaces
@@ -65,7 +142,7 @@ class PromptLibrary:
         else:
             limits_block = (
                 "If context is sparse, include a short section titled "
-                "'Limits and confidence'. "
+                f"'{limits_title}'. "
             )
             no_inline_block = ""
 
@@ -97,19 +174,43 @@ class PromptLibrary:
                 "exact node or triple names that support the answer. "
             )
 
+        if config.complexity is OUTPUT_COMPLEXITY.HIGH:
+            # WP2: "1-2 short paragraphs" contradicts a HIGH complexity setting
+            # and is what turns answers into abstract summaries — a summary drops
+            # exactly the figures, names and article numbers the expert asks for.
+            depth_block = (
+                "If context has at least some factual evidence, provide the best "
+                "grounded answer possible, developing every point the evidence "
+                "supports across several paragraphs. "
+                "Avoid a checklist style unless the user explicitly asks for a list. "
+                "Stay concrete: use the figures, proper names, years, percentages "
+                "and article or standard numbers that appear in the evidence, and "
+                "never generalise when a specific one is available — write 'a 65% "
+                "impact reduction at Terra Madre Salone del Gusto', not 'a "
+                "significant impact reduction'. "
+            )
+        else:
+            depth_block = (
+                "If context has at least some factual evidence, provide the best "
+                "grounded answer possible in 1-2 short paragraphs. "
+                "Avoid a checklist style unless the user explicitly asks for a list. "
+            )
+
         human_message_template = (
             f"Target audience: {config.target_audience}.\n"
             f"{tone_map[config.tone]}\n{complexity_map[config.complexity]}\n"
             f"{structured}\n"
             "Question:\n{question}\n\n"
             "Context:\n{context}\n\n"
-            "If context has at least some factual evidence, provide the best "
-            "grounded answer possible in 1-2 short paragraphs. "
-            "Avoid a checklist style unless the user explicitly asks for a list. "
+            + depth_block
             + limits_block
             + evidence_block
             + "State that context is insufficient only when context is empty or "
             "lacks factual evidence."
+            # Repeated as the last line: the instruction closest to the
+            # generation point is the one models follow when the context pulls
+            # the other way.
+            + (f"\n\n{language_block}" if language_block else "")
         )
 
         return ChatPromptTemplate.from_messages(
