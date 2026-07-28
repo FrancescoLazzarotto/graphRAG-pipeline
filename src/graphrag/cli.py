@@ -85,6 +85,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="What to do with a reference tag absent from the evidence index",
     )
     parser.add_argument(
+        "--citation-display",
+        choices=("id", "label"),
+        default="id",
+        help=(
+            "How verified references are shown: 'id' keeps [S1]/[T3], 'label' "
+            "rewrites them as [document, p. N] after the citation gate"
+        ),
+    )
+    parser.add_argument(
         "--complexity",
         choices=("low", "medium", "high"),
         default="medium",
@@ -212,6 +221,7 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         max_content_tokens=args.max_context_tokens,
         cite_evidence=getattr(args, "cite_evidence", False),
         citation_policy=getattr(args, "citation_policy", "mark"),
+        citation_display=getattr(args, "citation_display", "id"),
         complexity=OUTPUT_COMPLEXITY(getattr(args, "complexity", "medium")),
         enforce_language=getattr(args, "enforce_language", False),
     )
