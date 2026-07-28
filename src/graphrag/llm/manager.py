@@ -543,6 +543,14 @@ class LLMManager:
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.info("LLM raw output (first 800 chars): %s", answer[:800])
 
+        if self._hit_token_limit(output):
+            logger.warning(
+                "Answer hit max_new_tokens=%d and was cut mid-sentence; trimming "
+                "to the last complete sentence",
+                self.max_new_tokens,
+            )
+            answer = self._trim_to_last_sentence(answer)
+
         # If model returned empty or a generic refusal, try a stricter fallback prompt once.
         if looks_like_refusal(answer) and context and str(context).strip():
             try:
@@ -634,6 +642,50 @@ class LLMManager:
             "Language retry did not fix the language; keeping the first answer"
         )
         return answer
+
+    @staticmethod
+    def _hit_token_limit(output: Any) -> bool:
+        """Whether generation stopped because it ran out of tokens.
+
+        Args:
+            output: The backend response; only OpenAI-compatible backends carry
+                ``response_metadata['finish_reason']``.
+
+        Returns:
+            ``True`` when the backend reported a length stop.
+        """
+        metadata = getattr(output, "response_metadata", None)
+        if not isinstance(metadata, dict):
+            return False
+        return str(metadata.get("finish_reason", "")).lower() == "length"
+
+    @staticmethod
+    def _trim_to_last_sentence(answer: str) -> str:
+        """Drop a dangling half-sentence left by the token cap.
+
+        Only the trailing fragment goes: a reader seeing "…e coerente con le
+        fonti, la specifica" reads it as a bug, which it is, and the fragment
+        carries no information anyway.
+
+        Args:
+            answer: The generated answer, possibly cut mid-sentence.
+
+        Returns:
+            The answer up to the last sentence end, or unchanged when no
+            sentence boundary is left to cut back to.
+        """
+        text = str(answer or "").rstrip()
+        if not text or text[-1] in ".!?:»\"')":
+            return text
+
+        cut = max(text.rfind(mark) for mark in (". ", ".\n", "! ", "? ", ".", "!", "?"))
+        if cut <= 0:
+            return text
+        # Keep at least a paragraph: an answer trimmed down to one sentence is
+        # worse than the fragment it was meant to hide.
+        if cut < len(text) * 0.4:
+            return text
+        return text[: cut + 1].rstrip()
 
     @staticmethod
     def _detect_text_language(text: str) -> str:
