@@ -428,6 +428,15 @@ def verify_citations(
     )
 
 
+def _reference_sort_key(item: EvidenceItem) -> tuple[int, int]:
+    """Sort key for the closing source list: text passages first, then by id."""
+    try:
+        number = int(item.ref_id[1:])
+    except (ValueError, IndexError):
+        number = 0
+    return (0 if item.kind == "text" else 1, number)
+
+
 def render_reference_list(
     evidence: Sequence[EvidenceItem],
     cited_refs: Sequence[str],
@@ -458,6 +467,10 @@ def render_reference_list(
     if not used:
         return ""
 
+    # Index order, text passages first: they carry document *and* page, which is
+    # what a reader checks. Citation order instead pushed them below the triples
+    # and, on a long list, straight into the "(+N more)" line.
+    used = sorted(used, key=_reference_sort_key)
     shown = used[: max(1, int(max_items))]
     hidden = len(used) - len(shown)
 
