@@ -47,6 +47,7 @@ class RAGState(TypedDict, total=False):
     # dataclasses with graphrag.agent.evidence.evidence_from_dicts.
     evidence_index: list[dict[str, Any]]
     citation_report: dict[str, Any]
+    quote_report: dict[str, Any]
     answer: str
     provenance: list[ProvenanceRecord]
     reflection_passed: bool
