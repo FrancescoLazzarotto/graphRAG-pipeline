@@ -5,6 +5,7 @@ import math
 import re
 from typing import Any, Sequence
 
+from graphrag import questions
 from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
@@ -177,10 +178,7 @@ class KGRetriever:
         text_sources: list[dict[str, str]] = []
         text_units: list[dict[str, str]] = []
         if self.config.use_text_retriever and self.text_pipeline is not None:
-            retrieved = self.text_pipeline.retrieve(
-                query=query_text,
-                top_k=self.config.text_retriever_top_k,
-            )
+            retrieved = self._retrieve_text_chunks(query_text)
             for chunk in retrieved:
                 if not chunk.content.strip():
                     continue
@@ -228,6 +226,122 @@ class KGRetriever:
                 section for section in context_sections if section
             ),
         }
+
+    def _retrieve_text_chunks(self, query_text: str) -> list[Any]:
+        """Retrieve the text channel, diversified (WP4) and re-ranked (WP3).
+
+        Three steps, in this order and for a reason:
+
+        1. fetch a candidate pool, with MMR when it is enabled;
+        2. cap how many chunks a single document may contribute;
+        3. promote the chunks that actually define the term, when the question
+           asks for a definition.
+
+        The cap runs before the boost so the boost can only reorder chunks that
+        survived diversification — the other order lets the cap discard the
+        definitional chunk the boost just found.
+
+        Args:
+            query_text: The retrieval query (already rewritten, when WP7 fired).
+
+        Returns:
+            At most ``text_retriever_top_k`` retrieved chunks.
+        """
+        top_k = max(1, int(self.config.text_retriever_top_k))
+        cap = max(0, int(self.config.text_retriever_max_per_doc))
+        term = (
+            questions.definitional_term(query_text)
+            if self.config.prefer_verbatim_definitions
+            else ""
+        )
+        # A pool is only worth fetching when something downstream can reorder
+        # it; otherwise the extra candidates are dead weight on the index.
+        needs_pool = bool(cap or term)
+        pool_size = top_k
+        if needs_pool:
+            pool_size = max(top_k, int(self.config.text_retriever_fetch_k) or top_k * 4)
+
+        retrieved = list(
+            self.text_pipeline.retrieve(
+                query=query_text,
+                top_k=pool_size,
+                mmr_lambda=(
+                    self.config.text_retriever_mmr_lambda
+                    if self.config.text_retriever_mmr
+                    else None
+                ),
+                fetch_k=self.config.text_retriever_fetch_k or None,
+            )
+        )
+
+        if cap:
+            # An enumeration is usually one list on contiguous pages of one
+            # document: the cap that diversifies every other question truncates
+            # exactly the answer here, so it gets twice the budget.
+            effective_cap = cap * 2 if questions.is_enumerative(query_text) else cap
+            retrieved = self._cap_per_document(retrieved, effective_cap, top_k)
+
+        if term:
+            retrieved = self._promote_definitions(retrieved, term)
+
+        return retrieved[:top_k]
+
+    @staticmethod
+    def _document_key(source: str | None) -> str:
+        """Document a chunk came from, dropping the page and chunk markers."""
+        return str(source or "").split("#page=")[0].split("#chunk=")[0].strip()
+
+    @staticmethod
+    def _cap_per_document(
+        chunks: Sequence[Any], max_per_doc: int, top_k: int
+    ) -> list[Any]:
+        """Keep at most ``max_per_doc`` chunks per source document.
+
+        Chunks over the cap are not dropped, they are demoted: when the corpus
+        has nothing else to say, a truncated context is worse than a
+        single-source one.
+        """
+        kept: list[Any] = []
+        overflow: list[Any] = []
+        seen: dict[str, int] = {}
+        for chunk in chunks:
+            key = KGRetriever._document_key(getattr(chunk, "source", ""))
+            count = seen.get(key, 0)
+            if count < max_per_doc:
+                seen[key] = count + 1
+                kept.append(chunk)
+            else:
+                overflow.append(chunk)
+
+        if len(kept) < top_k:
+            kept.extend(overflow[: top_k - len(kept)])
+        else:
+            kept.extend(overflow)
+        return kept
+
+    @staticmethod
+    def _promote_definitions(chunks: Sequence[Any], term: str) -> list[Any]:
+        """Re-rank so chunks defining ``term`` come first.
+
+        A stable sort on the definitional score alone: retrieval order breaks
+        ties, so a query where nothing looks like a definition comes back in
+        exactly the order the retriever produced.
+        """
+        scored = [
+            (questions.definition_score(getattr(chunk, "content", ""), term), index, chunk)
+            for index, chunk in enumerate(chunks)
+        ]
+        if not any(score > 0.5 for score, _, _ in scored):
+            return list(chunks)
+
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        logger.info(
+            "Definitional boost for %r: chunk %d moved to the top (score %.1f)",
+            term,
+            scored[0][1],
+            scored[0][0],
+        )
+        return [chunk for _, _, chunk in scored]
 
     def resolve_entity_seed(self, query: str | None = None) -> str:
         query_text = (query or self.config.query or self.config.entity or "").strip()
