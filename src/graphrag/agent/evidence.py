@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -31,6 +32,10 @@ _CITATION_RE = re.compile(r"\[((?:[STst]\s?\d{1,3})(?:\s*[,;]\s*[STst]\s?\d{1,3}
 _REF_RE = re.compile(r"([STst])\s?(\d{1,3})")
 # "<path>#page=N#chunk=M" — the tag StandardTextRAGPipeline attaches to chunks.
 _CHUNK_SOURCE_RE = re.compile(r"^(?P<path>.*?)(?:#page=(?P<page>[^#]*))?(?:#chunk=(?P<chunk>.*))?$")
+# WP3 asks for the definition between guillemets. Only guillemets are checked:
+# straight and curly quotes carry emphasis, titles and scare quotes, and
+# stripping those would rewrite answers that claim nothing about a source.
+_QUOTE_RE = re.compile(r"«\s*([^»]{1,600}?)\s*»")
 
 UNVERIFIED_MARK_IT = "[riferimento non verificato]"
 UNVERIFIED_MARK_EN = "[unverified reference]"
@@ -91,6 +96,28 @@ class CitationReport:
             "phantom_refs": list(self.phantom_refs),
             "total_citations": self.total_citations,
             "phantom_rate": round(self.phantom_rate, 4),
+        }
+
+
+@dataclass(slots=True)
+class QuoteReport:
+    """Outcome of verifying the verbatim passages quoted by the model."""
+
+    answer: str
+    total_quotes: int = 0
+    unverified_quotes: list[str] = field(default_factory=list)
+
+    @property
+    def unverified_rate(self) -> float:
+        if self.total_quotes <= 0:
+            return 0.0
+        return len(self.unverified_quotes) / float(self.total_quotes)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total_quotes": self.total_quotes,
+            "unverified_quotes": list(self.unverified_quotes),
+            "unverified_rate": round(self.unverified_rate, 4),
         }
 
 
@@ -486,6 +513,96 @@ def verify_citations(
         cited_refs=cited,
         phantom_refs=phantom,
         total_citations=total,
+    )
+
+
+def _normalize_for_quote_match(text: str) -> str:
+    """Fold a passage down to what survives a copy out of a PDF.
+
+    Case, accents, hyphenation at line breaks, curly quotes and every run of
+    punctuation or whitespace are noise here: the model reflows the passage it
+    quotes, and comparing raw strings would flag a faithful quote as invented.
+    """
+    folded = unicodedata.normalize("NFKD", str(text or ""))
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    # Words split across a line break in the source PDF ("circo-\nlare").
+    folded = re.sub(r"[-­]\s*\n\s*", "", folded)
+    return " ".join(re.sub(r"[^0-9a-zA-Z]+", " ", folded.lower()).split())
+
+
+def verify_quotes(
+    answer: str,
+    evidence: Sequence[EvidenceItem],
+    min_chars: int = 25,
+) -> QuoteReport:
+    """Check that every «...» passage really occurs in the retrieved evidence.
+
+    WP3 asks the model to open a definitional answer with the author's own
+    wording. That instruction is also an invitation to fabricate one when the
+    corpus has no definition to give, and the citation gate cannot catch it: a
+    made-up quote can carry a perfectly valid ``[S2]``. So the quoted string
+    itself is checked against the text the model was actually shown.
+
+    A quote that fails loses its guillemets and stays in the answer as ordinary
+    prose. Deleting the sentence would remove content that may well be right;
+    what must not survive is the *claim* that those are the source's words.
+
+    Args:
+        answer: The answer, after :func:`verify_citations`.
+        evidence: The index for this turn.
+        min_chars: Below this length (normalised) a quote is a term, not a
+            passage — "«scotta»" is emphasis and has nothing to verify.
+
+    Returns:
+        A report carrying the processed answer and the quote counts.
+    """
+    haystack = " ".join(
+        _normalize_for_quote_match(item.text)
+        for item in evidence
+        if item.kind == "text"
+    )
+    total = 0
+    unverified: list[str] = []
+    replacements: list[tuple[int, int, str]] = []
+
+    for match in _QUOTE_RE.finditer(str(answer or "")):
+        inner = match.group(1).strip()
+        normalized = _normalize_for_quote_match(inner)
+        if len(normalized) < max(1, int(min_chars)):
+            continue
+        total += 1
+        # Models elide the middle of a long passage; each remaining fragment
+        # still has to be verbatim.
+        fragments = [
+            fragment
+            for fragment in (
+                _normalize_for_quote_match(part)
+                for part in re.split(r"\[?(?:\.\.\.|…)\]?", inner)
+            )
+            if len(fragment) >= 12
+        ] or [normalized]
+        if all(fragment in haystack for fragment in fragments):
+            continue
+        unverified.append(inner)
+        replacements.append((match.start(), match.end(), inner))
+
+    processed = str(answer or "")
+    for start, end, replacement in reversed(replacements):
+        processed = processed[:start] + replacement + processed[end:]
+
+    if unverified:
+        logger.warning(
+            "Quote gate: %d/%d quoted passages not found in the evidence, "
+            "guillemets removed (%s)",
+            len(unverified),
+            total,
+            " | ".join(quote[:60] for quote in unverified[:3]),
+        )
+
+    return QuoteReport(
+        answer=processed,
+        total_quotes=total,
+        unverified_quotes=unverified,
     )
 
 
