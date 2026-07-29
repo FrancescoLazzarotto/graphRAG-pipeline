@@ -78,6 +78,18 @@ CITATION_DISPLAY = os.environ.get("DEMO_CITATION_DISPLAY", "label")
 # Steers retrieval only — never a source of facts. Demo-only: every other entry
 # point passes no memory and behaves exactly as before.
 MEMORY = os.environ.get("DEMO_MEMORY", "1") == "1"
+# WP3: on a definitional question the chunk carrying the verbatim definition is
+# ranked first and the answer opens with it between guillemets. The expert's
+# question on SEeD was answered entirely out of triples, which described what
+# SEeD does and never said what it is.
+VERBATIM_DEFINITIONS = os.environ.get("DEMO_VERBATIM_DEFINITIONS", "1") == "1"
+# WP4: MMR plus a per-document cap, so one PDF stops filling the whole context.
+# top_k 5 -> 8 pays for the cap: without it, diversification buys breadth by
+# giving up depth on the document that actually answers.
+TEXT_TOP_K = int(os.environ.get("DEMO_TEXT_TOP_K", "8"))
+TEXT_MMR = os.environ.get("DEMO_TEXT_MMR", "1") == "1"
+TEXT_MMR_LAMBDA = float(os.environ.get("DEMO_TEXT_MMR_LAMBDA", "0.7"))
+TEXT_MAX_PER_DOC = int(os.environ.get("DEMO_TEXT_MAX_PER_DOC", "2"))
 # Separates the prose body from the raw evidence block in stored messages;
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
@@ -157,6 +169,11 @@ def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
         citation_display=CITATION_DISPLAY,
         complexity=COMPLEXITY,
         enforce_language=ENFORCE_LANGUAGE,
+        prefer_verbatim_definitions=VERBATIM_DEFINITIONS,
+        text_retriever_top_k=TEXT_TOP_K,
+        text_retriever_mmr=TEXT_MMR,
+        text_retriever_mmr_lambda=TEXT_MMR_LAMBDA,
+        text_retriever_max_per_doc=TEXT_MAX_PER_DOC,
     )
     config = apply_strategy(base, STRATEGY)
 
