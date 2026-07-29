@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import inspect
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from graphrag.text_rag.manager import TextChunk, TextRAGManager
 
@@ -11,6 +13,19 @@ try:
     import fitz  # type: ignore[import-not-found]
 except ImportError:  # pragma: no cover - runtime dependency check
     fitz = None
+
+@lru_cache(maxsize=8)
+def _accepts_mmr(retriever_type: type) -> bool:
+    """Whether a retriever's ``retrieve_with_scores`` takes ``mmr_lambda``."""
+    try:
+        parameters = inspect.signature(retriever_type.retrieve_with_scores).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return "mmr_lambda" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
+
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _SUPPORTED_TEXT_SUFFIXES = {
@@ -114,8 +129,31 @@ class StandardTextRAGPipeline:
         self,
         query: str,
         top_k: int = 5,
+        mmr_lambda: float | None = None,
+        fetch_k: int | None = None,
     ) -> list[RetrievedTextChunk]:
-        items = self.retriever.retrieve_with_scores(query=query, top_k=top_k)
+        """Retrieve the top chunks for a query.
+
+        Args:
+            query: The retrieval query.
+            top_k: How many chunks to return.
+            mmr_lambda: Diversification factor (WP4), passed through to backends
+                that support it. Ignored by backends that do not — the TF-IDF
+                retriever has no embedding space to diversify in.
+            fetch_k: Candidate pool for MMR.
+
+        Returns:
+            The retrieved chunks with their scores.
+        """
+        kwargs: dict[str, Any] = {}
+        # Asked of the signature rather than discovered by catching TypeError: a
+        # backend raising TypeError for its own reasons would otherwise be
+        # retried silently and look like a backend without MMR.
+        if mmr_lambda is not None and _accepts_mmr(type(self.retriever)):
+            kwargs["mmr_lambda"] = mmr_lambda
+            if fetch_k:
+                kwargs["fetch_k"] = fetch_k
+        items = self.retriever.retrieve_with_scores(query=query, top_k=top_k, **kwargs)
         return [
             RetrievedTextChunk(
                 chunk_id=chunk.chunk_id,
