@@ -23,6 +23,26 @@ class PromptLibrary:
             "translation stay in the original language."
         ),
     }
+    # WP3 inside WP5. The language directive above is repeated as the very last
+    # line of the prompt, which is the position models obey; on the first live
+    # runs it beat the "copy word for word" rule three times out of eight, and
+    # the definitions of SEeD, CEFF and metabolizzazione came back translated —
+    # accurate prose between guillemets that the quote gate then had to strip.
+    # The exception has to travel with the directive that overrides it.
+    QUOTE_LANGUAGE_EXCEPTIONS = {
+        "it": (
+            " Unica eccezione: il passaggio citato fra «...» va copiato nella "
+            "lingua originale della fonte, senza tradurlo, perche' una citazione "
+            "tradotta non e' piu' una citazione; la traduzione va subito dopo, "
+            "fuori dalle virgolette."
+        ),
+        "en": (
+            " One exception: the passage quoted between «...» must be copied in "
+            "the source's original language, untranslated, because a translated "
+            "quotation is no longer a quotation; put your translation "
+            "immediately after, outside the guillemets."
+        ),
+    }
     LANGUAGE_REINFORCEMENTS = {
         "it": (
             "VINCOLO ASSOLUTO: la risposta precedente era nella lingua sbagliata. "
@@ -35,22 +55,33 @@ class PromptLibrary:
     }
 
     @staticmethod
-    def language_directive(language: str, reinforced: bool = False) -> str:
+    def language_directive(
+        language: str,
+        reinforced: bool = False,
+        quote_exception: bool = False,
+    ) -> str:
         """Return the answer-language constraint, written in that language.
 
         Args:
             language: ``"it"`` or ``"en"``; anything else yields an empty string.
             reinforced: Prefix the stronger wording used on the retry that
                 follows a wrong-language answer.
+            quote_exception: Add the WP3 carve-out that keeps a quoted passage
+                in the source's language. Only for definitional questions: on
+                every other answer there is nothing to quote and the clause
+                would just invite the model to leave English prose in.
 
         Returns:
             The directive, or an empty string when the language is unknown.
         """
-        directive = PromptLibrary.LANGUAGE_DIRECTIVES.get(str(language or "").lower())
+        key = str(language or "").lower()
+        directive = PromptLibrary.LANGUAGE_DIRECTIVES.get(key)
         if not directive:
             return ""
+        if quote_exception:
+            directive += PromptLibrary.QUOTE_LANGUAGE_EXCEPTIONS[key]
         if reinforced:
-            return PromptLibrary.LANGUAGE_REINFORCEMENTS[language.lower()] + directive
+            return PromptLibrary.LANGUAGE_REINFORCEMENTS[key] + directive
         return directive
 
     @staticmethod
@@ -58,6 +89,7 @@ class PromptLibrary:
         config: AgentConfig,
         language: str | None = None,
         reinforce_language: bool = False,
+        definitional: bool = False,
     ) -> ChatPromptTemplate:
         """Build the answer prompt.
 
@@ -69,6 +101,8 @@ class PromptLibrary:
                 existing baselines and gold runs must keep seeing.
             reinforce_language: Use the stronger constraint (retry after a
                 wrong-language answer). Ignored when ``language`` is ``None``.
+            definitional: The question asks what something is (WP3). Adds the
+                quote-then-explain structure the expert asked for.
 
         Returns:
             The chat prompt template with ``question`` and ``context`` slots.
@@ -109,7 +143,11 @@ class PromptLibrary:
             "explicit evidence from the context."
         )
         language_block = (
-            PromptLibrary.language_directive(language, reinforced=reinforce_language)
+            PromptLibrary.language_directive(
+                language,
+                reinforced=reinforce_language,
+                quote_exception=definitional,
+            )
             if language
             else ""
         )
@@ -199,12 +237,51 @@ class PromptLibrary:
                 "Avoid a checklist style unless the user explicitly asks for a list. "
             )
 
+        # WP3: a definition *is* its wording, and the graph channel systematically
+        # replaced it with relations — the answer on SEeD was built entirely out
+        # of triples and never said "Systemic Event Design", which was sitting in
+        # the corpus. The "only if it is there" clause is not politeness: the
+        # instruction to quote is also an invitation to invent a quote, and the
+        # quote gate downstream strips the guillemets off anything invented.
+        definition_block = ""
+        if definitional:
+            definition_block = (
+                "This question asks what something is. Open the answer with the "
+                "source's own definition between «guillemets», followed by its "
+                "reference tag — including the expansion of an acronym when the "
+                "source gives one. "
+                # The first live run failed exactly here: the model reordered
+                # the source's words inside the guillemets, which reads as a
+                # quotation and is not one. The gate strips those guillemets, so
+                # the instruction has to be about copying, not about quoting.
+                "Inside the guillemets copy the source word for word, in its "
+                "original order, changing nothing: no reordering, no rewording, "
+                "no shortening except a [...] for an omitted middle. "
+                # The corpus is bilingual and the answer language is pinned to
+                # the question's, so a definition taken from an English document
+                # and answered in Italian can never be verbatim. Quoting in the
+                # original and translating outside the guillemets is the only
+                # form that satisfies both constraints.
+                "This is the one place where you do not translate: copy the "
+                "passage in the language the source wrote it in, then give your "
+                "translation immediately after, outside the guillemets. "
+                "When you cannot copy a passage exactly, or when no passage "
+                "defines the term, use no guillemets at all: say in one sentence "
+                "that the context carries no explicit definition and answer, in "
+                "your own words and as a complete sentence, from what the context "
+                "does say. Never invent a definition to quote. "
+                "Then explain the definition and what it means in practice, and "
+                "only after that use the graph facts, as a complement to the "
+                "definition and never as a replacement for it. "
+            )
+
         human_message_template = (
             f"Target audience: {config.target_audience}.\n"
             f"{tone_map[config.tone]}\n{complexity_map[config.complexity]}\n"
             f"{structured}\n"
             "Question:\n{question}\n\n"
             "Context:\n{context}\n\n"
+            + definition_block
             + depth_block
             + limits_block
             + evidence_block
