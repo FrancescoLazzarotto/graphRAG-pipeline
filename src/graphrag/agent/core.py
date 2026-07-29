@@ -5,11 +5,12 @@ import logging
 import re
 import time
 import uuid
-from typing import Any
+from typing import Any, Sequence
 
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
+from graphrag import questions
 from graphrag.agent.cache import LRUCache
 from graphrag.agent.compression import ContextCompressor
 from graphrag.agent.evidence import (
@@ -22,6 +23,7 @@ from graphrag.agent.evidence import (
     render_grouped_reference_list,
     render_reference_list,
     verify_citations,
+    verify_quotes,
 )
 from graphrag.agent.memory import ConversationMemory, is_follow_up
 from graphrag.config import AgentConfig
@@ -685,6 +687,71 @@ class KGRAGAgent:
 
         return {"relevance": "relevant" if is_relevant else "not_relevant"}
 
+    def _prepend_source_definition(
+        self,
+        answer: str,
+        question: str,
+        evidence: Sequence[EvidenceItem],
+        language: str,
+    ) -> tuple[str, str | None]:
+        """Open a definitional answer with the source's literal definition (WP3).
+
+        The expert asked for "la definizione del progetto e poi la declinazione".
+        The model produces the declination well and the definition as a
+        paraphrase, so the quotation is built here, from the retrieved passage
+        with the highest definitional score: verbatim by construction, tagged
+        with the reference it came from, and in the source's own language.
+
+        Args:
+            answer: The answer after the citation and quote gates.
+            question: The user question.
+            evidence: The index for this turn.
+            language: ``"it"`` or ``"en"``, for the lead-in wording.
+
+        Returns:
+            ``(answer, ref_id)``. ``ref_id`` is the reference the quotation came
+            from, so the caller can add it to the source list, or ``None`` when
+            nothing was prepended.
+        """
+        if not self.config.prefer_verbatim_definitions:
+            return answer, None
+        term = questions.definitional_term(question)
+        if not term:
+            return answer, None
+
+        best_item: EvidenceItem | None = None
+        best_sentence = ""
+        best_score = 0.0
+        for item in evidence:
+            if item.kind != "text":
+                continue
+            sentence = questions.definition_sentence(item.text, term)
+            if not sentence:
+                continue
+            score = questions.definition_score(sentence, term)
+            if score > best_score:
+                best_item, best_sentence, best_score = item, sentence, score
+
+        if best_item is None:
+            logger.info("No verbatim definition of %r in the retrieved passages", term)
+            return answer, None
+
+        # The model sometimes gets there on its own; quoting it twice is worse
+        # than not quoting it at all.
+        normalized = " ".join(best_sentence.lower().split())[:80]
+        if normalized and normalized in " ".join(answer.lower().split()):
+            return answer, None
+
+        lead_in = "Dalla fonte" if language == "it" else "From the source"
+        quotation = f"**{lead_in}:** «{best_sentence}» [{best_item.ref_id}]"
+        logger.info(
+            "Verbatim definition of %r taken from %s (score %.1f)",
+            term,
+            best_item.ref_id,
+            best_score,
+        )
+        return quotation + "\n\n" + answer.lstrip(), best_item.ref_id
+
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
         context = state.get("text_context", "")
@@ -781,6 +848,29 @@ class KGRAGAgent:
                     language=language,
                 )
                 answer = report.answer
+                quote_report = None
+                if self.config.verify_quoted_passages:
+                    # WP3 asks the model to open with the source's own words.
+                    # A fabricated quote can carry a perfectly valid [S2], so
+                    # the citation gate cannot see it: the quoted string itself
+                    # is matched against the passages the model was shown.
+                    quote_report = verify_quotes(answer=answer, evidence=evidence_items)
+                    answer = quote_report.answer
+                # WP3: the source's own definition, extracted here rather than
+                # asked of the model. Three prompt variants failed to make it
+                # copy an English passage into an Italian answer — it translates,
+                # accurately, and a translated quotation is not a quotation.
+                answer, definition_ref = self._prepend_source_definition(
+                    answer=answer,
+                    question=query,
+                    evidence=evidence_items,
+                    language=language,
+                )
+                cited_refs = list(report.cited_refs)
+                if definition_ref and definition_ref not in cited_refs:
+                    # The quotation is a citation: without this the passage it
+                    # came from can be missing from the source list under it.
+                    cited_refs.insert(0, definition_ref)
                 if self.config.citation_display == "label":
                     # Reader-facing rendering: ids for the gate, document and
                     # page for the person reading the answer. Grouping the
@@ -789,13 +879,13 @@ class KGRAGAgent:
                     answer = render_display_citations(answer, evidence_items)
                     references = render_grouped_reference_list(
                         evidence=evidence_items,
-                        cited_refs=report.cited_refs,
+                        cited_refs=cited_refs,
                         language=language,
                     )
                 else:
                     references = render_reference_list(
                         evidence=evidence_items,
-                        cited_refs=report.cited_refs,
+                        cited_refs=cited_refs,
                         language=language,
                     )
                 if references:
@@ -806,7 +896,10 @@ class KGRAGAgent:
                     len(report.cited_refs),
                     len(report.phantom_refs),
                 )
-                return {"answer": answer, "citation_report": report.as_dict()}
+                generated = {"answer": answer, "citation_report": report.as_dict()}
+                if quote_report is not None and quote_report.total_quotes:
+                    generated["quote_report"] = quote_report.as_dict()
+                return generated
 
             verification_section = self._build_verification_section(
                 triples=state.get("kg_triples", []) or [],
