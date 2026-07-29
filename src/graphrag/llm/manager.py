@@ -15,6 +15,7 @@ from typing import Any
 
 import torch
 
+from graphrag import questions
 from graphrag.config import AgentConfig, DEFAULT_MODEL_ID
 from graphrag.llm.prompts import PromptLibrary
 from graphrag.llm.refusal import looks_like_refusal
@@ -523,9 +524,18 @@ class LLMManager:
         # PromptLibrary is the single source of truth for prompts: both the
         # vLLM and local HF backends must see the same prompt so their answers
         # stay comparable across experiments.
+        # WP3: detected on the question, not asked of the model — one regex
+        # instead of a classifier call on every turn.
+        definitional = config.prefer_verbatim_definitions and questions.is_definitional(
+            query
+        )
+        if definitional:
+            logger.info("Definitional question detected; asking for a verbatim opening")
+
         prompt = PromptLibrary.answer_prompt(
             config,
             language=response_language if config.enforce_language else None,
+            definitional=definitional,
         )
         rendered = prompt.invoke(
             {
@@ -624,7 +634,13 @@ class LLMManager:
         )
         try:
             retry_prompt = PromptLibrary.answer_prompt(
-                config, language=target_language, reinforce_language=True
+                config,
+                language=target_language,
+                reinforce_language=True,
+                definitional=(
+                    config.prefer_verbatim_definitions
+                    and questions.is_definitional(query)
+                ),
             ).invoke({"question": query, "context": context})
             output = self._invoke_with_retry(model, retry_prompt)
             retried = str(
@@ -692,8 +708,9 @@ class LLMManager:
         """Detect the language of generated prose.
 
         Strips what carries no language signal but plenty of foreign tokens:
-        reference tags and the trailing source list, whose document titles are
-        mostly English even under an Italian answer.
+        reference tags, the trailing source list whose document titles are
+        mostly English even under an Italian answer, and (WP3) verbatim
+        quotations, which are deliberately left in the source's language.
 
         Args:
             text: The generated answer.
@@ -703,6 +720,7 @@ class LLMManager:
         """
         body = re.split(r"\n\s*(?:Fonti|Sources)\s*:", str(text or ""))[0]
         body = re.sub(r"\[[STst]\s*\d+(?:\s*,\s*[STst]\s*\d+)*\]", " ", body)
+        body = re.sub(r"«[^»]*»", " ", body)
         return LLMManager._detect_query_language(body)
 
     @staticmethod
