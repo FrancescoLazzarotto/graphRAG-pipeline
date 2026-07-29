@@ -106,8 +106,36 @@ class AgentConfig:
     min_subgraph_triples: int = 10
     max_hops: int = 4
     include_triple_metadata: bool = True
+    # WP3 (docs/demo_quality_plan_2026-07.md §5): definitional questions get the
+    # chunk carrying the verbatim definition ranked first and an answer that
+    # quotes before it paraphrases. Off by default so gold runs and experiment
+    # baselines keep the previous ranking and prompt.
+    prefer_verbatim_definitions: bool = False
+    # Weight of the definitional signal when reordering already-retrieved
+    # chunks. It reorders, it never fetches: the worst case is the order the
+    # retriever would have produced anyway.
+    definition_boost_weight: float = 1.0
+    # Checks that every «...» passage occurs in the retrieved text, and drops
+    # the guillemets when it does not. Independent of the WP3 prompt because a
+    # model can quote unprompted, and a fabricated quote carrying a valid [S2]
+    # is the one failure the citation gate cannot see.
+    verify_quoted_passages: bool = True
     use_text_retriever: bool = False
     text_retriever_top_k: int = 5
+    # WP4 (docs/demo_quality_plan_2026-07.md §6): source diversification.
+    # MMR trades a little query similarity for coverage; the per-document cap
+    # is the part that actually stops one PDF from filling the context, since
+    # two pages of the same document can be far apart in embedding space and
+    # still both be selected. Both off by default.
+    text_retriever_mmr: bool = False
+    text_retriever_mmr_lambda: float = 0.7
+    # 0 disables the cap. Enumerative questions get twice this budget: their
+    # answer is usually one list on contiguous pages of a single document, and
+    # capping that document truncates the list.
+    text_retriever_max_per_doc: int = 0
+    # Candidate pool the cap and the definitional boost choose from. 0 means
+    # ``4 * text_retriever_top_k``.
+    text_retriever_fetch_k: int = 0
     text_retriever_backend: str = "tfidf"  # "tfidf" | "dense"
     dense_embedding_model: str = "intfloat/multilingual-e5-base"
     dense_query_prefix: str = "query: "
