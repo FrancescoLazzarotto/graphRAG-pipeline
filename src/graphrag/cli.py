@@ -94,6 +94,37 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--prefer-verbatim-definitions",
+        action="store_true",
+        help=(
+            "On a definitional question, rank the passage that defines the term "
+            "first and open the answer with it, quoted between guillemets"
+        ),
+    )
+    parser.add_argument(
+        "--text-retriever-mmr",
+        action="store_true",
+        help=(
+            "Select text chunks with Maximal Marginal Relevance instead of pure "
+            "top-k, trading some query similarity for source coverage"
+        ),
+    )
+    parser.add_argument(
+        "--text-retriever-mmr-lambda",
+        type=float,
+        default=0.7,
+        help="MMR relevance/diversity balance: 1.0 is pure similarity",
+    )
+    parser.add_argument(
+        "--text-retriever-max-per-doc",
+        type=int,
+        default=0,
+        help=(
+            "Cap on chunks contributed by one document (0 disables it); "
+            "enumerative questions get twice this budget"
+        ),
+    )
+    parser.add_argument(
         "--complexity",
         choices=("low", "medium", "high"),
         default="medium",
@@ -224,6 +255,10 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         citation_display=getattr(args, "citation_display", "id"),
         complexity=OUTPUT_COMPLEXITY(getattr(args, "complexity", "medium")),
         enforce_language=getattr(args, "enforce_language", False),
+        prefer_verbatim_definitions=getattr(args, "prefer_verbatim_definitions", False),
+        text_retriever_mmr=getattr(args, "text_retriever_mmr", False),
+        text_retriever_mmr_lambda=getattr(args, "text_retriever_mmr_lambda", 0.7),
+        text_retriever_max_per_doc=getattr(args, "text_retriever_max_per_doc", 0),
     )
 
 
