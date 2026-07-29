@@ -198,12 +198,40 @@ class DenseTextRAGManager:
         return len(chunk_list)
 
     def retrieve_with_scores(
-        self, query: str, top_k: int = 5
+        self,
+        query: str,
+        top_k: int = 5,
+        mmr_lambda: float | None = None,
+        fetch_k: int | None = None,
     ) -> list[tuple[TextChunk, float]]:
+        """Retrieve the top chunks, optionally diversified with MMR.
+
+        Args:
+            query: The retrieval query.
+            top_k: How many chunks to return.
+            mmr_lambda: ``None`` keeps pure similarity ranking, which is what
+                every baseline before WP4 measured. A value in ``[0, 1]``
+                switches to Maximal Marginal Relevance: 1.0 is again pure
+                similarity, lower values trade similarity for coverage.
+            fetch_k: Candidate pool MMR selects from. Defaults to ``4 * top_k``.
+
+        Returns:
+            ``(chunk, score)`` pairs, most relevant first.
+        """
         if self._store is None or top_k <= 0:
             return []
 
-        hits = self._store.similarity_search_with_score(query, k=top_k)
+        if mmr_lambda is None:
+            hits = self._store.similarity_search_with_score(query, k=top_k)
+        else:
+            pool = max(int(fetch_k or 0), top_k * 4)
+            embedding = self._get_embeddings().embed_query(query)
+            hits = self._store.max_marginal_relevance_search_with_score_by_vector(
+                embedding,
+                k=top_k,
+                fetch_k=pool,
+                lambda_mult=max(0.0, min(1.0, float(mmr_lambda))),
+            )
         # MAX_INNER_PRODUCT: score is inner product (== cosine for normalised embs),
         # higher means more similar. Results already ordered descending by FAISS.
         result: list[tuple[TextChunk, float]] = []
@@ -218,8 +246,19 @@ class DenseTextRAGManager:
 
         return result
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[TextChunk]:
-        return [chunk for chunk, _ in self.retrieve_with_scores(query=query, top_k=top_k)]
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 5,
+        mmr_lambda: float | None = None,
+        fetch_k: int | None = None,
+    ) -> list[TextChunk]:
+        return [
+            chunk
+            for chunk, _ in self.retrieve_with_scores(
+                query=query, top_k=top_k, mmr_lambda=mmr_lambda, fetch_k=fetch_k
+            )
+        ]
 
     def add_documents(
         self, documents: Iterable[str], source_prefix: str = "doc"
