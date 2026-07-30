@@ -102,6 +102,57 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--vector-retrieval",
+        action="store_true",
+        help=(
+            "Add the multilingual vector channel beside the lexical one, so an "
+            "English question can reach an Italian node name. Needs "
+            "scripts/kg_vector_index.py and a running embedding endpoint"
+        ),
+    )
+    parser.add_argument(
+        "--vector-index",
+        default="node_embedding",
+        help="Neo4j vector index name",
+    )
+    parser.add_argument(
+        "--vector-nodes-limit",
+        type=int,
+        default=10,
+        help="Nodes taken from the vector channel per query",
+    )
+    parser.add_argument(
+        "--vector-triples-limit",
+        type=int,
+        default=10,
+        help="Triples taken from the vector channel per query",
+    )
+    parser.add_argument(
+        "--seed-from-retrieved",
+        action="store_true",
+        help=(
+            "Anchor the neighbour, subgraph and shortest-path channels on node "
+            "names retrieval returned instead of on raw question words"
+        ),
+    )
+    parser.add_argument(
+        "--allow-parametric-fallback",
+        action="store_true",
+        help=(
+            "Let the answer use the model's own knowledge where the retrieved "
+            "evidence does not cover the question, marked '(not in the "
+            "retrieved evidence)' so grounded and ungrounded stay separable"
+        ),
+    )
+    parser.add_argument(
+        "--drop-predicates",
+        default="",
+        help=(
+            "Comma-separated predicates to remove from retrieved triples, e.g. "
+            "RELATED_TO,PUBLISHED,AUTHORED_BY"
+        ),
+    )
+    parser.add_argument(
         "--text-retriever-mmr",
         action="store_true",
         help=(
@@ -259,6 +310,17 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         text_retriever_mmr=getattr(args, "text_retriever_mmr", False),
         text_retriever_mmr_lambda=getattr(args, "text_retriever_mmr_lambda", 0.7),
         text_retriever_max_per_doc=getattr(args, "text_retriever_max_per_doc", 0),
+        vector_retrieval=getattr(args, "vector_retrieval", False),
+        vector_index=getattr(args, "vector_index", "node_embedding"),
+        vector_nodes_limit=getattr(args, "vector_nodes_limit", 10),
+        vector_triples_limit=getattr(args, "vector_triples_limit", 10),
+        seed_from_retrieved=getattr(args, "seed_from_retrieved", False),
+        allow_parametric_fallback=getattr(args, "allow_parametric_fallback", False),
+        drop_predicates=tuple(
+            p.strip()
+            for p in getattr(args, "drop_predicates", "").split(",")
+            if p.strip()
+        ),
     )
 
 
