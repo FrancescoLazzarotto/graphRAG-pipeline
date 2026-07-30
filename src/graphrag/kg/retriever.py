@@ -5,7 +5,7 @@ import math
 import re
 from typing import Any, Sequence
 
-from graphrag import questions
+from graphrag import embeddings, questions
 from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
@@ -92,6 +92,8 @@ class KGRetriever:
         self.kg_store = kg_store
         self.config = config
         self.text_pipeline = text_pipeline
+        self._token_df_cache: tuple[dict[str, int], int] | None = None
+        self._query_vector_cache: tuple[str, list[float]] | None = None
         if self.config.use_text_retriever and self.text_pipeline is None:
             # Without this warning a "hybrid"/"text_only" run silently degrades
             # to KG-only and the experiment looks valid while measuring the
@@ -114,14 +116,20 @@ class KGRetriever:
         subgraph: list[KGTriple] = []
         shortest_path: list[KGTriple] = []
 
-        if self.config.include_nodes and search_terms:
+        query_vector = self._query_vector(query_text)
+
+        if self.config.include_nodes and (search_terms or query_vector):
             nodes = self._collect_nodes(
-                search_terms=search_terms, limit=self.config.nodes_limit
+                search_terms=search_terms,
+                limit=self.config.nodes_limit,
+                query_vector=query_vector,
             )
 
-        if self.config.include_triples and search_terms:
+        if self.config.include_triples and (search_terms or query_vector):
             triples = self._collect_triples(
-                search_terms=search_terms, limit=self.config.triples_limit
+                search_terms=search_terms,
+                limit=self.config.triples_limit,
+                query_vector=query_vector,
             )
 
         seed_entities = self._seed_entities(
@@ -130,7 +138,21 @@ class KGRetriever:
             triples=triples,
             search_terms=search_terms,
         )
-        resolved_entity = configured_entity or (seed_entities[0] if seed_entities else "")
+        # Anchors for the neighbour, subgraph and shortest-path channels. Those
+        # three start from a relationship scan filtered on the seed, so a seed
+        # that matches no node costs a full graph walk and returns nothing —
+        # measured at 9.4 s, 19.8 s and 5.1 s on one gold question whose anchor
+        # was the raw phrase "C's of the Circular Economy for Food". Restricting
+        # the anchor to names retrieval actually returned removes the cost
+        # without removing any evidence: a seed that matches no node could not
+        # have produced any.
+        anchors = (
+            self._graph_anchors(nodes, triples)
+            if self.config.verify_anchor_exists
+            else [self._sanitize_entity_name(seed) for seed in seed_entities]
+        )
+        anchors = [anchor for anchor in anchors if anchor]
+        resolved_entity = configured_entity or (anchors[0] if anchors else "")
         resolved_entity = self._sanitize_entity_name(resolved_entity)
 
         if self.config.include_neighbors and resolved_entity:
@@ -158,10 +180,10 @@ class KGRetriever:
 
         if self.config.include_shortest_path:
             entity_a = self._sanitize_entity_name(self.config.entity_a or "") or (
-                seed_entities[0] if len(seed_entities) > 0 else None
+                anchors[0] if len(anchors) > 0 else None
             )
             entity_b = self._sanitize_entity_name(self.config.entity_b or "") or (
-                seed_entities[1] if len(seed_entities) > 1 else None
+                anchors[1] if len(anchors) > 1 else None
             )
             if entity_a and entity_b and entity_a != entity_b:
                 shortest_path = self.kg_store.get_shortest_path(
@@ -169,6 +191,10 @@ class KGRetriever:
                     entity_b=entity_b,
                     max_depth=self.config.max_depth,
                 )
+
+        triples = self._drop_empty_predicates(triples)
+        subgraph = self._drop_empty_predicates(subgraph)
+        shortest_path = self._drop_empty_predicates(shortest_path)
 
         if self.config.rank_triples:
             triples = self._rank_triples(triples, query_text)
@@ -575,23 +601,35 @@ class KGRetriever:
         if configured_entity:
             seeds.append(configured_entity)
 
-        seeds.extend(search_terms)
-
+        from_graph: list[str] = []
         for node in nodes:
             # prefer elementId/node_id when available (more reliable for exact matching)
             node_id = str(node.get("node_id", "") or "").strip()
             if node_id:
-                seeds.append(node_id)
+                from_graph.append(node_id)
                 continue
             text = node.get("text", "").strip()
             if text:
-                seeds.append(text)
+                from_graph.append(text)
 
         for triple in triples:
             for candidate in (triple.get("subject", ""), triple.get("object", "")):
                 candidate = candidate.strip()
                 if candidate:
-                    seeds.append(candidate)
+                    from_graph.append(candidate)
+
+        if self.config.seed_from_retrieved:
+            # seeds[0] becomes the anchor for neighbors, subgraph and shortest
+            # path. Search terms are raw question words: anchoring on them asked
+            # the graph for neighbours of "valuable" or "implementation", which
+            # match no node, so those three channels returned nothing while
+            # looking like they had run. Nodes the index actually matched are
+            # real node names, already ordered by score.
+            seeds.extend(from_graph)
+            seeds.extend(search_terms)
+        else:
+            seeds.extend(search_terms)
+            seeds.extend(from_graph)
 
         if not seeds and query_text:
             seeds.append(query_text)
@@ -634,12 +672,79 @@ class KGRetriever:
                 and tok.lower() not in _QUESTION_STOPWORDS
                 and tok.lower() not in covered
             ]
+            if self.config.lexical_specificity:
+                keywords = self._rank_keywords_by_specificity(keywords)
             terms.extend(keywords[:_MAX_KEYWORD_TERMS])
 
         if not terms and query_text:
             terms.append(query_text)
 
         return self._unique_values(terms)
+
+    def _token_df(self) -> tuple[dict[str, int], int]:
+        """Node-name document frequency, loaded once and reused."""
+        if self._token_df_cache is None:
+            try:
+                self._token_df_cache = self.kg_store.token_document_frequency(
+                    cache_path=self.config.lexical_df_cache_path or None
+                )
+            except Exception as exc:  # noqa: BLE001 - specificity is optional
+                # Falling back to the flat query is always safe: it is what the
+                # retriever did before this feature existed.
+                logger.warning(
+                    "token document frequency unavailable (%s): "
+                    "lexical specificity disabled for this session",
+                    exc,
+                )
+                self._token_df_cache = ({}, 0)
+        return self._token_df_cache
+
+    def _rank_keywords_by_specificity(self, keywords: Sequence[str]) -> list[str]:
+        """Drop keywords that match too many node names, rarest first.
+
+        Without this the ``_MAX_KEYWORD_TERMS`` cap keeps whichever tokens the
+        question happens to state first, which is word order, not relevance.
+        """
+        token_df, total = self._token_df()
+        if not token_df or total <= 0:
+            return list(keywords)
+
+        ceiling = max(1, int(total * self.config.lexical_df_max_ratio))
+        scored: list[tuple[int, int, str]] = []
+        for position, keyword in enumerate(keywords):
+            df = token_df.get(keyword.lower(), 0)
+            if df > ceiling:
+                continue
+            # Unknown tokens (df 0) are not evidence of specificity: they match
+            # nothing on their own and only matter through the index's fuzzy
+            # behaviour, so they rank after tokens that do occur.
+            scored.append((df if df > 0 else total + 1, position, keyword))
+
+        scored.sort()
+        return [keyword for _, _, keyword in scored]
+
+    def _term_boosts(self, terms: Sequence[str]) -> dict[str, float]:
+        """Lucene weights: phrases first, then single tokens by rarity."""
+        if not self.config.lexical_specificity:
+            return {}
+        token_df, total = self._token_df()
+        boosts: dict[str, float] = {}
+        for term in terms:
+            if " " in term.strip():
+                boosts[term] = self.config.lexical_phrase_boost
+                continue
+            if not token_df or total <= 0:
+                continue
+            df = token_df.get(term.lower(), 0)
+            if df <= 0:
+                continue
+            # log10(total/df) lands around 1 for a token in ~10 % of names and
+            # around 3 for one in ~0.1 %, which is the range worth separating.
+            rarity = math.log10(total / df)
+            boosts[term] = min(
+                self.config.lexical_max_token_boost, max(1.0, rarity)
+            )
+        return boosts
 
     @staticmethod
     def _trim_stopword_edges(phrase: str) -> str:
@@ -690,18 +795,107 @@ class KGRetriever:
 
         return self._unique_values(candidates)
 
-    def _collect_nodes(self, search_terms: Sequence[str], limit: int) -> list[KGNode]:
+    def _graph_anchors(
+        self, nodes: Sequence[KGNode], triples: Sequence[KGTriple]
+    ) -> list[str]:
+        """Anchor candidates guaranteed to exist, best first.
+
+        Node names come from the index and triple endpoints from real edges, so
+        every candidate here matches a node without a verification query.
+        """
+        anchors: list[str] = []
+        for node in nodes:
+            node_id = str(node.get("node_id", "") or "").strip()
+            anchors.append(node_id or str(node.get("text", "") or "").strip())
+        for triple in triples:
+            # elementId over name on purpose: matching a seed by name compares
+            # six lowercased properties on every candidate, which is a scan
+            # (0.92 s for neighbours, 2.29 s for a 1-hop subgraph), while the
+            # id lookup is direct (0.04 s / 0.05 s). Strategies with
+            # include_nodes off have only triples to anchor on, so without this
+            # they pay the scan on every question.
+            for id_key, name_key in (("subject_id", "subject"), ("object_id", "object")):
+                candidate = str(triple.get(id_key, "") or "").strip()
+                if not candidate:
+                    candidate = str(triple.get(name_key, "") or "").strip()
+                if candidate:
+                    anchors.append(candidate)
+        return self._unique_values(anchors)
+
+    def _drop_empty_predicates(self, triples: Sequence[KGTriple]) -> list[KGTriple]:
+        """Remove triples whose predicate cannot support an answer.
+
+        Filtering here rather than in Cypher keeps the index lookup untouched:
+        a dropped triple still counted toward the seed's score, so the ranking
+        of what remains is the ranking the retriever intended.
+        """
+        dropped = {p.strip().upper() for p in self.config.drop_predicates if p.strip()}
+        if not dropped:
+            return list(triples)
+        return [
+            triple
+            for triple in triples
+            if str(triple.get("predicate", "")).strip().upper() not in dropped
+        ]
+
+    def _query_vector(self, query_text: str) -> list[float]:
+        """Embed the question once per retrieval, or return [] if unavailable."""
+        if not self.config.vector_retrieval or not query_text:
+            return []
+        if self._query_vector_cache is not None:
+            cached_text, cached_vec = self._query_vector_cache
+            if cached_text == query_text:
+                return cached_vec
+        try:
+            vector = embeddings.encode_query(query_text)
+        except embeddings.EmbeddingUnavailable as exc:
+            # Lexical retrieval still works, so a missing encoder degrades the
+            # result instead of failing the run — but it must be visible, since
+            # the cross-lingual half is where most of the recall lives.
+            logger.warning(
+                "embedding endpoint unavailable (%s): vector channel skipped, "
+                "retrieval is lexical-only for this query",
+                exc,
+            )
+            vector = []
+        self._query_vector_cache = (query_text, vector)
+        return vector
+
+    def _collect_nodes(
+        self,
+        search_terms: Sequence[str],
+        limit: int,
+        query_vector: Sequence[float] = (),
+    ) -> list[KGNode]:
         if limit <= 0:
             return []
 
         collected: list[KGNode] = []
         seen: set[str] = set()
 
+        # Vector matches go first: they are the only channel that can cross the
+        # language gap, and the lexical channel below fills the rest of the
+        # budget with exact surface matches.
+        if query_vector:
+            for row in self.kg_store.vector_search_nodes(
+                vector=query_vector,
+                limit=min(self.config.vector_nodes_limit, limit),
+                index=self.config.vector_index,
+                labels=self.config.labels or None,
+                min_score=self.config.vector_min_score,
+            ):
+                key = self._node_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+
         # One indexed query for all terms; rows arrive best-score first.
         indexed = self.kg_store.fulltext_search_nodes(
             terms=search_terms,
             labels=self.config.labels or None,
             limit=limit,
+            boosts=self._term_boosts(search_terms),
         )
         if indexed is not None:
             for row in indexed:
@@ -733,7 +927,10 @@ class KGRetriever:
         return collected
 
     def _collect_triples(
-        self, search_terms: Sequence[str], limit: int
+        self,
+        search_terms: Sequence[str],
+        limit: int,
+        query_vector: Sequence[float] = (),
     ) -> list[KGTriple]:
         if limit <= 0:
             return []
@@ -741,12 +938,28 @@ class KGRetriever:
         collected: list[KGTriple] = []
         seen: set[tuple[str, str, str]] = set()
 
+        if query_vector:
+            for row in self.kg_store.vector_search_triples(
+                vector=query_vector,
+                limit=min(self.config.vector_triples_limit, limit),
+                seed_limit=self.config.vector_seed_limit,
+                index=self.config.vector_index,
+                labels=self.config.labels or None,
+                relationship_types=self.config.relationship_types or None,
+            ):
+                key = self._triple_key(row)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+
         # One indexed query for all terms; rows arrive best-seed-score first.
         indexed = self.kg_store.fulltext_search_triples(
             terms=search_terms,
             labels=self.config.labels or None,
             relationship_types=self.config.relationship_types or None,
             limit=limit,
+            boosts=self._term_boosts(search_terms),
         )
         if indexed is not None:
             for row in indexed:
