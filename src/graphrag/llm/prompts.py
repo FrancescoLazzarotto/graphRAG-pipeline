@@ -130,11 +130,39 @@ class PromptLibrary:
             )
 
         # System message with explicit response rules
+        if config.allow_parametric_fallback:
+            # P2 (exp_results/KG_VS_RETRIEVAL.md): "ONLY the provided context"
+            # is what makes graph context actively harmful. Retrieval misses
+            # ~60 % of the expected entities, and on those misses the model
+            # answers correctly 33 % of the time with text context but only
+            # 19 % with graph context — 55 triples labelled "knowledge graph
+            # facts", carrying confidence scores and page citations, read as
+            # authoritative enough to override what the model already knew. The
+            # campaign measured that closing off 12 answers the same model got
+            # right with no context at all.
+            # The permission is only safe with the marking requirement: an
+            # unmarked fallback is indistinguishable from a hallucination, and
+            # the whole groundedness measurement depends on telling them apart.
+            grounding_rule = (
+                "You are a knowledge graph assistant. Ground the answer in the "
+                "provided context whenever the context covers the question. "
+                "The context is retrieved automatically and is often incomplete: "
+                "when it does not cover the question, you may answer from your "
+                "own knowledge of the domain instead of refusing. "
+                "Never present the two as the same: mark every statement that "
+                "the context does not support with '(not in the retrieved "
+                "evidence)'. If you know nothing reliable either, say so plainly "
+                "rather than inventing. "
+            )
+        else:
+            grounding_rule = (
+                "You are a knowledge graph assistant. Answer using ONLY the provided context. "
+                "If context does not answer the question, state this plainly. "
+                "Do not invent or generate content outside the context. "
+            )
         system_message = (
-            "You are a knowledge graph assistant. Answer using ONLY the provided context. "
-            "If context does not answer the question, state this plainly. "
-            "Do not invent or generate content outside the context. "
-            "Preserve all entity names exactly as given. "
+            grounding_rule
+            + "Preserve all entity names exactly as given. "
             "Respond in the same language as the question (English or Italian), "
             "even when the context is written in the other language: translate "
             "the evidence into the question's language, never switch language. "
