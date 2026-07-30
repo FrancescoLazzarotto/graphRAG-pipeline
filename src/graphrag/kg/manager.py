@@ -57,6 +57,85 @@ class KnowledgeGraphManager:
         ).strip()
         # None = not probed yet; False = index missing, use the CONTAINS scan.
         self._fulltext_available: bool | None = None
+        self._token_df: dict[str, int] | None = None
+        self._token_df_total: int = 0
+
+    # ------------------------------------------------------------------ #
+    # term specificity
+    # ------------------------------------------------------------------ #
+
+    _DF_TOKEN_RE = re.compile(r"\w+", flags=re.UNICODE)
+
+    def token_document_frequency(
+        self, cache_path: str | Path | None = None
+    ) -> tuple[dict[str, int], int]:
+        """How many node names contain each token, plus the node total.
+
+        The full-text query is a flat OR of the query's terms, so a token like
+        "framework" that occurs in hundreds of node names outvotes the specific
+        phrase simply by matching more nodes. Knowing each token's document
+        frequency is what lets the retriever demote it (see
+        ``AgentConfig.lexical_specificity``).
+
+        Computed once per process from all node names and cached on disk, keyed
+        by the node count so a changed graph invalidates it.
+
+        Args:
+            cache_path: JSON cache location. ``None`` disables the disk cache.
+
+        Returns:
+            ``(token -> number of node names containing it, node count)``.
+        """
+        if self._token_df is not None:
+            return self._token_df, self._token_df_total
+
+        total = 0
+        rows = self.run_query(
+            "MATCH (n) WHERE n.name IS NOT NULL RETURN count(n) AS total"
+        )
+        if rows:
+            total = int(rows[0].get("total") or 0)
+
+        path = Path(cache_path) if cache_path else None
+        if path and path.exists():
+            try:
+                cached = json.loads(path.read_text(encoding="utf-8"))
+                if int(cached.get("node_count", -1)) == total:
+                    self._token_df = {
+                        str(k): int(v) for k, v in cached.get("token_df", {}).items()
+                    }
+                    self._token_df_total = total
+                    return self._token_df, total
+                logger.info(
+                    "token DF cache stale (%s nodes cached, %s now) — recomputing",
+                    cached.get("node_count"),
+                    total,
+                )
+            except (OSError, ValueError, TypeError) as exc:
+                logger.warning("unreadable token DF cache %s (%s) — recomputing", path, exc)
+
+        counts: dict[str, int] = {}
+        for row in self.run_query(
+            "MATCH (n) WHERE n.name IS NOT NULL RETURN toLower(toString(n.name)) AS name"
+        ):
+            name = row.get("name") or ""
+            # A token repeated inside one name still counts once: this is a
+            # document frequency, not a term frequency.
+            for token in set(self._DF_TOKEN_RE.findall(name)):
+                counts[token] = counts.get(token, 0) + 1
+
+        self._token_df = counts
+        self._token_df_total = total
+        if path:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(
+                    json.dumps({"node_count": total, "token_df": counts}),
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                logger.warning("could not write token DF cache %s (%s)", path, exc)
+        return counts, total
 
     def _build_graph(self) -> Neo4jGraph:
         return Neo4jGraph(
