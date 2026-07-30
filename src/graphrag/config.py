@@ -143,6 +143,73 @@ class AgentConfig:
     dense_normalize: bool = True
     dense_device: str = "auto"  # "auto" | "cpu" | "cuda"
     vector_index_dir: str = "artifacts/vector_index"
+    # P1 (exp_results/KG_VS_RETRIEVAL.md): the full-text query is a flat OR of
+    # every term the question yields, all weighted alike, so a generic token
+    # outvotes the specific phrase by matching more nodes. "What are the three
+    # C's of the Circular Economy for Food framework?" retrieved 41 nodes, all
+    # "…framework" variants, and none of the three C's — which are in the graph.
+    # Enabling this drops query tokens whose node-name document frequency
+    # exceeds the ratio below and boosts the surviving terms by rarity.
+    # Off by default so existing baselines keep the previous term selection.
+    lexical_specificity: bool = False
+    # A token in more than this share of node names carries no discriminative
+    # power. 0.01 of 14 520 nodes ≈ 145 names; "framework" is well above it.
+    lexical_df_max_ratio: float = 0.01
+    # Multi-word candidates are the reliable anchors, single tokens the risky
+    # ones: weight the phrase query so it survives alongside common tokens.
+    lexical_phrase_boost: float = 4.0
+    # Ceiling on the rarity boost given to a surviving single token, so one
+    # hapax cannot monopolise the result set.
+    lexical_max_token_boost: float = 3.0
+    lexical_df_cache_path: str = "artifacts/kg_token_df.json"
+    # P1, second half: the anchor for the neighbour, subgraph and shortest-path
+    # channels was the first *search term* — a raw word from the question, like
+    # "valuable" or "implementation", which matches no node. Enabling this ranks
+    # node names the index actually returned ahead of query words. Off by
+    # default because it changes which subgraph those three channels expand.
+    seed_from_retrieved: bool = False
+    # P0 (exp_results/KG_VS_RETRIEVAL.md): retrieval is purely lexical, but the
+    # graph is largely Italian and the questions are English — 44 % of the gold
+    # entities exist in the graph *only* under an Italian surface form, so no
+    # lexical query can reach them. A multilingual encoder puts both in one
+    # space: "the three C's of the Circular Economy for Food" retrieves the node
+    # "3 C dell'Economia Circolare per l'Alimentazione". The vector channel is
+    # added to the lexical one, never replaces it — exact surface matches are
+    # still the most precise signal available.
+    # Requires scripts/kg_vector_index.py and a running embedding endpoint; off
+    # by default, and degrades to lexical-only if either is missing.
+    vector_retrieval: bool = False
+    vector_index: str = "node_embedding"
+    # Nodes pulled from the vector channel per query. Kept near nodes_limit so
+    # the two channels contribute comparably instead of one drowning the other.
+    vector_nodes_limit: int = 10
+    vector_triples_limit: int = 10
+    # Nearest nodes expanded into triples. Small on purpose: the graph is 72 %
+    # leaves, so expanding many weak seeds adds edges, not answers.
+    vector_seed_limit: int = 5
+    # Cosine floor. e5 scores short names in a narrow high band, so a hard
+    # threshold mostly removes the tail; ranking does the real work.
+    vector_min_score: float = 0.0
+    # P2 (exp_results/KG_VS_RETRIEVAL.md): the answer prompt's "use ONLY the
+    # provided context" suppresses the model's own knowledge even when
+    # retrieval missed, which the campaign measured as a net loss — graph
+    # context destroyed 12 answers Qwen2.5-32B produced correctly with no
+    # context at all. Enabling this authorises a fallback, but only marked as
+    # such, so groundedness stays measurable. Off by default: it changes the
+    # rendered prompt, so baselines opt in explicitly.
+    allow_parametric_fallback: bool = False
+    # Predicates that carry no answerable content. RELATED_TO alone is 20 % of
+    # the graph's edges and 19 % of what retrieval returns; the bibliographic
+    # pair is another 17 %. Dropping them frees context budget for triples that
+    # can actually support a claim. Empty tuple keeps every predicate.
+    drop_predicates: tuple[str, ...] = ()
+    # Check that the anchor matches a node before expanding neighbours, the
+    # subgraph and the shortest path. Those three channels each scan the graph
+    # when the anchor matches nothing, which on the thesis gold set cost up to
+    # 34 s on a single question and returned no evidence at all. On by default:
+    # it changes latency, never the evidence, since a seed that matches no node
+    # could not have produced any.
+    verify_anchor_exists: bool = True
 
     def __post_init__(self) -> None:
         if self.rank_triples:
