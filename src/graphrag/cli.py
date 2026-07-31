@@ -145,6 +145,26 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--focused-answer",
+        action="store_true",
+        help=(
+            "Ask the model to name only what answers the question, not every "
+            "related concept the retrieved evidence happens to carry"
+        ),
+    )
+    parser.add_argument(
+        "--subgraph-seed-count",
+        type=int,
+        default=1,
+        help="How many anchors the subgraph channel expands from (1 = best only)",
+    )
+    parser.add_argument(
+        "--evidence-max-triple-items",
+        type=int,
+        default=30,
+        help="Cap on numbered triple evidence blocks placed in the context",
+    )
+    parser.add_argument(
         "--drop-predicates",
         default="",
         help=(
@@ -316,6 +336,9 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         vector_triples_limit=getattr(args, "vector_triples_limit", 10),
         seed_from_retrieved=getattr(args, "seed_from_retrieved", False),
         allow_parametric_fallback=getattr(args, "allow_parametric_fallback", False),
+        focused_answer=getattr(args, "focused_answer", False),
+        subgraph_seed_count=getattr(args, "subgraph_seed_count", 1),
+        evidence_max_triple_items=getattr(args, "evidence_max_triple_items", 30),
         drop_predicates=tuple(
             p.strip()
             for p in getattr(args, "drop_predicates", "").split(",")
