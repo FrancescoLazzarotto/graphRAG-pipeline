@@ -57,11 +57,29 @@ DEFAULT_LABEL = "NodeVec"
 logger = logging.getLogger("kg_vector_index")
 
 
-def fetch_nodes(store: KnowledgeGraphManager) -> list[dict]:
-    return store.run_query(
-        "MATCH (n) WHERE n.name IS NOT NULL "
-        "RETURN elementId(n) AS node_id, toString(n.name) AS name"
+def fetch_nodes(store: KnowledgeGraphManager, context_chars: int = 0) -> list[dict]:
+    """Node ids and the text to embed.
+
+    ``context_chars > 0`` appends the node's own ``search_text`` (and aliases)
+    to the name. Names alone are two or three words, and the encoder scores
+    every short name in a narrow band — `yeast` put `lievito alimentare` third
+    at 0.922 against a 0.926 top hit, so the right node was retrieved but not
+    ranked. Extra text spreads the scores and is what makes the ranking usable.
+    """
+    rows = store.run_query(
+        "MATCH (n) WHERE n.name IS NOT NULL RETURN elementId(n) AS node_id, "
+        "toString(n.name) AS name, coalesce(n.search_text, '') AS search_text, "
+        "coalesce(n.aliases, []) AS aliases, labels(n) AS labels"
     )
+    for row in rows:
+        text = row["name"]
+        if context_chars:
+            extras = [a for a in (row.get("aliases") or []) if a and a != row["name"]]
+            extra = " ".join([*extras, str(row.get("search_text") or "")]).strip()
+            if extra:
+                text = f"{text}. {extra[:context_chars]}"
+        row["embed_text"] = text
+    return rows
 
 
 def write_embeddings(
@@ -116,6 +134,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--property", default=DEFAULT_PROPERTY)
     parser.add_argument("--label", default=DEFAULT_LABEL)
     parser.add_argument("--limit", type=int, default=0, help="0 = all nodes")
+    parser.add_argument(
+        "--context-chars",
+        type=int,
+        default=300,
+        help="chars of search_text/aliases appended to the name (0 = name only)",
+    )
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--write-batch", type=int, default=500)
     parser.add_argument("--labels", default="", help="comma-separated label whitelist")
@@ -166,7 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"  {probe:48} -> {hits}")
         return 0
 
-    rows = fetch_nodes(store)
+    rows = fetch_nodes(store, context_chars=args.context_chars)
     if args.labels:
         wanted = {label.strip() for label in args.labels.split(",") if label.strip()}
         allowed = {
@@ -186,7 +210,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     started = time.perf_counter()
     vectors = encode(
-        [r["name"] for r in rows],
+        [r["embed_text"] for r in rows],
         PASSAGE_PREFIX,
         model=args.model,
         batch_size=args.batch_size,
