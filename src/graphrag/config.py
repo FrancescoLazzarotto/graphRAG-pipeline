@@ -210,6 +210,19 @@ class AgentConfig:
     # it changes latency, never the evidence, since a seed that matches no node
     # could not have produced any.
     verify_anchor_exists: bool = True
+    # How many anchors the subgraph channel expands from. Anchoring on retrieved
+    # nodes made every seed accurate, which also made the 2-hop neighbourhood
+    # narrower: subgraph_2hop was the only strategy to lose recall. Expanding
+    # from the top few anchors, each with a share of the triple budget, restores
+    # breadth without reverting to question-word seeds. 1 keeps the old shape.
+    subgraph_seed_count: int = 1
+    # The retrieval fixes raised answer recall by +0.036 and dropped precision by
+    # -0.033: a richer context yields a more discursive answer that names more
+    # entities, and entities belonging to other questions count against it. This
+    # asks for the same grounding with a narrower scope — answer what was asked
+    # and leave out related material the evidence happens to carry. Off by
+    # default; it changes the rendered prompt.
+    focused_answer: bool = False
 
     def __post_init__(self) -> None:
         if self.rank_triples:
