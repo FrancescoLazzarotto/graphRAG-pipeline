@@ -144,6 +144,7 @@ def build_base_config(args: argparse.Namespace) -> AgentConfig:
         lexical_df_max_ratio=args.lexical_df_max_ratio,
         lexical_phrase_boost=args.lexical_phrase_boost,
         seed_from_retrieved=args.seed_from_retrieved,
+        subgraph_seed_count=args.subgraph_seed_count,
         vector_retrieval=args.vector_retrieval,
         vector_nodes_limit=args.vector_nodes_limit,
         vector_triples_limit=args.vector_triples_limit,
@@ -302,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--vector-nodes-limit", type=int, default=10)
     parser.add_argument("--vector-triples-limit", type=int, default=10)
     parser.add_argument("--vector-seed-limit", type=int, default=5)
+    parser.add_argument("--subgraph-seed-count", type=int, default=1)
     parser.add_argument("--lexical-df-max-ratio", type=float, default=0.01)
     parser.add_argument("--lexical-phrase-boost", type=float, default=4.0)
     parser.add_argument(
