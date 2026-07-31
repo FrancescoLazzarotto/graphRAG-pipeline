@@ -163,20 +163,38 @@ class KGRetriever:
             )
 
         if self.config.include_subgraph and resolved_entity:
-            if self.config.adaptive_hops:
-                subgraph = self._adaptive_subgraph(
-                    entity=resolved_entity,
-                    hops=self.config.hops,
-                    limit=self.config.subgraph_limit,
-                    relationship_types=self.config.relationship_types or None,
-                )
-            else:
-                subgraph = self.kg_store.extract_subgraph(
-                    entity=resolved_entity,
-                    hops=self.config.hops,
-                    limit=self.config.subgraph_limit,
-                    relationship_types=self.config.relationship_types or None,
-                )
+            # Anchoring on retrieved nodes made every seed accurate, which also
+            # made the neighbourhood narrower: subgraph_2hop was the one
+            # strategy that lost recall. Expanding from the top few anchors,
+            # each with a share of the budget, restores breadth without
+            # reverting to question-word seeds.
+            seeds = [resolved_entity]
+            for anchor in anchors[1 : max(1, int(self.config.subgraph_seed_count))]:
+                if anchor and anchor not in seeds:
+                    seeds.append(anchor)
+            budget = max(1, self.config.subgraph_limit // len(seeds))
+            seen_subgraph: set[tuple[str, str, str]] = set()
+            for seed in seeds:
+                if self.config.adaptive_hops:
+                    batch = self._adaptive_subgraph(
+                        entity=seed,
+                        hops=self.config.hops,
+                        limit=budget,
+                        relationship_types=self.config.relationship_types or None,
+                    )
+                else:
+                    batch = self.kg_store.extract_subgraph(
+                        entity=seed,
+                        hops=self.config.hops,
+                        limit=budget,
+                        relationship_types=self.config.relationship_types or None,
+                    )
+                for triple in batch:
+                    key = self._triple_key(triple)
+                    if key in seen_subgraph:
+                        continue
+                    seen_subgraph.add(key)
+                    subgraph.append(triple)
 
         if self.config.include_shortest_path:
             entity_a = self._sanitize_entity_name(self.config.entity_a or "") or (
