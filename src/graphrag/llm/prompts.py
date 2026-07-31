@@ -160,8 +160,18 @@ class PromptLibrary:
                 "If context does not answer the question, state this plainly. "
                 "Do not invent or generate content outside the context. "
             )
+        focus_rule = ""
+        if config.focused_answer:
+            focus_rule = (
+                "Answer only what was asked. The evidence is retrieved in bulk "
+                "and carries neighbouring material: mention a concept only if it "
+                "is part of the answer, not because it appears in the context. "
+                "Prefer naming fewer things precisely over listing everything "
+                "related. "
+            )
         system_message = (
             grounding_rule
+            + focus_rule
             + "Preserve all entity names exactly as given. "
             "Respond in the same language as the question (English or Italian), "
             "even when the context is written in the other language: translate "
