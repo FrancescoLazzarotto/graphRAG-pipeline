@@ -1,9 +1,9 @@
 """Structural quality metrics for the knowledge graph.
 
 Connects to a Neo4j instance, pulls the full graph and computes the
-structural indicators used as regression gates in
-docs/kg_fix_plan_2026-07.md: counts, connectivity, fragmentation, name
-quality and provenance coverage. Writes a JSON report and prints a summary.
+structural indicators used as regression gates before and after a repair
+pass: counts, connectivity, fragmentation, name quality and provenance
+coverage. Writes a JSON report and prints a summary.
 
 Usage:
     python scripts/kg_quality/kg_metrics.py \
