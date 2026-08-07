@@ -161,6 +161,33 @@ def test_last_answer_entities_are_the_ones_the_model_talked_about():
     assert memory.last_answer_entities == ["Vino"]
 
 
+def test_a_name_inside_a_longer_word_is_not_a_mention():
+    """The dominant false positive on the 2026-07 demo logs: "riso" in "risorse".
+
+    A name promoted this way leads the seed ranking, so the follow-up gets
+    rewritten around a topic the answer never discussed.
+    """
+    memory = ConversationMemory()
+    memory.observe(
+        question="q",
+        answer="Le risorse idriche del sistema sono limitate.",
+        nodes=[{"text": "Riso"}, {"text": "Tema"}],
+    )
+
+    assert memory.last_answer_entities == []
+
+
+def test_an_elided_article_does_not_hide_a_mention():
+    memory = ConversationMemory()
+    memory.observe(
+        question="q",
+        answer="L'economia circolare parte dai sotto-prodotti.",
+        nodes=[{"text": "Economia circolare"}, {"text": "Prodotti"}],
+    )
+
+    assert memory.last_answer_entities == ["Economia circolare", "Prodotti"]
+
+
 def test_seed_entities_put_the_last_answer_first():
     memory = ConversationMemory()
     memory.observe(
@@ -182,6 +209,30 @@ def test_a_broader_name_absorbs_its_own_substring():
     )
 
     assert memory.seed_entities() == ["Regione Piemonte", "Vino"]
+
+
+def test_the_specific_name_wins_even_when_the_broad_one_ranks_first():
+    """Ranking decides the order, so absorption cannot depend on it."""
+    memory = ConversationMemory()
+    memory.observe(
+        question="q",
+        answer="",
+        nodes=[{"text": "Regione"}, {"text": "Regione Piemonte"}, {"text": "Vino"}],
+    )
+
+    assert memory.seed_entities() == ["Regione Piemonte", "Vino"]
+
+
+def test_absorption_needs_whole_words_not_a_substring():
+    """"Riso" is not a broader "Risorsa": dropping it would lose a real topic."""
+    memory = ConversationMemory()
+    memory.observe(
+        question="q",
+        answer="",
+        nodes=[{"text": "Risorsa"}, {"text": "Riso"}],
+    )
+
+    assert memory.seed_entities() == ["Risorsa", "Riso"]
 
 
 def test_entities_decay_out_of_the_window():

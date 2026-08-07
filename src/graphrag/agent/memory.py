@@ -86,6 +86,35 @@ _MAX_ENTITY_CHARS = 60
 
 _TOKEN_RE = re.compile(r"[\wÀ-ÿ'’-]+")
 
+# Word units for entity matching. Narrower than `_TOKEN_RE` on purpose:
+# apostrophes and hyphens separate here, so "l'economia" contains the word
+# "economia" and "sotto-prodotti" contains "prodotti".
+_WORD_RE = re.compile(r"[\wÀ-ÿ]+")
+
+
+def _words(text: str) -> tuple[str, ...]:
+    """Lowercased word units of `text`."""
+    return tuple(match.lower() for match in _WORD_RE.findall(str(text or "")))
+
+
+def _contains_span(outer: Sequence[str], inner: Sequence[str]) -> bool:
+    """True when `inner` occurs inside `outer` as a run of whole words.
+
+    Substring containment is not usable on entity names: with a 3-character
+    floor, "Riso" sits inside "risorse", "Eni" inside "sostenibile" and "tema"
+    inside "sistema". Measured on the 2026-07 demo logs, a plain `in` test
+    marked roughly a third of the matching names as mentioned when they never
+    were.
+    """
+    if not inner or len(inner) > len(outer):
+        return False
+    span = tuple(inner)
+    width = len(span)
+    return any(
+        tuple(outer[start : start + width]) == span
+        for start in range(len(outer) - width + 1)
+    )
+
 
 def _looks_self_contained(question: str) -> bool:
     """True when the question names its own subject.
@@ -198,15 +227,31 @@ class ConversationMemory:
         )
 
         selected: list[str] = []
+        selected_words: list[tuple[str, ...]] = []
         for item in ranked:
             if len(selected) >= cap:
                 break
+            words = _words(item.name)
+            if not words:
+                continue
             # "Regione" next to "Regione Piemonte" wastes one of the few slots
-            # and makes the rewrite vaguer, not richer.
-            lowered = item.name.lower()
-            if any(lowered in chosen.lower() for chosen in selected):
+            # and makes the rewrite vaguer, not richer. Either order can occur —
+            # ranking decides which of the two is seen first — so the specific
+            # name wins whether it arrives before or after the broader one.
+            broader = next(
+                (pos for pos, chosen in enumerate(selected_words)
+                 if _contains_span(words, chosen)),
+                None,
+            )
+            if any(_contains_span(chosen, words) for chosen in selected_words):
+                continue
+            if broader is not None:
+                # Replace in place: the slot keeps the rank it earned.
+                selected[broader] = item.name
+                selected_words[broader] = words
                 continue
             selected.append(item.name)
+            selected_words.append(words)
         return selected
 
     def observe(
@@ -240,9 +285,12 @@ class ConversationMemory:
                 existing.turn = self.turn
                 existing.mentions += 1
 
-        answer_lower = str(answer or "").lower()
+        # Whole-word match: this list is the top of the seed ranking, so a name
+        # that only happens to sit inside a longer word steers the rewrite
+        # towards something the answer never discussed.
+        answer_words = _words(answer)
         self.last_answer_entities = [
-            name for name in retrieved if name.lower() in answer_lower
+            name for name in retrieved if _contains_span(answer_words, _words(name))
         ]
 
         cutoff = self.turn - self.window
