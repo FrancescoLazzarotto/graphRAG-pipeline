@@ -69,8 +69,12 @@ _REQUEST_OPENER = re.compile(
     r"^\s*("
     r"mi\s+(?:dai|dia|indichi|indica|puoi|potresti|spieghi|spiega|elenchi|elenca|"
     r"riporti|riporta|fai|fa|mostri|mostra|descrivi|descriva)|"
+    # The bare modal, without the "mi" that used to be required: "puoi
+    # spiegarmelo in modo più semplice?" was read as a fresh question, and with
+    # the domain gate on it was refused outright as out of domain.
+    r"(?:puoi|potresti|riesci\s+a|sai)\s+\w+|"
     r"dammi|dimmi|fammi|spiegami|elencami|indicami|riportami|mostrami|"
-    r"give me|show me|list me"
+    r"give me|show me|list me|(?:can|could)\s+you\s+\w+"
     r")\b",
     re.IGNORECASE,
 )
@@ -205,24 +209,40 @@ class ConversationMemory:
         self.last_question = ""
 
     def has_context(self) -> bool:
-        return bool(self.active_entities)
+        """Whether anything has been said yet in this session.
+
+        Turn count, not entity count. Entities are observed only from the KG
+        channel, and on a question the graph answers with nothing — measured:
+        0 nodes and 0 triples for "Quali sono le 3C e cosa vogliono dire?",
+        answered entirely from text — the entity list stays empty and every
+        follow-up looked like a fresh question. `is_follow_up` exits on this
+        flag before it ever reads its markers, so an empty graph turn silently
+        disabled follow-up detection for the rest of the session.
+        """
+        return self.turn > 0
 
     def seed_entities(self, limit: int | None = None) -> list[str]:
         """Entities to resolve a follow-up against, most useful first.
 
-        Entities named in the previous answer come first: they are what the
-        expert just read, and therefore what an elliptical follow-up most likely
-        refers to.
+        Only entities the previous answer actually named: they are what the
+        expert just read, and therefore what an elliptical follow-up refers to.
+
+        Retrieved-but-unused entities are deliberately excluded rather than
+        ranked below. On "Quali sono le 3C dell'economia circolare per il cibo?"
+        the graph returned 35 nodes, none of which the answer mentioned — it
+        discussed Capitale, Ciclicità and Coevoluzione — so the old fallback
+        ranking seeded the rewrite with "Economia circolare ittica" and the
+        follow-up went out asking about fish. An empty seed list costs nothing:
+        `_rewrite_with_memory` then keeps the question as typed, which the
+        retriever handles, while a wrong seed sends it somewhere else entirely.
         """
         cap = self.max_seed_entities if limit is None else limit
         recent = {name.lower() for name in self.last_answer_entities}
+        if not recent:
+            return []
         ranked = sorted(
-            self.active_entities,
-            key=lambda item: (
-                item.name.lower() in recent,
-                item.turn,
-                item.mentions,
-            ),
+            (item for item in self.active_entities if item.name.lower() in recent),
+            key=lambda item: (item.turn, item.mentions),
             reverse=True,
         )
 
