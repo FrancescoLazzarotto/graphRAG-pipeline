@@ -204,7 +204,7 @@ def test_a_broader_name_absorbs_its_own_substring():
     memory = ConversationMemory()
     memory.observe(
         question="q",
-        answer="",
+        answer="parla di Regione Piemonte, Regione e Vino",
         nodes=[{"text": "Regione Piemonte"}, {"text": "Regione"}, {"text": "Vino"}],
     )
 
@@ -216,7 +216,7 @@ def test_the_specific_name_wins_even_when_the_broad_one_ranks_first():
     memory = ConversationMemory()
     memory.observe(
         question="q",
-        answer="",
+        answer="parla di Regione, Regione Piemonte e Vino",
         nodes=[{"text": "Regione"}, {"text": "Regione Piemonte"}, {"text": "Vino"}],
     )
 
@@ -228,7 +228,7 @@ def test_absorption_needs_whole_words_not_a_substring():
     memory = ConversationMemory()
     memory.observe(
         question="q",
-        answer="",
+        answer="parla di Risorsa e di Riso",
         nodes=[{"text": "Risorsa"}, {"text": "Riso"}],
     )
 
@@ -336,3 +336,75 @@ def test_the_turn_is_recorded_in_memory():
 
     assert memory.turn == 2
     assert memory.last_question == Q3
+
+
+# --- seeding must follow the answer, not the retriever -----------------------
+
+
+def test_seeds_are_empty_when_the_answer_used_none_of_the_retrieved_entities():
+    """The graph returning something is not the same as the answer using it.
+
+    Measured on "Quali sono le 3C dell'economia circolare per il cibo?": 35
+    nodes came back, the answer discussed Capitale, Ciclicità and Coevoluzione,
+    and none of the 35 appeared in it. Ranking the unused ones anyway seeded the
+    follow-up rewrite with "Economia circolare ittica", which sent the next
+    question out asking about fish.
+    """
+    memory = ConversationMemory()
+    memory.observe(
+        question="Quali sono le 3C?",
+        answer="Le 3C sono Capitale, Ciclicità e Coevoluzione.",
+        nodes=[{"text": "Economia circolare ittica"}, {"text": "Regione Piemonte"}],
+    )
+
+    assert memory.seed_entities() == []
+
+
+def test_an_empty_seed_leaves_the_question_as_typed():
+    """No rewrite is better than a wrong one; the retriever handles the original."""
+    memory = ConversationMemory()
+    memory.observe(
+        question="Quali sono le 3C?",
+        answer="Le 3C sono Capitale, Ciclicità e Coevoluzione.",
+        nodes=[{"text": "Economia circolare ittica"}],
+    )
+    agent = _agent(_FakeModel("una riscrittura che non deve mai essere usata"))
+
+    result = agent.invoke("spiegami meglio la ciclicità", memory=memory)
+
+    assert result["retrieval_question"] == "spiegami meglio la ciclicità"
+    assert result["memory_entities"] == []
+
+
+def test_a_turn_with_no_graph_entities_still_opens_the_session():
+    """`has_context` counts turns, not entities.
+
+    An answer built entirely from the text channel observes no entity. Keying
+    context on the entity list made every later follow-up look like a fresh
+    question — and with the domain gate on, a terse one was refused outright.
+    """
+    memory = ConversationMemory()
+    assert memory.has_context() is False
+
+    memory.observe(question="q", answer="una risposta tutta testuale", nodes=[], triples=[])
+
+    assert memory.has_context() is True
+    assert memory.seed_entities() == []
+    assert is_follow_up("spiegami meglio", has_context=memory.has_context()) is True
+
+
+def test_a_bare_modal_opens_a_follow_up():
+    """"puoi spiegarmelo..." used to need "mi" in front to be recognised."""
+    for question in (
+        "puoi spiegarmelo in modo più semplice?",
+        "potresti chiarire quel punto?",
+        "can you explain that again?",
+    ):
+        assert is_follow_up(question, has_context=True) is True
+
+
+def test_a_bare_modal_on_a_self_contained_question_is_not_a_follow_up():
+    """The opener alone must not turn a full question into a continuation."""
+    assert is_follow_up(
+        "puoi elencare le strategie della Regione Piemonte?", has_context=True
+    ) is False
