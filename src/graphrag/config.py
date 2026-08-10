@@ -198,6 +198,28 @@ class AgentConfig:
     # such, so groundedness stays measurable. Off by default: it changes the
     # rendered prompt, so baselines opt in explicitly.
     allow_parametric_fallback: bool = False
+    # Out-of-domain gate, run once before retrieval. Without it the agent has no
+    # path to abstain: the dense retriever has no score floor, so `_grade` always
+    # sees evidence, and `grade_condition` sends every question to `generate`
+    # after three rewrites. A question about neural networks was answered with a
+    # Keras function.
+    #
+    # The gate is an LLM call, not a similarity threshold, because the threshold
+    # does not exist: scripts/calibrate_domain_gate.py measured a top-1 cosine of
+    # 0.7996 for the lowest gold question against 0.8314 for an out-of-domain SQL
+    # question — the ranges overlap, and e5 compresses everything into a narrow
+    # band. The classification costs ~0.11 s at 4 max_tokens.
+    #
+    # Off by default: it adds a call and a terminal state, so the thesis
+    # baselines are unaffected and the demo opts in.
+    enable_domain_gate: bool = False
+    # What the gate lets through. Measured on 50 tuning questions (30 frozen gold
+    # + 10 Italian probes + 10 out-of-domain) at 50/50, then on a held-out set at
+    # 0/12 false refusals and 4/12 false accepts — the four being food-adjacent
+    # consumer questions (calories, food storage, allergies, sourdough). The
+    # asymmetry is deliberate: a false refusal stonewalls a legitimate question,
+    # a false accept still reaches the answer path and is marked ungrounded.
+    domain_scope: str = ""
     # Predicates that carry no answerable content. RELATED_TO alone is 20 % of
     # the graph's edges and 19 % of what retrieval returns; the bibliographic
     # pair is another 17 %. Dropping them frees context budget for triples that

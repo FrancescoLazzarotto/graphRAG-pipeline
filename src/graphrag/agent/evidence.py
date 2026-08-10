@@ -619,29 +619,29 @@ def render_reference_list(
     evidence: Sequence[EvidenceItem],
     cited_refs: Sequence[str],
     language: str = "it",
-    fallback_limit: int = 4,
     max_items: int = 8,
 ) -> str:
     """Render the closing source list for the references actually used.
 
-    When the model cited nothing, falls back to the top evidence items so the
-    reader still sees where the answer came from.
+    An answer that cited nothing gets no source list. The previous fallback
+    showed the top evidence items instead, which on an out-of-domain question
+    attributed the answer to whatever the retriever happened to return: a
+    Keras function was published under three circular-economy PDFs, and the
+    phantom-reference metric scored it 0.0 because the model had not written
+    those references — the renderer had.
 
     Args:
         evidence: The index for this turn.
         cited_refs: Reference ids surviving :func:`verify_citations`.
         language: ``"it"`` or ``"en"``.
-        fallback_limit: How many items to show when nothing was cited.
         max_items: Longest list rendered; the remainder is summarised on one
             line. A twenty-entry list is a wall, not a set of sources.
 
     Returns:
-        The formatted section, or an empty string when there is no evidence.
+        The formatted section, or an empty string when nothing was cited.
     """
     by_id = {item.ref_id: item for item in evidence}
     used = [by_id[ref] for ref in cited_refs if ref in by_id]
-    if not used:
-        used = list(evidence)[:fallback_limit]
     if not used:
         return ""
 
@@ -721,7 +721,6 @@ def render_grouped_reference_list(
     evidence: Sequence[EvidenceItem],
     cited_refs: Sequence[str],
     language: str = "it",
-    fallback_limit: int = 4,
     max_triples_per_doc: int = 4,
 ) -> str:
     """Render the closing source list grouped by document.
@@ -730,21 +729,21 @@ def render_grouped_reference_list(
     its cap on answers citing a dozen items and dropped the tail, which is the
     part the reader was least likely to have already seen in the text.
 
+    An answer that cited nothing gets no source list — see
+    :func:`render_reference_list` for why the fallback was removed.
+
     Args:
         evidence: The index for this turn.
         cited_refs: Reference ids surviving :func:`verify_citations`.
         language: ``"it"`` or ``"en"``.
-        fallback_limit: How many items to show when nothing was cited.
         max_triples_per_doc: Graph facts spelled out per document; the rest are
             counted on the same line.
 
     Returns:
-        The formatted section, or an empty string when there is no evidence.
+        The formatted section, or an empty string when nothing was cited.
     """
     by_id = {item.ref_id: item for item in evidence}
     used = [by_id[ref] for ref in cited_refs if ref in by_id]
-    if not used:
-        used = list(evidence)[:fallback_limit]
     if not used:
         return ""
 

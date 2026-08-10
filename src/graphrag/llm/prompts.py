@@ -323,11 +323,22 @@ class PromptLibrary:
             + depth_block
             + limits_block
             + evidence_block
-            + "State that context is insufficient only when context is empty or "
-            "lacks factual evidence."
-            # Repeated as the last line: the instruction closest to the
-            # generation point is the one models follow when the context pulls
-            # the other way.
+            # The closing line is the one models follow, so it must match the
+            # grounding rule at the top. The old wording — "state that context is
+            # insufficient only when context is empty or lacks factual evidence"
+            # — was written to stop lazy refusals, and it worked too well: the
+            # retriever has no score floor, so an out-of-domain question still
+            # arrives with a full context of unrelated-but-factual chunks, and
+            # this line told the model not to call that insufficient.
+            + (
+                "When the context does not cover the question, say so and mark "
+                "every statement it does not support with '(not in the retrieved "
+                "evidence)'. Never pass one off as the other."
+                if config.allow_parametric_fallback
+                else "State that the context is insufficient whenever it does "
+                "not cover what was asked — an unrelated context is an "
+                "insufficient one, however many facts it contains."
+            )
             + (f"\n\n{language_block}" if language_block else "")
         )
 
@@ -414,6 +425,87 @@ class PromptLibrary:
             "Question: {question}\n\n"
             "Respond with ONLY one word: TEXT, KG, HYBRID, or MULTIHOP."
         )
+
+    # Frozen wording, validated by scripts/eval_domain_gate_llm.py (50/50 on the
+    # tuning set) and scripts/eval_domain_gate_heldout.py (0/12 false refusals).
+    # Two clauses exist because of measured failures, not style: the by-product
+    # composition clause recovered the rice-bran and mineral-water questions, the
+    # framework-vocabulary clause recovered the metabolisation and Capital ones,
+    # which never mention food on their surface. Editing this text invalidates
+    # both measurements — rerun them.
+    DEFAULT_DOMAIN_SCOPE = (
+        "circular economy principles and frameworks applied to food, food systems "
+        "and supply chains, agri-food by-products and residues and their "
+        "valorisation — including their chemical composition and their "
+        "pharmaceutical, nutraceutical, cosmetic, energy and material uses — food "
+        "waste, food and beverage packaging and its materials, sustainability "
+        "indicators and policy, and territorial or regional food projects"
+    )
+
+    @staticmethod
+    def domain_gate_prompt(scope: str = "") -> ChatPromptTemplate:
+        """Single-token in/out classification of a question against the corpus.
+
+        Args:
+            scope: What the collection covers. Empty uses
+                :data:`DEFAULT_DOMAIN_SCOPE`.
+
+        Returns:
+            A prompt whose completion is ``IN`` or ``OUT``.
+        """
+        scope_text = scope.strip() or PromptLibrary.DEFAULT_DOMAIN_SCOPE
+        system_message = (
+            "You classify whether a question can be answered from a document "
+            f"collection about the following domain: {scope_text}.\n\n"
+            "Answer with exactly one word:\n"
+            "IN — the question is about that domain\n"
+            "OUT — the question is about something else (programming, "
+            "mathematics, geography, entertainment, general knowledge, or any "
+            "other field)\n\n"
+            "A question is IN whenever its subject is a food, a crop, a "
+            "food-industry residue or by-product, or a food supply chain — "
+            "whatever is being asked about it. Asking what compounds rice bran "
+            "contains, or what a food package is made of, is a question about "
+            "the domain, not about pharmacology or materials science.\n\n"
+            "A question is also IN when it asks about the theoretical vocabulary "
+            "of the Circular Economy for Food framework itself, even when it "
+            "never mentions food: the three C's (Capital, Cyclicality, "
+            "Co-evolution), metabolisation and its implementation cycles, "
+            "extension, cascading, ecodesign, industrial symbiosis, and the "
+            "relations between these concepts.\n\n"
+            "Answer IN whenever the question plausibly belongs to the domain, "
+            "even if you doubt the collection holds the specific detail asked "
+            "for: the retrieval step decides that, not you. Answer with the "
+            "single word only."
+        )
+        return ChatPromptTemplate.from_messages(
+            [("system", system_message), ("human", "{question}")]
+        )
+
+    @staticmethod
+    def out_of_scope_message(language: str = "en", scope_hint: str = "") -> str:
+        """The fixed reply for a question the gate rejected.
+
+        Fixed text, not a generated one: the point of the gate is that no answer
+        is produced, and a model asked to phrase its own refusal will smuggle a
+        partial answer into it.
+        """
+        if language == "it":
+            base = (
+                "Questa domanda è fuori dall'ambito dei documenti che ho a "
+                "disposizione, quindi non rispondo: qualsiasi risposta non "
+                "sarebbe fondata su di essi."
+            )
+            if scope_hint:
+                return f"{base}\n\nLa raccolta copre: {scope_hint}."
+            return base
+        base = (
+            "This question falls outside the documents I have, so I am not "
+            "answering it: any answer would not be grounded in them."
+        )
+        if scope_hint:
+            return f"{base}\n\nThe collection covers: {scope_hint}."
+        return base
 
     @staticmethod
     def refusal_retry_prompt(language: str = "en") -> ChatPromptTemplate:

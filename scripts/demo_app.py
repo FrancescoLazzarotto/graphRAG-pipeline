@@ -95,6 +95,15 @@ TEXT_MAX_PER_DOC = int(os.environ.get("DEMO_TEXT_MAX_PER_DOC", "2"))
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
 EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
 TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
+# Two layers over the same failure, because it has two causes that look alike.
+# An out-of-domain question is refused outright by the gate (~0.11 s, no
+# retrieval, no answer). An in-domain question whose retrieval came back weak —
+# which the recall numbers say is common — is answered, with everything the
+# evidence does not support marked '(not in the retrieved evidence)'. A single
+# hard gate for both would stonewall legitimate questions, which is the
+# expensive error for a demo whose complaint was already genericity.
+DOMAIN_GATE = os.environ.get("DEMO_DOMAIN_GATE", "1") == "1"
+PARAMETRIC_FALLBACK = os.environ.get("DEMO_PARAMETRIC_FALLBACK", "1") == "1"
 # Stage0 runs feeding the text index, most authoritative first. Explicit on
 # purpose: auto-discovery picked the newest run, which is the 2-document repair
 # run, so the text channel saw 2 of the 22 circular-food documents. Older runs
@@ -174,6 +183,8 @@ def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
         text_retriever_mmr=TEXT_MMR,
         text_retriever_mmr_lambda=TEXT_MMR_LAMBDA,
         text_retriever_max_per_doc=TEXT_MAX_PER_DOC,
+        enable_domain_gate=DOMAIN_GATE,
+        allow_parametric_fallback=PARAMETRIC_FALLBACK,
     )
     config = apply_strategy(base, STRATEGY)
 

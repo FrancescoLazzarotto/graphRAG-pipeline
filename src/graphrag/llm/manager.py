@@ -392,6 +392,36 @@ class LLMManager:
         )
         return ChatHuggingFace(llm=HuggingFacePipeline(pipeline=generation))
 
+    def classify_in_domain(self, question: str, config: Any) -> bool:
+        """Whether the question belongs to the corpus domain.
+
+        One classification call before retrieval, answering a single word. No
+        `max_tokens` binding: the prompt constrains the output to one token and
+        the model stops at EOS, which keeps the call identical across the vLLM
+        and local-HF backends.
+
+        Args:
+            question: The question as typed.
+            config: The agent config, read for ``domain_scope``.
+
+        Returns:
+            ``True`` when in domain, and on any failure — a broken gate must not
+            silence a working demo.
+        """
+        prompt = PromptLibrary.domain_gate_prompt(getattr(config, "domain_scope", ""))
+        try:
+            model = self.load_llm()
+            output = self._invoke_with_retry(
+                model, prompt.invoke({"question": question})
+            )
+        except Exception as exc:
+            logger.warning("Domain gate failed (%s); treating question as in domain", exc)
+            return True
+
+        verdict = str(output.content if hasattr(output, "content") else output).strip()
+        logger.info("Domain gate: %r -> %s", question[:80], verdict[:16])
+        return not verdict.upper().startswith("OUT")
+
     def _build_vllm_llm(self, model_id: str) -> Any:
         ChatOpenAI = self._import_vllm_stack()
         logger.info(
@@ -562,7 +592,18 @@ class LLMManager:
             answer = self._trim_to_last_sentence(answer)
 
         # If model returned empty or a generic refusal, try a stricter fallback prompt once.
-        if looks_like_refusal(answer) and context and str(context).strip():
+        #
+        # Skipped when parametric fallback is authorised: there the model may
+        # answer from its own knowledge as long as it marks the statement, so a
+        # refusal means it has nothing to offer from either source. Retrying with
+        # "use only the provided context" would talk it out of a decision it was
+        # entitled to make, which is how a correct abstention became an answer.
+        if (
+            looks_like_refusal(answer)
+            and context
+            and str(context).strip()
+            and not config.allow_parametric_fallback
+        ):
             try:
                 logger.info("LLM refusal detected; attempting fallback retry...")
                 fallback_prompt = PromptLibrary.refusal_retry_prompt(

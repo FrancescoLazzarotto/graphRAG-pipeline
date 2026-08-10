@@ -49,6 +49,13 @@ class RAGState(TypedDict, total=False):
     citation_report: dict[str, Any]
     quote_report: dict[str, Any]
     answer: str
+    # Domain gate. `in_domain` is False only when the gate ran and rejected the
+    # question; `out_of_scope` marks the answer as the fixed refusal, so callers
+    # can tell an abstention from a generated answer without parsing prose.
+    # `follow_up` exempts a question that continues an already-admitted topic.
+    in_domain: bool
+    out_of_scope: bool
+    follow_up: bool
     provenance: list[ProvenanceRecord]
     reflection_passed: bool
     reflection_feedback: str

@@ -35,6 +35,15 @@ from graphrag.types import RAGState
 
 logger = logging.getLogger("graphrag")
 
+# Domain-gate ellipsis floor: at or below this many words a question is a
+# continuation of the previous turn, not a topic of its own, and the gate has
+# nothing to judge. See `KGRAGAgent._scope_gate`.
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+# Three, not four: "Spiegami la relatività generale" is exactly four words and
+# must still be refused. Every continuation measured at four words or fewer
+# ("fammi un esempio", "non ho capito", "in che senso") sits at three or below.
+_MIN_GATED_TOKENS = 3
+
 
 class KGRAGAgent:
     def __init__(
@@ -59,6 +68,8 @@ class KGRAGAgent:
     def _build_graph(self):
         builder = StateGraph(RAGState)
 
+        builder.add_node("scope", self._scope_gate)
+        builder.add_node("refuse", self._refuse_out_of_scope)
         builder.add_node("decompose", self._decompose)
         builder.add_node("route", self._adaptive_route)
         builder.add_node("retrieve", self._retrieve)
@@ -66,7 +77,13 @@ class KGRAGAgent:
         builder.add_node("rewrite", self._rewrite)
         builder.add_node("generate", self._generate)
 
-        builder.add_edge(START, "decompose")
+        builder.add_edge(START, "scope")
+
+        def scope_condition(state: RAGState):
+            return "refuse" if state.get("in_domain") is False else "decompose"
+
+        builder.add_conditional_edges("scope", scope_condition)
+        builder.add_edge("refuse", END)
         builder.add_edge("decompose", "route")
         # The retrieval mode chosen in `route` is read directly by `_retrieve`
         # from the state, so the edge is unconditional.
@@ -85,6 +102,70 @@ class KGRAGAgent:
         builder.add_edge("generate", END)
 
         return builder.compile()
+
+    def _scope_gate(self, state: RAGState) -> dict:
+        """Classify the question against the corpus domain before retrieving.
+
+        Runs on the question as typed, never on the memory-rewritten one: a
+        follow-up is rewritten with entities from the previous answer, which
+        would make an out-of-domain question look in-domain by inheritance.
+
+        Follow-ups skip the gate entirely. A terse one carries no domain of its
+        own — measured on ten of them, "e quindi?", "in che senso?" and
+        "perché?" were all classified out of domain — and refusing those breaks
+        the conversation the demo exists to hold. The topic they continue was
+        gated when it was introduced; what they inherit was already admitted.
+        """
+        if not self.config.enable_domain_gate or self.llm is None:
+            return {"in_domain": True}
+
+        question = state.get("question", "").strip()
+        if not question:
+            return {"in_domain": True}
+
+        # A continuation is exempt: it carries no topic of its own, and refusing
+        # it ends the conversation the demo exists to hold. Two tests, because
+        # neither covers the other.
+        #
+        # `follow_up` comes from memory, which fills only from KG entities — on
+        # an answer built entirely from the text channel it stays empty and the
+        # flag stays False even for an obvious follow-up, so it cannot be the
+        # only test.
+        #
+        # The word floor catches what memory misses: "in che senso?", "perché?",
+        # "non ho capito" carry no marker `is_follow_up` keys on either. Note
+        # that `is_follow_up(has_context=True)` is deliberately *not* used here —
+        # it reads "Spiegami la relatività generale" as a short imperative
+        # request and would wave it through.
+        if state.get("follow_up"):
+            return {"in_domain": True}
+        if len(_WORD_RE.findall(question)) <= _MIN_GATED_TOKENS:
+            return {"in_domain": True}
+
+        in_domain = self.llm.classify_in_domain(question, self.config)
+        if not in_domain:
+            logger.info("Domain gate refused: %s", question[:100])
+        return {"in_domain": in_domain}
+
+    def _refuse_out_of_scope(self, state: RAGState) -> dict:
+        """Terminal state for a rejected question.
+
+        The one path in the graph that reaches END without generating. Nothing
+        is retrieved, so no evidence index exists and no source list can be
+        rendered under it.
+        """
+        question = state.get("question", "")
+        language = LLMManager._detect_query_language(question)
+        # The refusal names what the collection does cover: the expert's next
+        # move is to rephrase, and a bare "out of scope" gives them nothing to
+        # aim at.
+        scope_hint = self.config.domain_scope.strip() or PromptLibrary.DEFAULT_DOMAIN_SCOPE
+        return {
+            "answer": PromptLibrary.out_of_scope_message(
+                language=language, scope_hint=scope_hint
+            ),
+            "out_of_scope": True,
+        }
 
     def _decompose(self, state: RAGState) -> dict:
         question = state.get("question", "").strip()
@@ -1340,6 +1421,9 @@ class KGRAGAgent:
         if memory is not None:
             seed_entities = memory.seed_entities()
             follow_up = is_follow_up(question, has_context=memory.has_context())
+            # Read by `_scope_gate`, which must not judge a question that only
+            # makes sense against the previous turn.
+            initial_state["follow_up"] = follow_up
             if follow_up:
                 retrieval_question = self._rewrite_with_memory(question, memory)
                 if retrieval_question != question:

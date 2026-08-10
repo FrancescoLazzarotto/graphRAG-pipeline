@@ -472,7 +472,7 @@ class _StubKGStore:
         self.indexed_nodes = indexed_nodes
         self.contains_calls = 0
 
-    def fulltext_search_nodes(self, terms, labels=None, limit=None):
+    def fulltext_search_nodes(self, terms, labels=None, limit=None, boosts=None):
         return self.indexed_nodes
 
     def fulltext_search_triples(

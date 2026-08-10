@@ -271,14 +271,17 @@ def test_render_reference_list_shows_only_cited_items():
     assert "[S1]" not in rendered
 
 
-def test_render_reference_list_falls_back_when_nothing_was_cited():
+def test_render_reference_list_is_empty_when_nothing_was_cited():
+    """An uncited answer gets no source list, evidence or no evidence.
+
+    The previous fallback rendered the top evidence items instead, which
+    published a Keras function under three circular-economy PDFs when the
+    retriever returned its usual top-k for an out-of-domain question.
+    """
     evidence = build_evidence_index(
         text_chunks=[_chunk("uno", "a.pdf#page=1#chunk=1", "c1")]
     )
-    rendered = render_reference_list(evidence, cited_refs=[], language="en")
-
-    assert rendered.startswith("Sources:")
-    assert "[S1] a.pdf | p. 1" in rendered
+    assert render_reference_list(evidence, cited_refs=[], language="en") == ""
 
 
 def test_render_reference_list_empty_without_evidence():
@@ -370,11 +373,19 @@ def test_grouped_reference_list_keeps_every_document():
     assert "+5 altri" in rendered
 
 
-def test_grouped_reference_list_falls_back_when_nothing_was_cited():
+def test_grouped_reference_list_is_empty_when_nothing_was_cited():
     evidence = build_evidence_index(
         text_chunks=[_chunk("uno", "a.pdf#page=1#chunk=1", "c1")]
     )
-    rendered = render_grouped_reference_list(evidence, cited_refs=[], language="en")
+    assert render_grouped_reference_list(evidence, cited_refs=[], language="en") == ""
+
+
+def test_grouped_reference_list_still_renders_what_was_cited():
+    """The removal must not touch the path that has citations."""
+    evidence = build_evidence_index(
+        text_chunks=[_chunk("uno", "a.pdf#page=1#chunk=1", "c1")]
+    )
+    rendered = render_grouped_reference_list(evidence, cited_refs=["S1"], language="en")
 
     assert rendered.startswith("Sources:")
     assert "cited passages: p. 1" in rendered
