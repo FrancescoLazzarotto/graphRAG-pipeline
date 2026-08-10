@@ -1342,10 +1342,6 @@ class KGRAGAgent:
         self, question: str, memory: ConversationMemory
     ) -> str:
         """Make an elliptical follow-up self-contained, for retrieval only.
-
-        WP7 (`docs/demo_quality_plan_2026-07.md` §9.3). Returns `question`
-        unchanged on any doubt: a bad rewrite would silently degrade retrieval,
-        and the original question is always a valid fallback.
         """
         if self.llm is None:
             return question
