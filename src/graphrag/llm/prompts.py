@@ -331,7 +331,10 @@ class PromptLibrary:
             # arrives with a full context of unrelated-but-factual chunks, and
             # this line told the model not to call that insufficient.
             + (
-                "When the context does not cover the question, say so and mark "
+                "State that context is insufficient only when context is empty "
+                "or lacks factual evidence."
+                if config.legacy_insufficiency_wording
+                else "When the context does not cover the question, say so and mark "
                 "every statement it does not support with '(not in the retrieved "
                 "evidence)'. Never pass one off as the other."
                 if config.allow_parametric_fallback

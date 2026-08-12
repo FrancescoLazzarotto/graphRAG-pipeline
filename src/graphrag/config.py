@@ -198,6 +198,13 @@ class AgentConfig:
     # such, so groundedness stays measurable. Off by default: it changes the
     # rendered prompt, so baselines opt in explicitly.
     allow_parametric_fallback: bool = False
+    # Restores the pre-repair closing line of the answer prompt, which permitted
+    # a declaration of insufficiency only when the context was empty or carried
+    # no factual evidence. It exists so the thesis campaigns E1-E8, which ran
+    # against that wording, can be reproduced and compared inside one server
+    # session against the current wording. Off by default: the current wording
+    # is the correct one, and nothing but a reproduction should ask for the old.
+    legacy_insufficiency_wording: bool = False
     # Out-of-domain gate, run once before retrieval. Without it the agent has no
     # path to abstain: the dense retriever has no score floor, so `_grade` always
     # sees evidence, and `grade_condition` sends every question to `generate`

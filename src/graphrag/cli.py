@@ -153,6 +153,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--enable-domain-gate",
+        action="store_true",
+        help=(
+            "Classify the question against the collection's scope before "
+            "retrieving, and refuse out-of-domain questions instead of "
+            "answering them from an unrelated context"
+        ),
+    )
+    parser.add_argument(
+        "--legacy-insufficiency-wording",
+        action="store_true",
+        help=(
+            "Restore the pre-repair closing line of the answer prompt, which "
+            "allowed a declaration of insufficiency only for an empty context; "
+            "for reproducing the thesis campaigns E1-E8"
+        ),
+    )
+    parser.add_argument(
         "--subgraph-seed-count",
         type=int,
         default=1,
@@ -336,6 +354,10 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         vector_triples_limit=getattr(args, "vector_triples_limit", 10),
         seed_from_retrieved=getattr(args, "seed_from_retrieved", False),
         allow_parametric_fallback=getattr(args, "allow_parametric_fallback", False),
+        enable_domain_gate=getattr(args, "enable_domain_gate", False),
+        legacy_insufficiency_wording=getattr(
+            args, "legacy_insufficiency_wording", False
+        ),
         focused_answer=getattr(args, "focused_answer", False),
         subgraph_seed_count=getattr(args, "subgraph_seed_count", 1),
         evidence_max_triple_items=getattr(args, "evidence_max_triple_items", 30),
