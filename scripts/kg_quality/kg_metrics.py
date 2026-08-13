@@ -91,9 +91,14 @@ def main() -> int:
 
     driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
     with driver.session(database=args.database) as session:
+        # :NodeVec carriers hold the embeddings on separate nodes (see
+        # scripts/kg_vector_index.py). They have no edges, so counting them
+        # halves the giant-component share and inflates the degree-≤1 share —
+        # the July baseline in docs/kg_densification_plan.md predates them and
+        # would not be comparable.
         nodes = session.run(
-            "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, "
-            "properties(n) AS props"
+            "MATCH (n) WHERE NOT n:NodeVec RETURN elementId(n) AS id, "
+            "labels(n) AS labels, properties(n) AS props"
         ).data()
         edges = session.run(
             "MATCH (a)-[r]->(b) RETURN elementId(a) AS src, elementId(b) AS dst, "
