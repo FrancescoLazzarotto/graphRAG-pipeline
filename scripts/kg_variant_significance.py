@@ -1,0 +1,113 @@
+"""Paired bootstrap on the per-question difference between two KG variants.
+
+``compare_kg_variants.py`` prints micro aggregates, which say which variant is
+ahead but not whether the gap survives resampling. With 26 scored questions a
+0.03 difference can easily be one question changing its mind, and the whole KG
+v2 argument rests on differences that size.
+
+The bootstrap is paired: the same question index is drawn for both variants, so
+the resample cancels question difficulty and measures only the variant effect —
+the two runs answer the identical questions with the identical generator, and
+the only thing that differs is the state of the graph.
+
+Reported per strategy: the mean per-question difference, its 95 % interval, and
+the share of resamples on the positive side.
+
+Usage::
+
+    conda run -n graphllm python scripts/kg_variant_significance.py \\
+        --baseline exp_results_kg_v2/v0_baseline/<run> \\
+        --variant  exp_results_kg_v2/v3_densified/<run> \\
+        --channel answer
+"""
+
+from __future__ import annotations
+
+import argparse
+import random
+import statistics
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO / "evaluation") not in sys.path:
+    sys.path.insert(0, str(REPO / "evaluation"))
+
+from evalkit.io.dataset import build_dataset  # noqa: E402
+from evalkit.metrics.entities import score_row  # noqa: E402
+from evalkit.metrics.mentions import Gazetteer, answer_channel_row  # noqa: E402
+from evalkit.metrics.resolver import Resolver  # noqa: E402
+
+
+def per_question_f1(run_dir: Path, gold_path: Path, channel: str) -> dict[tuple[str, str], float]:
+    """(strategy, query_id) -> concept-level F1 for one run."""
+    resolver = Resolver.from_gold(gold_path)
+    rows = [r for r in build_dataset([run_dir], gold_path=gold_path) if r.gold_query is not None]
+    if channel == "answer":
+        gold = {}
+        for row in rows:
+            gold[row.question_id] = row.gold_query
+        gazetteer = Gazetteer.from_gold(list(gold.values()))
+
+    out: dict[tuple[str, str], float] = {}
+    for row in rows:
+        if row.is_distractor:
+            continue  # a distractor has no expected entity, so no F1
+        # The answer channel is the same scorer over a row whose entity list has
+        # been swapped for the gazetteer's mentions of the answer text.
+        scored = score_row(answer_channel_row(row, gazetteer) if channel == "answer" else row,
+                           resolver)
+        concept = scored.concept
+        if concept is None:
+            continue
+        out[(row.strategy, row.question_id)] = concept.f1 or 0.0
+    return out
+
+
+def paired_bootstrap(diffs: list[float], resamples: int, seed: int) -> tuple[float, float, float, float]:
+    rng = random.Random(seed)
+    means = []
+    for _ in range(resamples):
+        sample = [diffs[rng.randrange(len(diffs))] for _ in range(len(diffs))]
+        means.append(statistics.fmean(sample))
+    means.sort()
+    lower = means[int(0.025 * len(means))]
+    upper = means[int(0.975 * len(means)) - 1]
+    positive = sum(1 for m in means if m > 0) / len(means)
+    return statistics.fmean(diffs), lower, upper, positive
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--variant", type=Path, required=True)
+    parser.add_argument("--gold", type=Path, default=REPO / "gold_v3.json")
+    parser.add_argument("--channel", choices=("answer", "retrieval"), default="answer")
+    parser.add_argument("--resamples", type=int, default=10000)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args(argv)
+
+    base = per_question_f1(args.baseline, args.gold, args.channel)
+    var = per_question_f1(args.variant, args.gold, args.channel)
+
+    by_strategy: dict[str, list[float]] = defaultdict(list)
+    for key, value in base.items():
+        if key in var:
+            by_strategy[key[0]].append(var[key] - value)
+
+    print(f"\npaired bootstrap, {args.channel} channel, concept F1")
+    print(f"baseline: {args.baseline.name}")
+    print(f"variant : {args.variant.name}\n")
+    print(f"{'strategy':<20}{'n':>4}{'mean Δ':>10}{'95% CI':>20}{'P(Δ>0)':>9}")
+    print("-" * 63)
+    for strategy in sorted(by_strategy):
+        diffs = by_strategy[strategy]
+        mean, lower, upper, positive = paired_bootstrap(diffs, args.resamples, args.seed)
+        print(f"{strategy:<20}{len(diffs):>4}{mean:>+10.3f}"
+              f"{f'[{lower:+.3f}, {upper:+.3f}]':>20}{positive:>9.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
