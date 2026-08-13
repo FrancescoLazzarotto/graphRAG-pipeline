@@ -177,6 +177,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="How many anchors the subgraph channel expands from (1 = best only)",
     )
     parser.add_argument(
+        "--subgraph-limit",
+        type=int,
+        default=200,
+        help=(
+            "Triples the subgraph channel may pull per anchor set before ranking. "
+            "The cap is applied in Cypher, so it truncates the neighbourhood in "
+            "graph order and the ranker never sees what was cut. On a sparse "
+            "graph the cap never binds; on a dense one it decides the answer"
+        ),
+    )
+    parser.add_argument(
         "--evidence-max-triple-items",
         type=int,
         default=30,
@@ -360,6 +371,7 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
         ),
         focused_answer=getattr(args, "focused_answer", False),
         subgraph_seed_count=getattr(args, "subgraph_seed_count", 1),
+        subgraph_limit=getattr(args, "subgraph_limit", 200),
         evidence_max_triple_items=getattr(args, "evidence_max_triple_items", 30),
         drop_predicates=tuple(
             p.strip()
