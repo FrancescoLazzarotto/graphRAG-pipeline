@@ -80,16 +80,32 @@ def paired_bootstrap(diffs: list[float], resamples: int, seed: int) -> tuple[flo
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=Path, required=True)
+    parser.add_argument("--baseline", type=Path, help="ignored with --within")
     parser.add_argument("--variant", type=Path, required=True)
+    parser.add_argument("--within", metavar="STRATEGY",
+                        help="compare every strategy of --variant against this one, inside the "
+                             "same run; use --within text_only to ask whether the graph beats "
+                             "the text-only pipeline")
     parser.add_argument("--gold", type=Path, default=REPO / "gold_v3.json")
     parser.add_argument("--channel", choices=("answer", "retrieval"), default="answer")
     parser.add_argument("--resamples", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args(argv)
+    if not args.within and args.baseline is None:
+        parser.error("--baseline is required unless --within is given")
 
-    base = per_question_f1(args.baseline, args.gold, args.channel)
     var = per_question_f1(args.variant, args.gold, args.channel)
+    if args.within:
+        # Same run, same generator, same questions: the pairing key is the
+        # question, and the only thing that differs is which strategy answered
+        # it. Reuse the cross-run dictionary shape by relabelling the reference
+        # strategy onto every other one.
+        reference = {qid: f1 for (strategy, qid), f1 in var.items() if strategy == args.within}
+        if not reference:
+            parser.error(f"strategy {args.within!r} absent from {args.variant}")
+        base = {key: reference[key[1]] for key in var if key[1] in reference}
+    else:
+        base = per_question_f1(args.baseline, args.gold, args.channel)
 
     by_strategy: dict[str, list[float]] = defaultdict(list)
     for key, value in base.items():
@@ -97,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             by_strategy[key[0]].append(var[key] - value)
 
     print(f"\npaired bootstrap, {args.channel} channel, concept F1")
-    print(f"baseline: {args.baseline.name}")
+    print(f"baseline: {args.within if args.within else args.baseline.name}")
     print(f"variant : {args.variant.name}\n")
     print(f"{'strategy':<20}{'n':>4}{'mean Δ':>10}{'95% CI':>20}{'P(Δ>0)':>9}")
     print("-" * 63)

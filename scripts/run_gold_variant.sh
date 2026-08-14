@@ -59,7 +59,7 @@ conda run --no-capture-output -n graphllm python -m graphrag.cli --experiment \
   --text-retriever-mmr --text-retriever-mmr-lambda 0.7 \
   --text-retriever-max-per-doc 2 \
   --vector-retrieval --seed-from-retrieved --subgraph-seed-count 3 \
-  --focused-answer --evidence-max-triple-items 15 \
+  --focused-answer --evidence-max-triple-items "${EVIDENCE_CAP:-30}" \
   ${EXTRA_ARGS} \
   --output-dir "${OUT_ROOT}/${VARIANT}" \
   --experiment-tag "kgv2_${VARIANT}"
