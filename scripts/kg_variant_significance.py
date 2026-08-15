@@ -40,8 +40,15 @@ from evalkit.metrics.mentions import Gazetteer, answer_channel_row  # noqa: E402
 from evalkit.metrics.resolver import Resolver  # noqa: E402
 
 
-def per_question_f1(run_dir: Path, gold_path: Path, channel: str) -> dict[tuple[str, str], float]:
-    """(strategy, query_id) -> concept-level F1 for one run."""
+def per_question_f1(run_dir: Path, gold_path: Path, channel: str,
+                    metric: str = "f1") -> dict[tuple[str, str], float]:
+    """(strategy, query_id) -> one concept-level figure for one run.
+
+    F1 by default. Recall is worth asking for separately: precision here counts a
+    concept expected by another question as a false positive, so an F1 difference
+    mixes what a pipeline found with how much benchmark vocabulary it happened to
+    use elsewhere in the same answer.
+    """
     resolver = Resolver.from_gold(gold_path)
     rows = [r for r in build_dataset([run_dir], gold_path=gold_path) if r.gold_query is not None]
     if channel == "answer":
@@ -61,7 +68,7 @@ def per_question_f1(run_dir: Path, gold_path: Path, channel: str) -> dict[tuple[
         concept = scored.concept
         if concept is None:
             continue
-        out[(row.strategy, row.question_id)] = concept.f1 or 0.0
+        out[(row.strategy, row.question_id)] = getattr(concept, metric) or 0.0
     return out
 
 
@@ -88,13 +95,14 @@ def main(argv: list[str] | None = None) -> int:
                              "the text-only pipeline")
     parser.add_argument("--gold", type=Path, default=REPO / "gold_v3.json")
     parser.add_argument("--channel", choices=("answer", "retrieval"), default="answer")
+    parser.add_argument("--metric", choices=("f1", "recall", "precision"), default="f1")
     parser.add_argument("--resamples", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args(argv)
     if not args.within and args.baseline is None:
         parser.error("--baseline is required unless --within is given")
 
-    var = per_question_f1(args.variant, args.gold, args.channel)
+    var = per_question_f1(args.variant, args.gold, args.channel, args.metric)
     if args.within:
         # Same run, same generator, same questions: the pairing key is the
         # question, and the only thing that differs is which strategy answered
@@ -105,14 +113,14 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"strategy {args.within!r} absent from {args.variant}")
         base = {key: reference[key[1]] for key in var if key[1] in reference}
     else:
-        base = per_question_f1(args.baseline, args.gold, args.channel)
+        base = per_question_f1(args.baseline, args.gold, args.channel, args.metric)
 
     by_strategy: dict[str, list[float]] = defaultdict(list)
     for key, value in base.items():
         if key in var:
             by_strategy[key[0]].append(var[key] - value)
 
-    print(f"\npaired bootstrap, {args.channel} channel, concept F1")
+    print(f"\npaired bootstrap, {args.channel} channel, concept {args.metric}")
     print(f"baseline: {args.within if args.within else args.baseline.name}")
     print(f"variant : {args.variant.name}\n")
     print(f"{'strategy':<20}{'n':>4}{'mean Δ':>10}{'95% CI':>20}{'P(Δ>0)':>9}")
