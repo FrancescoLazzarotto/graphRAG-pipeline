@@ -123,23 +123,41 @@ class KnowledgeGraphManager:
         if path and path.exists():
             try:
                 cached = json.loads(path.read_text(encoding="utf-8"))
-                if int(cached.get("node_count", -1)) == total:
+                # The property list is part of the key: a cache built from
+                # `n.name` alone counts different things than one built from all
+                # of node_name_properties, at the same node count.
+                same_properties = list(cached.get("properties") or []) == list(
+                    self.config.node_name_properties
+                )
+                if int(cached.get("node_count", -1)) == total and same_properties:
                     self._token_df = {
                         str(k): int(v) for k, v in cached.get("token_df", {}).items()
                     }
                     self._token_df_total = total
                     return self._token_df, total
                 logger.info(
-                    "token DF cache stale (%s nodes cached, %s now) — recomputing",
+                    "token DF cache stale (%s nodes / properties %s cached, %s / %s "
+                    "now) — recomputing",
                     cached.get("node_count"),
+                    cached.get("properties"),
                     total,
+                    list(self.config.node_name_properties),
                 )
             except (OSError, ValueError, TypeError) as exc:
                 logger.warning("unreadable token DF cache %s (%s) — recomputing", path, exc)
 
+        # The frequency must be measured over the same properties the match
+        # clause compares. Built from `n.name` alone, a token common in titles
+        # but absent from names got no demotion at all, and the specificity
+        # weighting silently favoured it. See docs/code_audit_2026-08-15.md §2.4.
+        text_expr = " + ' ' + ".join(
+            f"coalesce(toString(n.{prop}), '')"
+            for prop in self.config.node_name_properties
+        )
         counts: dict[str, int] = {}
         for row in self.run_query(
-            "MATCH (n) WHERE n.name IS NOT NULL RETURN toLower(toString(n.name)) AS name"
+            f"MATCH (n) WHERE n.name IS NOT NULL "
+            f"RETURN toLower({text_expr}) AS name"
         ):
             name = row.get("name") or ""
             # A token repeated inside one name still counts once: this is a
@@ -153,7 +171,13 @@ class KnowledgeGraphManager:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(
-                    json.dumps({"node_count": total, "token_df": counts}),
+                    json.dumps(
+                        {
+                            "node_count": total,
+                            "properties": list(self.config.node_name_properties),
+                            "token_df": counts,
+                        }
+                    ),
                     encoding="utf-8",
                 )
             except OSError as exc:
@@ -169,7 +193,18 @@ class KnowledgeGraphManager:
         )
 
     def _reconnect(self) -> None:
+        # Close the old driver first: on a flaky link the retry loop built a new
+        # Neo4jGraph per attempt and left every previous driver — and its
+        # connection pool — alive. See docs/code_audit_2026-08-15.md §2.3.
+        previous = getattr(self, "graph", None)
         self.graph = self._build_graph()
+        if previous is not None:
+            try:
+                driver = getattr(previous, "_driver", None)
+                if driver is not None:
+                    driver.close()
+            except Exception as exc:  # noqa: BLE001 - closing must not mask the retry
+                logger.debug("could not close the previous Neo4j driver: %s", exc)
 
     @staticmethod
     def _is_retryable_query_error(exc: BaseException) -> bool:
@@ -357,12 +392,17 @@ class KnowledgeGraphManager:
         return [self._row_to_triple(row) for row in self.run_query(cypher, params)]
 
     _LUCENE_SPECIAL_RE = re.compile(r'(&&|\|\||[+\-!(){}\[\]^"~*?:\\/])')
+    # Must match "the index does not exist" and nothing else. The generic
+    # "not found" and the procedure name matched Neo4j's *Lucene parse error*
+    # too, which names the procedure it was invoking — so one malformed query
+    # permanently disabled full-text search for the whole process and silently
+    # dropped the rest of the run onto the legacy CONTAINS scan. See
+    # docs/code_audit_2026-08-15.md §2.1.
     _FULLTEXT_MISSING_MARKERS = (
-        "no such fulltext",
-        "there is no such fulltext",
+        "no such fulltext schema index",
+        "there is no such fulltext schema index",
         "no such index",
-        "not found",
-        "db.index.fulltext.querynodes",
+        "unable to find index",
     )
 
     @classmethod
@@ -854,6 +894,12 @@ class KnowledgeGraphManager:
         max_depth = max(1, int(max_depth))
         a_by_id = self.is_element_id(entity_a)
         b_by_id = self.is_element_id(entity_b)
+        # The pair budget is spent per `a`, not globally. A flat `LIMIT 16` on
+        # the (a, b) product ordered only by b's name length let the 16 surviving
+        # pairs share the same one or two b nodes, so most a candidates got no
+        # partner and were silently dropped. Two partners each keeps the same
+        # budget while guaranteeing every a is tried. See
+        # docs/code_audit_2026-08-15.md §2.2.
         cypher_exact = f"""
         MATCH (a)
         WHERE {self._node_text_match_clause("a", "entity_a", exact=True, id_only=a_by_id)}
@@ -864,7 +910,8 @@ class KnowledgeGraphManager:
         WHERE {self._node_text_match_clause("b", "entity_b", exact=True, id_only=b_by_id)}
         WITH DISTINCT a, b
         ORDER BY size({self._coalesce_name_expr("b")}) ASC
-        LIMIT 16
+        WITH a, collect(b)[0..2] AS partners
+        UNWIND partners AS b
         MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
         UNWIND relationships(p) AS r
         RETURN DISTINCT
@@ -908,7 +955,8 @@ class KnowledgeGraphManager:
             WHERE {self._node_text_match_clause("b", "entity_b", exact=False)}
             WITH DISTINCT a, b
             ORDER BY size({self._coalesce_name_expr("b")}) ASC
-            LIMIT 16
+            WITH a, collect(b)[0..2] AS partners
+            UNWIND partners AS b
             MATCH p = shortestPath((a)-[*1..{max_depth}]-(b))
             UNWIND relationships(p) AS r
             RETURN DISTINCT
