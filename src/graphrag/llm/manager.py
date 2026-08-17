@@ -395,10 +395,12 @@ class LLMManager:
     def classify_in_domain(self, question: str, config: Any) -> bool:
         """Whether the question belongs to the corpus domain.
 
-        One classification call before retrieval, answering a single word. No
-        `max_tokens` binding: the prompt constrains the output to one token and
-        the model stops at EOS, which keeps the call identical across the vLLM
-        and local-HF backends.
+        One classification call before retrieval, answering a single word.
+
+        The prompt asks for one token, but nothing enforces it: `_build_vllm_llm`
+        binds `max_tokens=self.max_new_tokens` on the shared client, so the gate
+        call carries the full answer budget and a reasoning model will spend it
+        on a <think> block. The parsing below is written for that.
 
         Args:
             question: The question as typed.
@@ -419,8 +421,26 @@ class LLMManager:
             return True
 
         verdict = str(output.content if hasattr(output, "content") else output).strip()
-        logger.info("Domain gate: %r -> %s", question[:80], verdict[:16])
-        return not verdict.upper().startswith("OUT")
+        logger.info("Domain gate: %r -> %s", question[:80], verdict[:64])
+        # `startswith("OUT")` read only the first three characters, so any
+        # preamble flipped a refusal into an acceptance — and three of the six
+        # campaign generators are reasoning models that open with a <think>
+        # block. Strip the reasoning block, then look for the verdict as a whole
+        # word anywhere in what remains. See docs/code_audit_2026-08-15.md §1.6.
+        cleaned = re.sub(
+            r"<think>.*?</think>", " ", verdict, flags=re.DOTALL | re.IGNORECASE
+        )
+        cleaned = re.sub(r"<think>.*\Z", " ", cleaned, flags=re.DOTALL | re.IGNORECASE)
+        upper = cleaned.upper()
+        out_of_domain = re.search(r"\bOUT(?:[_\- ]?OF[_\- ]?DOMAIN)?\b", upper)
+        in_domain = re.search(r"\bIN(?:[_\- ]?DOMAIN)?\b", upper)
+        if out_of_domain and not in_domain:
+            return False
+        if out_of_domain and in_domain:
+            # Both words present: trust whichever the model said last, which is
+            # its conclusion rather than its restatement of the options.
+            return in_domain.start() > out_of_domain.start()
+        return True
 
     def _build_vllm_llm(self, model_id: str) -> Any:
         ChatOpenAI = self._import_vllm_stack()
@@ -583,6 +603,11 @@ class LLMManager:
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.info("LLM raw output (first 800 chars): %s", answer[:800])
 
+        # Kept so abstention can be measured on what the model said before any
+        # rescue retry rewrote it (audit §1.5).
+        pre_retry_answer = answer
+        refusal_retry_applied = False
+
         if self._hit_token_limit(output):
             logger.warning(
                 "Answer hit max_new_tokens=%d and was cut mid-sentence; trimming "
@@ -613,9 +638,18 @@ class LLMManager:
                 answer2 = str(
                     output2.content if hasattr(output2, "content") else output2
                 ).strip()
-                if answer2:
+                if answer2 and not looks_like_refusal(answer2):
                     logger.info("Fallback retry succeeded: %s", answer2[:500])
+                    # Keep the pre-retry answer: any abstention measured on the
+                    # final answer is measuring post-retry behaviour, which is
+                    # why abstention was unmeasurable on runs without the
+                    # parametric flag. See docs/code_audit_2026-08-15.md §1.5.
+                    refusal_retry_applied = True
                     answer = answer2
+                elif answer2:
+                    # A second refusal is not a rescue. Keeping the first
+                    # formulation preserves the model's own wording.
+                    logger.info("Fallback retry also refused; keeping first answer")
                 else:
                     logger.info("Fallback retry returned empty answer")
             except Exception as exc:
@@ -637,7 +671,11 @@ class LLMManager:
                 target_language=response_language,
             )
 
-        return {"answer": answer}
+        return {
+            "answer": answer,
+            "pre_retry_answer": pre_retry_answer,
+            "refusal_retry_applied": refusal_retry_applied,
+        }
 
     def _enforce_answer_language(
         self,
@@ -849,27 +887,24 @@ class LLMManager:
             "alle",
             "agli",
         }
+        # Kept at comparable coverage to the Italian set above. A ~70-vs-20 split
+        # gave Italian a structural advantage on every mixed sentence, which on a
+        # bilingual corpus with `enforce_language` on meant English questions
+        # being answered in Italian. See docs/code_audit_2026-08-15.md §1.12.
+        # Homographs are deliberately absent from both sets: "in" and "a" are
+        # high-frequency function words in Italian too, so scoring them as
+        # English turned "Approfondisci l'economia circolare in Piemonte" into an
+        # English question.
         english_markers = {
-            "the",
-            "which",
-            "what",
-            "what's",
-            "why",
-            "how",
-            "are",
-            "is",
-            "between",
-            "about",
-            "regarding",
-            "does",
-            "do",
-            "can",
-            "could",
-            "of",
-            "and",
-            "to",
-            "from",
-            "with",
+            "about", "all", "an", "and", "any", "are", "as", "at", "be",
+            "been", "between", "both", "but", "by", "can", "could", "did", "do",
+            "does", "each", "for", "from", "give", "has", "have", "how",
+            "into", "is", "it", "its", "list", "many", "may", "much", "must",
+            "of", "on", "or", "other", "our", "over", "regarding", "should",
+            "some", "such", "than", "that", "the", "their", "them", "then",
+            "there", "these", "they", "this", "those", "through", "to", "under",
+            "was", "were", "what", "what's", "when", "where", "which", "while",
+            "who", "why", "will", "with", "within", "would",
         }
 
         tokens = re.findall(r"[a-zà-öø-ÿ']+", text)
@@ -878,11 +913,15 @@ class LLMManager:
 
         # Short questions carry almost no function words ("Definizione di SEeD?",
         # "Cos'è la coevoluzione?"): orthography is then the strongest remaining
-        # signal, and neither pattern occurs in English.
-        if _ITALIAN_ACCENTED.search(text):
-            it_score += 1
-        if _ITALIAN_ELISION.search(text):
-            it_score += 1
+        # signal. It is only decisive when no English function word appeared at
+        # all — otherwise a borrowed or accented noun ("café", "Fassio's
+        # coevoluzione") handed a free point to Italian in a plainly English
+        # sentence.
+        if en_score == 0:
+            if _ITALIAN_ACCENTED.search(text):
+                it_score += 1
+            if _ITALIAN_ELISION.search(text):
+                it_score += 1
 
         return "it" if it_score > en_score else "en"
 

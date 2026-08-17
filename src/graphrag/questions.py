@@ -62,6 +62,11 @@ _LEADING_ARTICLES_RE = re.compile(
 _DEICTIC_TERMS = {
     "questo", "questa", "questi", "queste", "quello", "quella", "quelli",
     "quelle", "cio", "ciò", "this", "that", "these", "those", "it", "they",
+    # Possessives point back at a noun introduced earlier in the question, so
+    # the opener that produced them belongs to a second clause: "…extracted from
+    # grape pomace, and what are their applications?" yielded the term "their
+    # applications". See docs/code_audit_2026-08-15.md §1.8.
+    "their", "its", "his", "her", "our", "your", "loro", "sua", "sue", "suoi",
 }
 # Openers that leave a verb phrase behind instead of a concept.
 _NON_TERM_STARTERS = {
@@ -144,9 +149,16 @@ def definitional_term(question: str) -> str:
 def is_definitional(question: str) -> bool:
     """Whether the question asks what something is.
 
-    A definitional opener alone is not enough: the term it introduces must look
-    like a concept, otherwise the answer has nothing to quote a definition of.
+    A definitional opener alone is not enough on two counts. The term it
+    introduces must look like a concept, otherwise the answer has nothing to
+    quote a definition of. And the question must not be asking for a list: "What
+    are the four implementation cycles of metabolisation?" opens like a
+    definition but promises an enumeration, and sending it through the
+    quote-then-explain prompt spends the answer's opening on a quotation of a
+    list item. See docs/code_audit_2026-08-15.md §1.8.
     """
+    if is_enumerative(question):
+        return False
     return bool(definitional_term(question))
 
 

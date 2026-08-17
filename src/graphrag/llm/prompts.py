@@ -541,6 +541,10 @@ class PromptLibrary:
             "So far you have gathered:\n{hop_history}\n\n"
             "Question: {question}\n\n"
             "Based on what you know so far, do you have enough information?\n"
-            'Respond with JSON: {"enough": true/false, "next_entities": ["..."], '
-            '"reasoning": "..."}'
+            # Doubled braces: single ones are parsed as template variables by
+            # ChatPromptTemplate and this function raised the moment it was
+            # called. `reflection_prompt` above escapes them correctly. See
+            # docs/code_audit_2026-08-15.md §5.5.
+            'Respond with JSON: {{"enough": true/false, "next_entities": ["..."], '
+            '"reasoning": "..."}}'
         )
