@@ -211,7 +211,12 @@ shortest path → triple ranking → optional text channel (TF-IDF or dense FAIS
 
 The vector channel is the cross-lingual half: the graph is largely Italian and the gold
 questions are English. It requires `scripts/kg_vector_index.py` and a running embedding
-endpoint, and degrades to lexical-only (with a WARNING) if either is missing.
+endpoint (`scripts/start_vllm_encoder.sh`). If the encoder fails after its retries the
+retrieval **raises** rather than degrading, because a silent fallback to lexical-only
+produced a model-asymmetric campaign; set `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` for
+interactive use, where a lexical-only answer beats no answer.
+
+The lexical text channel ranks with Okapi BM25 and honours `--text-retriever-mmr`.
 
 ### Key CLI flags (`python -m graphrag.cli`)
 
@@ -285,7 +290,8 @@ Core Pydantic models live in `kg_pipeline/models/types.py`. `RAGState`, `KGNode`
 `ProvenanceRecord` are TypedDicts in `src/graphrag/types.py`.
 
 `RAGState` is the LangGraph channel schema: **a key a node returns but does not declare there is
-silently dropped**. `retrieved_neighbors` is currently in that situation.
+silently dropped**. `retrieved_neighbors` and `visible_evidence_refs` are declared
+there now; check the schema before returning any new key.
 
 KGTriple predicates must be `SCREAMING_SNAKE_CASE` (validated by regex). Entity names are **not**
 unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
@@ -340,8 +346,8 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
 | KG stage 3 crash on malformed LLM output | Expected — caught and logged to `failed_chunks.jsonl`; pipeline continues |
 | Entity resolution too aggressive | Increase `resolution.similarity_threshold` in `kg_pipeline/config.yaml` |
 | KG pipeline hangs on notebook disconnect | Use `sbatch scripts/run_kg_pipeline.sbatch` for detached execution |
-| Vector channel silently skipped | Check the embedding endpoint (`GRAPHRAG_EMBED_BASE_URL`) and rerun `scripts/kg_vector_index.py` |
-| Retrieval suddenly slow mid-run | The full-text index may have been disabled for the session by one bad query (audit §2.1) |
+| `EmbeddingUnavailable` raised mid-run | The encoder is down: `scripts/start_vllm_encoder.sh`. It no longer degrades silently (audit §1.1 follow-up) |
+| Retrieval suddenly slow mid-run | Was the full-text index disabled by one bad query? The markers are exact since 2026-08-17, so this should no longer happen (audit §2.1) |
 
 ## Open defects
 

@@ -688,7 +688,14 @@ is in [`docs/code_audit_2026-08-15.md`](docs/code_audit_2026-08-15.md).
 - **Edge provenance is single-valued.** A triple attested in several documents keeps the
   `source_doc` / `page_range` of the last ingestion.
 - **`stage6_neo4j_summary.json:relationships_written` counts triples sent, not edges written.**
-- **MMR flags are inert on the default TF-IDF text backend**; they apply to `--text-retriever-backend dense` only.
+- **MMR now applies to both text backends.** `TextRAGManager.retrieve_with_scores`
+  accepts `mmr_lambda` (Jaccard similarity over chunk tokens), so
+  `--text-retriever-mmr` is honoured on the default lexical backend as well as on
+  `--text-retriever-backend dense`. Runs before 2026-08-17 passed the flag and
+  silently got plain relevance ranking.
+- **The lexical backend ranks with Okapi BM25** (k1 1.5, b 0.75). Runs before
+  2026-08-17 used a formula that was neither tf-idf cosine nor BM25 and was
+  biased by chunk length.
 - **The KG pipeline does not control `PYTHONHASHSEED`** despite setting it at runtime; export it
   before launching if you need it fixed.
 
