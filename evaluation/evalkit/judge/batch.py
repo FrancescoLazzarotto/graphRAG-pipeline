@@ -278,7 +278,16 @@ def score_dataset_batched(
             len(stale_keys),
         )
 
-    row_scores: list[dict[str, Any]] = [e for k, e in done.items() if k not in stale_keys]
+    # Seeded from the intersection with the rows actually being judged, not from
+    # every checkpoint entry: re-judging a filtered subset against an existing
+    # judge_rows.jsonl silently folded the earlier, larger dataset back into the
+    # summary. See docs/code_audit_2026-08-15.md §4.3.
+    active_keys = {_row_key(row) for row in active}
+    row_scores: list[dict[str, Any]] = [
+        entry
+        for key, entry in done.items()
+        if key in active_keys and key not in stale_keys
+    ]
 
     ckpt_fh = ckpt_path.open("a", encoding="utf-8") if ckpt_path else None
     try:

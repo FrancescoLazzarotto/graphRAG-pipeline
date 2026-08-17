@@ -26,13 +26,26 @@ def exact_match(prediction: str, reference: str) -> float:
 
 
 def partial_match(prediction: str, reference: str) -> float:
-    """Ratio of reference tokens found anywhere in prediction."""
-    pred_norm = _normalize(prediction)
-    ref_tokens = _tokenize(reference)
+    """Fraction of the reference's distinct tokens present in the prediction.
+
+    Both halves of the old definition were wrong. ``token in pred_norm`` was a
+    substring test against the whole prediction, so a two-letter reference token
+    matched inside any longer word; and duplicate reference tokens were counted
+    once per occurrence in both numerator and denominator, letting a repeated
+    common word dominate the ratio. See docs/code_audit_2026-08-15.md §4.4.
+
+    Args:
+        prediction: Model answer.
+        reference: Gold answer.
+
+    Returns:
+        Ratio in ``[0, 1]``.
+    """
+    pred_tokens = set(_tokenize(prediction))
+    ref_tokens = set(_tokenize(reference))
     if not ref_tokens:
         return 0.0
-    hits = sum(1 for token in ref_tokens if token in pred_norm)
-    return hits / len(ref_tokens)
+    return len(ref_tokens & pred_tokens) / len(ref_tokens)
 
 
 def token_f1(prediction: str, reference: str) -> float:

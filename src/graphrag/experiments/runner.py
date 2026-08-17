@@ -43,6 +43,13 @@ class ExperimentResult:
     kg_shortest_path_triples_used: int = 0
     sub_questions: int = 0
     insufficient_answer: bool = False
+    # The answer before the refusal-rescue retry, and whether it fired. An
+    # abstention measured on the final answer is measuring post-retry behaviour
+    # (docs/code_audit_2026-08-15.md §1.5); `insufficient_answer_pre_retry` is
+    # the abstention signal to report.
+    pre_retry_answer: str = ""
+    refusal_retry_applied: bool = False
+    insufficient_answer_pre_retry: bool = False
     contexts: list[str] = field(default_factory=list)
     retrieved_triples: list[dict[str, Any]] = field(default_factory=list)
     retrieved_entities: list[dict[str, Any] | str] = field(default_factory=list)
@@ -92,6 +99,7 @@ class ExperimentRunner:
             retrieved_text_sources = self._extract_text_sources(state)
 
             answer = state.get("answer", "")
+            pre_retry_answer = str(state.get("pre_retry_answer", "") or "")
             result = ExperimentResult(
                 strategy=label,
                 question=question,
@@ -112,6 +120,11 @@ class ExperimentRunner:
                 if isinstance(state.get("sub_questions", []), list)
                 else 0,
                 insufficient_answer=self._is_insufficient(answer),
+                pre_retry_answer=pre_retry_answer,
+                refusal_retry_applied=bool(state.get("refusal_retry_applied")),
+                insufficient_answer_pre_retry=self._is_insufficient(
+                    pre_retry_answer or answer
+                ),
                 contexts=contexts,
                 retrieved_triples=retrieved_triples,
                 retrieved_entities=retrieved_entities,
@@ -135,6 +148,9 @@ class ExperimentRunner:
         contexts: list[str] = []
         seen: set[str] = set()
 
+        # `kg_context` and `merged_context` are declared in RAGState but no node
+        # ever writes them; they are read here so an artifact from an older
+        # revision still deserialises. See docs/code_audit_2026-08-15.md §4.7.
         for key in ("text_context", "kg_context", "merged_context"):
             value = str(state.get(key, "") or "").strip()
             if not value:
@@ -304,6 +320,12 @@ class ExperimentRunner:
                     "contexts_json",
                     "retrieved_triples_json",
                     "retrieved_entities_json",
+                    # Present in the JSONL export but previously missing here, so
+                    # any consumer reading the CSV could reproduce neither the
+                    # insufficiency metric nor the text provenance. See
+                    # docs/code_audit_2026-08-15.md §4.6.
+                    "insufficient_answer",
+                    "retrieved_text_sources_json",
                     "metadata_json",
                 ]
             )
@@ -323,6 +345,10 @@ class ExperimentRunner:
                         json.dumps(result.contexts, ensure_ascii=False),
                         json.dumps(result.retrieved_triples, ensure_ascii=False),
                         json.dumps(result.retrieved_entities, ensure_ascii=False),
+                        result.insufficient_answer,
+                        json.dumps(
+                            result.retrieved_text_sources, ensure_ascii=False
+                        ),
                         json.dumps(result.metadata, ensure_ascii=False, sort_keys=True),
                     ]
                 )

@@ -54,10 +54,14 @@ def _determine_skip_reason(
         return "question_not_found"
     if malformed_json:
         return "malformed_json"
-    if not contexts:
-        return "empty_context"
+    # `no_gold` is checked before `empty_context`: a row with neither was
+    # reported as a context problem, which sent every investigation towards
+    # retrieval when the gold was simply missing. See
+    # docs/code_audit_2026-08-15.md §4.5.
     if not has_gold:
         return "no_gold"
+    if not contexts:
+        return "empty_context"
     return ""
 
 

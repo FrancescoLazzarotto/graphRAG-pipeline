@@ -378,6 +378,15 @@ def _build_base_config(args: argparse.Namespace) -> AgentConfig:
             for p in getattr(args, "drop_predicates", "").split(",")
             if p.strip()
         ),
+        # Copied so `config.json` records the backend that actually ran. These
+        # were left at their defaults, which made the serialised "fully resolved
+        # config" report `text_retriever_backend: "tfidf"` for a dense run. See
+        # docs/code_audit_2026-08-15.md §5.4.
+        text_retriever_backend=getattr(args, "text_retriever_backend", "tfidf"),
+        dense_embedding_model=getattr(
+            args, "dense_embedding_model", "intfloat/multilingual-e5-base"
+        ),
+        vector_index_dir=getattr(args, "vector_index_dir", "artifacts/vector_index"),
     )
 
 

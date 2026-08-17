@@ -68,14 +68,27 @@ def metric_summary(
     n_bootstrap: int = 1000,
     ci: float = 0.95,
     seed: int = 42,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | None]:
     """Compute summary stats for a list of metric values.
 
+    With no observations the statistics are ``None``, not ``0.0``: a printed
+    "0.0" reads as "the system scored zero" when it means "never measured", and
+    a JSON gold leaves the triple-level metrics unpopulated on every row, so six
+    such metrics were reported as zeros in every summary. See
+    docs/code_audit_2026-08-15.md §4.2.
+
     Returns:
-        Dict with mean, std, ci_lower, ci_upper, n.
+        Dict with mean, std, ci_lower, ci_upper, n; the four statistics are
+        ``None`` when ``values`` is empty.
     """
     if not values:
-        return {"mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0, "n": 0}
+        return {
+            "mean": None,
+            "std": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "n": 0,
+        }
     ci_lower, ci_upper = bootstrap_ci(values, n_bootstrap=n_bootstrap, ci=ci, seed=seed)
     return {
         "mean": mean(values),

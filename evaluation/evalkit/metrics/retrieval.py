@@ -16,10 +16,15 @@ def _normalize_text(value: str) -> str:
 
 
 def _normalize_entity(item: Any) -> str:
+    # Key order matters and must match `metrics/entities.py`. With "id" first,
+    # every node entity emitted by the runner normalised to its Neo4j elementId
+    # ("4:4eddd2a9-...:12680"), which can never equal a gold label — so
+    # `entity_coverage` silently measured the triple channel alone. See
+    # docs/code_audit_2026-08-15.md §4.1.
     if isinstance(item, str):
         return _normalize_text(item)
     if isinstance(item, dict):
-        for key in ("id", "name", "label", "entity"):
+        for key in ("label", "name", "id", "entity"):
             value = item.get(key)
             if isinstance(value, str) and value.strip():
                 return _normalize_text(value)
