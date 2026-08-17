@@ -29,6 +29,10 @@ class RAGState(TypedDict, total=False):
     # are dropped); the experiment runner serialises these for provenance/answer
     # analysis, and the *_count fields below mirror their lengths.
     retrieved_nodes: list[dict[str, Any]]
+    # Declared so `neighbors_focus` runs are auditable at the evidence level: the
+    # retrieve node has always returned this key, but without a declaration
+    # LangGraph dropped it and only the count reached the artifacts (audit §1.7).
+    retrieved_neighbors: list[dict[str, Any]]
     retrieved_subgraph: list[dict[str, Any]]
     retrieved_shortest_path: list[dict[str, Any]]
     retrieved_text_sources: list[dict[str, Any]]
@@ -46,9 +50,16 @@ class RAGState(TypedDict, total=False):
     # so the state stays JSON-dumpable for the experiment runner; rebuild the
     # dataclasses with graphrag.agent.evidence.evidence_from_dicts.
     evidence_index: list[dict[str, Any]]
+    # Reference ids that survived context compression, i.e. the blocks the model
+    # was actually shown. The citation gate validates against these.
+    visible_evidence_refs: list[str]
     citation_report: dict[str, Any]
     quote_report: dict[str, Any]
     answer: str
+    # The answer before the refusal-rescue retry, and whether that retry fired.
+    # Abstention must be measured on the pre-retry text (audit §1.5).
+    pre_retry_answer: str
+    refusal_retry_applied: bool
     # Domain gate. `in_domain` is False only when the gate ran and rejected the
     # question; `out_of_scope` marks the answer as the fixed refusal, so callers
     # can tell an abstention from a generated answer without parsing prose.

@@ -29,11 +29,26 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Sequence
 
 import requests
 
 logger = logging.getLogger("graphrag")
+
+# The endpoint is local, so a failed request is almost always transient (server
+# still warming, a queue rejection, a dropped connection). The August campaign
+# lost the vector channel on three queries in three of six models — a silent,
+# model-asymmetric degradation of the channel that carries most of the recall.
+_RETRY_ATTEMPTS = int(os.getenv("GRAPHRAG_EMBED_RETRIES", "3") or 3)
+_RETRY_BACKOFF_SEC = float(os.getenv("GRAPHRAG_EMBED_RETRY_BACKOFF_SEC", "0.5") or 0.5)
+
+# The e5 family stops at 512 tokens and the server answers 400 — not a truncated
+# embedding — for anything longer. Truncating here removes that failure mode
+# entirely: a slightly shortened vector is worth incomparably more than no vector
+# at all, which is what the caller gets from a raised error. ~3.6 chars/token is
+# conservative for mixed Italian/English text, and the prefix is counted too.
+_MAX_INPUT_CHARS = int(os.getenv("GRAPHRAG_EMBED_MAX_CHARS", "1700") or 1700)
 
 QUERY_PREFIX = "query: "
 PASSAGE_PREFIX = "passage: "
@@ -54,6 +69,73 @@ def base_url() -> str:
 def model_id() -> str:
     """Encoder id from ``GRAPHRAG_EMBED_MODEL``, else the e5 default."""
     return os.getenv("GRAPHRAG_EMBED_MODEL", DEFAULT_MODEL)
+
+
+def _truncate(text: str) -> str:
+    """Clip one prefixed input to the encoder's context window.
+
+    Args:
+        text: Text already carrying its ``query:``/``passage:`` prefix.
+
+    Returns:
+        The text, shortened at a word boundary when it exceeded the budget.
+    """
+    if len(text) <= _MAX_INPUT_CHARS:
+        return text
+    clipped = text[:_MAX_INPUT_CHARS]
+    cut = clipped.rfind(" ")
+    if cut > _MAX_INPUT_CHARS // 2:
+        clipped = clipped[:cut]
+    logger.warning(
+        "embedding input truncated from %d to %d chars to fit the encoder window",
+        len(text),
+        len(clipped),
+    )
+    return clipped
+
+
+def _post_batch(
+    endpoint: str, name: str, batch: list[str], timeout: float
+) -> dict:
+    """POST one batch to the embeddings endpoint, retrying transient failures.
+
+    Args:
+        endpoint: Full ``/embeddings`` URL.
+        name: Model id to request.
+        batch: Prefixed texts.
+        timeout: Per-request timeout in seconds.
+
+    Returns:
+        The decoded JSON payload.
+
+    Raises:
+        EmbeddingUnavailable: Every attempt failed. The message carries the
+            server's own error body, without which the August campaign's three
+            400s could not be diagnosed after the fact.
+    """
+    last_error = ""
+    for attempt in range(1, max(1, _RETRY_ATTEMPTS) + 1):
+        body = ""
+        try:
+            response = requests.post(
+                endpoint,
+                json={"model": name, "input": batch},
+                timeout=timeout,
+            )
+            body = (response.text or "")[:500]
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as exc:
+            last_error = f"{exc}" + (f" | body: {body}" if body else "")
+            if attempt < max(1, _RETRY_ATTEMPTS):
+                logger.warning(
+                    "embedding request failed (attempt %d/%d): %s — retrying",
+                    attempt,
+                    _RETRY_ATTEMPTS,
+                    last_error,
+                )
+                time.sleep(_RETRY_BACKOFF_SEC * attempt)
+    raise EmbeddingUnavailable(f"{endpoint}: {last_error}")
 
 
 def encode(
@@ -89,17 +171,11 @@ def encode(
     name = model or model_id()
     out: list[list[float]] = []
     for start in range(0, len(texts), batch_size):
-        batch = [f"{prefix}{text}" for text in texts[start : start + batch_size]]
-        try:
-            response = requests.post(
-                endpoint,
-                json={"model": name, "input": batch},
-                timeout=timeout,
-            )
-            response.raise_for_status()
-            payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            raise EmbeddingUnavailable(f"{endpoint}: {exc}") from exc
+        batch = [
+            _truncate(f"{prefix}{text}")
+            for text in texts[start : start + batch_size]
+        ]
+        payload = _post_batch(endpoint, name, batch, timeout)
 
         rows = payload.get("data") or []
         if len(rows) != len(batch):

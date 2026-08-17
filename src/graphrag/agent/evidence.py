@@ -22,7 +22,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Collection, Iterable, Sequence
 
 logger = logging.getLogger("graphrag")
 
@@ -344,15 +344,38 @@ def evidence_from_dicts(rows: Sequence[dict[str, Any]]) -> list[EvidenceItem]:
     return items
 
 
+def refs_present_in(text: str) -> set[str]:
+    """Reference ids that appear as evidence-block headers in ``text``.
+
+    Used to learn which blocks survived context compression, so the citation
+    gate can validate against what the model was shown rather than against the
+    full index.
+
+    Args:
+        text: Rendered context, possibly compressed.
+
+    Returns:
+        Normalised ref ids (``S1``, ``T12``) found in the text.
+    """
+    return {
+        f"{kind.upper()}{number}"
+        for kind, number in _REF_RE.findall(text or "")
+    }
+
+
 def render_cited_context(
-    query: str,
     evidence: Sequence[EvidenceItem],
     entity_sections: Sequence[tuple[str, str]] = (),
 ) -> str:
     """Render the model-facing context with one numbered block per evidence item.
 
+    The question is deliberately absent: the prompt carries it in its own
+    ``question`` slot, and echoing it into the context made ``context_text``
+    non-empty even with nothing retrieved, which disabled the emptiness checks
+    and let the relevance grader match the query against itself. See
+    docs/code_audit_2026-08-15.md §1.1.
+
     Args:
-        query: The (possibly rewritten) question, kept at the top as today.
         evidence: Items from :func:`build_evidence_index`.
         entity_sections: ``(title, body)`` pairs for non-citable context such as
             matched nodes and neighbours — names without provenance, which must
@@ -362,8 +385,6 @@ def render_cited_context(
         The full context string.
     """
     sections: list[str] = []
-    if query:
-        sections.append(f"Query: {query}")
 
     text_items = [item for item in evidence if item.kind == "text"]
     triple_items = [item for item in evidence if item.kind == "triple"]
@@ -440,6 +461,7 @@ def verify_citations(
     policy: str = "mark",
     language: str = "it",
     max_refs_per_tag: int = 2,
+    visible_refs: Collection[str] | None = None,
 ) -> CitationReport:
     """Check every reference tag in ``answer`` against the evidence index.
 
@@ -453,11 +475,19 @@ def verify_citations(
         max_refs_per_tag: Ids kept per tag. Models happily emit ``[T4, T5, T6]``
             for one claim, which turns the answer and the source list into
             noise; the surplus is trimmed to the most relevant (first) ids.
+        visible_refs: Reference ids that survived into the context the model was
+            actually shown. Context compression drops the middle of the string,
+            so the index can list blocks the model never saw; validating against
+            the full index let a tag pointing at a dropped block pass the gate.
+            ``None`` validates against the whole index. See
+            docs/code_audit_2026-08-15.md §1.3.
 
     Returns:
         A report carrying the processed answer and the citation counts.
     """
     known = {item.ref_id for item in evidence}
+    if visible_refs is not None:
+        known &= set(visible_refs)
     cited: list[str] = []
     phantom: list[str] = []
     total = 0

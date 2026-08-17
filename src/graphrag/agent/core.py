@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ from graphrag.agent.evidence import (
     build_evidence_index,
     evidence_from_dicts,
     evidence_to_dicts,
+    refs_present_in,
     render_cited_context,
     render_display_citations,
     render_grouped_reference_list,
@@ -43,6 +45,54 @@ _WORD_RE = re.compile(r"\w+", re.UNICODE)
 # must still be refused. Every continuation measured at four words or fewer
 # ("fammi un esempio", "non ho capito", "in che senso") sits at three or below.
 _MIN_GATED_TOKENS = 3
+
+# Bilingual function words. The corpus is mixed Italian/English and the gold
+# questions are English, so an Italian-only list left `the`, `and`, `for`, `are`
+# scoring as salient terms on every English question — with substring matching
+# that made `_grade` accept any triple at all. See docs/code_audit_2026-08-15.md
+# §1.2.
+_STOPWORDS_IT = {
+    "al", "alla", "alle", "agli", "che", "come", "con", "cosa", "cui", "da",
+    "dal", "dalla", "degli", "dei", "del", "della", "delle", "di", "dove", "e",
+    "ed", "gli", "i", "il", "in", "la", "le", "lo", "loro", "ma", "nel",
+    "nella", "nelle", "non", "o", "parlami", "per", "più", "quale", "quali",
+    "quando", "quanto", "si", "sono", "su", "sue", "sui", "suo", "sul", "sulla",
+    "tra", "un", "una", "uno",
+}
+_STOPWORDS_EN = {
+    "about", "all", "and", "any", "are", "as", "at", "be", "been", "between",
+    "both", "but", "by", "can", "did", "do", "does", "for", "from", "had",
+    "has", "have", "how", "in", "into", "is", "it", "its", "list", "many",
+    "may", "much", "not", "of", "on", "or", "our", "over", "that", "the",
+    "their", "them", "there", "these", "they", "this", "those", "to", "under",
+    "was", "were", "what", "when", "where", "which", "who", "why", "will",
+    "with", "within", "would",
+}
+_STOPWORDS = _STOPWORDS_IT | _STOPWORDS_EN
+
+# Lowercase content words shorter than this carry no discriminative power once
+# stopwords are removed ("use", "aim", "key") and, matched as substrings, hit
+# almost every triple.
+_MIN_CONTENT_TERM_LEN = 4
+
+
+def _term_matches(term: str, haystack: str) -> bool:
+    """Whether ``term`` occurs in ``haystack`` on word boundaries.
+
+    Plain ``term in haystack`` let short terms match inside unrelated words
+    (`rice` in `price`, `ceff` in `ceffpolicy`), which inflated every relevance
+    and coverage count that used it.
+
+    Args:
+        term: Lowercase search term.
+        haystack: Lowercase text to search.
+
+    Returns:
+        True when the term appears as a whole word (or whole phrase).
+    """
+    if not term or not haystack:
+        return False
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", haystack) is not None
 
 
 class KGRAGAgent:
@@ -462,12 +512,15 @@ class KGRAGAgent:
             )
             if evidence_items:
                 context = render_cited_context(
-                    query=query,
                     evidence=evidence_items,
                     entity_sections=self._entity_sections(retrieved_data),
                 )
 
         compressed_context = self.compressor.compress(context)
+        # Which evidence blocks the model will actually see. Compression drops
+        # the middle of the context, and the citation gate must judge tags
+        # against that, not against the full index (audit §1.3).
+        visible_refs = sorted(refs_present_in(compressed_context))
         triples = (
             retrieved_data.get("triples", [])
             if isinstance(retrieved_data, dict)
@@ -500,6 +553,7 @@ class KGRAGAgent:
         result = {
             "text_context": compressed_context,
             "evidence_index": evidence_to_dicts(evidence_items),
+            "visible_evidence_refs": visible_refs,
             "kg_triples": triples if isinstance(triples, list) else [],
             "retrieved_text_sources": text_sources
             if isinstance(text_sources, list)
@@ -585,7 +639,13 @@ class KGRAGAgent:
         if not isinstance(incoming, list):
             return existing
 
+        # Checked before the append, and on entry: the post-append check let
+        # every merge call finish one item over the cap, so with decomposition
+        # (up to four retrieval queries) the limit was exceeded by up to three.
+        # See docs/code_audit_2026-08-15.md §1.10.
         for item in incoming:
+            if len(existing) >= limit:
+                break
             if not isinstance(item, dict):
                 continue
             key = self._node_key(item)
@@ -593,8 +653,6 @@ class KGRAGAgent:
                 continue
             seen.add(key)
             existing.append(item)
-            if len(existing) >= limit:
-                break
 
         return existing
 
@@ -608,7 +666,10 @@ class KGRAGAgent:
         if not isinstance(incoming, list):
             return existing
 
+        # Cap checked before the append — see `_merge_nodes` (audit §1.10).
         for item in incoming:
+            if len(existing) >= limit:
+                break
             if not isinstance(item, dict):
                 continue
             key = self._triple_key(item)
@@ -616,8 +677,6 @@ class KGRAGAgent:
                 continue
             seen.add(key)
             existing.append(item)
-            if len(existing) >= limit:
-                break
 
         return existing
 
@@ -719,13 +778,13 @@ class KGRAGAgent:
         # examine triples for semantic overlap
         for triple in state.get("kg_triples", []) or []:
             hay = f"{triple.get('subject', '')} {triple.get('predicate', '')} {triple.get('object', '')}".lower()
-            if any(term in hay for term in salient):
+            if any(_term_matches(term, hay) for term in salient):
                 matched += 1
 
         # examine nodes
         for node in state.get("retrieved_nodes", []) or state.get("nodes", []) or []:
             text = str(node.get("text", "")).lower()
-            if any(term in text for term in salient):
+            if any(_term_matches(term, text) for term in salient):
                 matched += 1
 
         # examine subgraph and shortest path textualizations
@@ -733,7 +792,7 @@ class KGRAGAgent:
             state.get("retrieved_subgraph", []) or state.get("subgraph", []) or []
         ):
             hay = f"{item.get('subject', '')} {item.get('predicate', '')} {item.get('object', '')}".lower()
-            if any(term in hay for term in salient):
+            if any(_term_matches(term, hay) for term in salient):
                 matched += 1
 
         for item in (
@@ -742,12 +801,12 @@ class KGRAGAgent:
             or []
         ):
             hay = f"{item.get('subject', '')} {item.get('predicate', '')} {item.get('object', '')}".lower()
-            if any(term in hay for term in salient):
+            if any(_term_matches(term, hay) for term in salient):
                 matched += 1
 
         if has_text_evidence:
             context_lower = text_context.lower()
-            if any(term in context_lower for term in salient):
+            if any(_term_matches(term, context_lower) for term in salient):
                 matched += 1
 
         # Determine relevance: require at least one semantic match, and either
@@ -833,6 +892,27 @@ class KGRAGAgent:
         )
         return quotation + "\n\n" + answer.lstrip(), best_item.ref_id
 
+    def _retrieval_channels_disabled(self) -> bool:
+        """Whether the configuration turns every retrieval channel off.
+
+        True only for a deliberately retrieval-free arm (the `no_retrieval`
+        LLM-only baseline). It separates "retrieval ran and found nothing",
+        which is an honest insufficiency, from "retrieval was never asked to
+        run", where refusing measures nothing about the model.
+
+        Returns:
+            True when no KG channel and no text channel is enabled.
+        """
+        cfg = self.config
+        return not (
+            cfg.include_nodes
+            or cfg.include_triples
+            or cfg.include_neighbors
+            or cfg.include_subgraph
+            or cfg.include_shortest_path
+            or cfg.use_text_retriever
+        )
+
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
         context = state.get("text_context", "")
@@ -847,7 +927,9 @@ class KGRAGAgent:
         )
         evidence_units = kg_evidence_units + (1 if has_text_evidence else 0)
 
-        if evidence_units == 0:
+        llm_only_baseline = evidence_units == 0 and self._retrieval_channels_disabled()
+
+        if evidence_units == 0 and not llm_only_baseline:
             logger.warning(
                 "Generation with zero evidence: retrieval mode=%s returned no nodes, "
                 "triples, subgraph, shortest_path or text context for query=%r",
@@ -868,7 +950,14 @@ class KGRAGAgent:
                 )
             }
 
-        sparse_context = evidence_units <= 2 and len(str(context or "").strip()) < 1600
+        # The sparse-context nudge tells the model to work from the available
+        # context; on the LLM-only arm there is none, so it would be an
+        # instruction to answer from nothing.
+        sparse_context = (
+            not llm_only_baseline
+            and evidence_units <= 2
+            and len(str(context or "").strip()) < 1600
+        )
         effective_query = query
         if sparse_context:
             # Match the instruction language to the question language: a fixed
@@ -887,11 +976,28 @@ class KGRAGAgent:
                     + "If the context is limited, still provide the best possible answer and add a short 'Limits and confidence' section."
                 )
 
+        # The LLM-only baseline must be asked the question the way a bare LLM
+        # would be asked it. Under the default grounding rule ("use ONLY the
+        # provided context") an empty context turns the whole arm into a refusal
+        # generator, which measures the prompt rather than the model and makes
+        # every retrieval arm look better than it is.
+        generation_config = self.config
+        if llm_only_baseline:
+            generation_config = dataclasses.replace(
+                self.config, allow_parametric_fallback=True
+            )
+
         if self.llm:
             result = self.llm.generate(
-                query=effective_query, context=context, config=self.config
+                query=effective_query, context=context, config=generation_config
             )
             answer = result.get("answer", "")
+            # Carried to the artifacts so the abstention metric can be computed
+            # on the pre-retry answer (audit §1.5).
+            retry_fields = {
+                "pre_retry_answer": str(result.get("pre_retry_answer", "") or ""),
+                "refusal_retry_applied": bool(result.get("refusal_retry_applied")),
+            }
             logger.info(
                 "LLM returned (first 500 chars): %s | sparse_context=%s | evidence_units=%d",
                 answer[:500],
@@ -922,11 +1028,13 @@ class KGRAGAgent:
                 # source list is now derived from what the model actually cited,
                 # not from the top-4 retrieved triples.
                 language = LLMManager._detect_query_language(query)
+                visible = state.get("visible_evidence_refs")
                 report = verify_citations(
                     answer=answer,
                     evidence=evidence_items,
                     policy=self.config.citation_policy,
                     language=language,
+                    visible_refs=visible if visible else None,
                 )
                 answer = report.answer
                 quote_report = None
@@ -977,19 +1085,29 @@ class KGRAGAgent:
                     len(report.cited_refs),
                     len(report.phantom_refs),
                 )
-                generated = {"answer": answer, "citation_report": report.as_dict()}
+                generated = {
+                    "answer": answer,
+                    "citation_report": report.as_dict(),
+                    **retry_fields,
+                }
                 if quote_report is not None and quote_report.total_quotes:
                     generated["quote_report"] = quote_report.as_dict()
                 return generated
 
-            verification_section = self._build_verification_section(
-                triples=state.get("kg_triples", []) or [],
-                nodes=state.get("retrieved_nodes", []) or [],
-            )
-            if verification_section:
-                answer = answer.rstrip() + "\n\n" + verification_section
+            # A graph-verification block under an answer produced with no graph
+            # at all is noise: on the LLM-only arm it appended a fixed Italian
+            # paragraph to all 30 English answers, inside the very text the
+            # answer-channel scorer reads. See docs/code_audit_2026-08-15.md §1.9.
+            if not llm_only_baseline:
+                verification_section = self._build_verification_section(
+                    triples=state.get("kg_triples", []) or [],
+                    nodes=state.get("retrieved_nodes", []) or [],
+                    language=LLMManager._detect_query_language(query),
+                )
+                if verification_section:
+                    answer = answer.rstrip() + "\n\n" + verification_section
 
-            return {"answer": answer}
+            return {"answer": answer, **retry_fields}
 
         return {"answer": "LLM not available."}
 
@@ -1079,7 +1197,19 @@ class KGRAGAgent:
         triples: list[dict[str, object]],
         nodes: list[dict[str, object]],
         limit: int = 4,
+        language: str = "it",
     ) -> str:
+        """Render the graph-verification block in the answer's language.
+
+        Args:
+            triples: Retrieved triples to show.
+            nodes: Retrieved nodes, used when no triple is renderable.
+            limit: Maximum lines to render.
+            language: ``"it"`` or ``"en"``; anything else is treated as English.
+
+        Returns:
+            The rendered block, or a language-matched "no evidence" line.
+        """
         lines: list[str] = []
         seen: set[str] = set()
 
@@ -1148,14 +1278,22 @@ class KGRAGAgent:
                 if len(lines) >= limit:
                     break
 
+        heading = "Verifica nel grafo:" if language == "it" else "Graph verification:"
+
         if not lines:
+            if language == "it":
+                return (
+                    f"{heading}\n"
+                    "- Nessuna evidenza strutturata recuperata da mostrare in "
+                    "modo affidabile."
+                )
             return (
-                "Verifica nel grafo:\n"
-                "- Nessuna evidenza strutturata recuperata da mostrare in "
-                "modo affidabile."
+                f"{heading}\n"
+                "- No structured evidence was retrieved that can be shown "
+                "reliably."
             )
 
-        return "Verifica nel grafo:\n" + "\n".join(lines)
+        return f"{heading}\n" + "\n".join(lines)
 
     @staticmethod
     def _extract_context_highlights(
@@ -1254,15 +1392,45 @@ class KGRAGAgent:
 
     @staticmethod
     def _extract_salient_terms_from_text(text: str) -> list[str]:
+        """Salient terms for relevance grading, most discriminative first.
+
+        Three tiers, in order: ALL-CAPS acronyms, capitalised proper nouns, then
+        lowercase content words. The acronym-only version this replaces reduced
+        every question carrying one acronym to that acronym alone, and returned
+        nothing at all for questions carrying none — which sent `_grade` to the
+        Italian-only fallback and made it a no-op on English. See
+        docs/code_audit_2026-08-15.md §1.2.
+
+        Args:
+            text: Question or context to mine.
+
+        Returns:
+            Up to 16 lowercase terms, deduplicated, ordered by tier.
+        """
         terms: list[str] = []
         seen: set[str] = set()
 
-        for token in re.findall(r"\b[A-Z][A-Z0-9/&.-]{1,}\b", text):
-            lowered = token.lower()
-            if lowered in seen:
-                continue
+        def add(value: str, min_len: int) -> None:
+            lowered = value.strip().lower()
+            if len(lowered) < min_len or lowered in seen or lowered in _STOPWORDS:
+                return
             seen.add(lowered)
             terms.append(lowered)
+
+        # Tier 1: acronyms (CEFF, SDG, MATTM).
+        for token in re.findall(r"\b[A-Z][A-Z0-9/&.-]{1,}\b", text):
+            add(token, 2)
+        # Tier 2: capitalised proper nouns (Farm to Fork, Piemonte).
+        for token in re.findall(r"\b[A-Z][A-Za-z0-9/&.-]{2,}\b", text):
+            add(token, 3)
+        # Tier 3: lowercase content words, the only tier that survives a
+        # question with no capitalisation at all.
+        for token in re.findall(
+            r"\b[\wÀ-ÖØ-öø-ÿ'-]{%d,}\b" % _MIN_CONTENT_TERM_LEN,
+            text,
+            flags=re.UNICODE,
+        ):
+            add(token, _MIN_CONTENT_TERM_LEN)
 
         return terms[:16]
 
@@ -1271,44 +1439,13 @@ class KGRAGAgent:
         terms: list[str] = []
         seen: set[str] = set()
 
-        STOPWORDS = {
-            "parlami",
-            "quali",
-            "sono",
-            "sue",
-            "sui",
-            "suo",
-            "della",
-            "delle",
-            "degli",
-            "dei",
-            "con",
-            "e",
-            "le",
-            "il",
-            "lo",
-            "la",
-            "i",
-            "gli",
-            "un",
-            "una",
-            "in",
-            "per",
-            "di",
-            "che",
-            "da",
-            "su",
-            "al",
-            "alla",
-        }
-
         def add_term(value: str) -> None:
             normalized = value.strip().lower()
             if len(normalized) < 3:
                 return
             if normalized in seen:
                 return
-            if normalized in STOPWORDS:
+            if normalized in _STOPWORDS:
                 return
             seen.add(normalized)
             terms.append(normalized)

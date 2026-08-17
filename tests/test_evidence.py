@@ -125,12 +125,13 @@ def test_render_cited_context_attaches_source_to_every_item():
         triples=[_triple("A", "REL", "B", source_doc="REPORT.pdf", page_range="129")],
     )
     context = render_cited_context(
-        query="Che cos'e X?",
         evidence=evidence,
         entity_sections=[("Entities in the graph (no source — do not cite):", "A, B")],
     )
 
-    assert "Query: Che cos'e X?" in context
+    # The question belongs to the prompt's own slot, never to the context: an
+    # echoed query made the context non-empty with nothing retrieved (audit §1.1).
+    assert "Query:" not in context
     assert "[S1] <REPORT.pdf | p. 129>" in context
     assert "passaggio verbatim" in context
     assert "[T1] (A, REL, B) <REPORT.pdf | p. 129>" in context

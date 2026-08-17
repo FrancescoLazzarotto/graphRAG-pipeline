@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from typing import Any, Sequence
 
@@ -94,6 +95,9 @@ class KGRetriever:
         self.text_pipeline = text_pipeline
         self._token_df_cache: tuple[dict[str, int], int] | None = None
         self._query_vector_cache: tuple[str, list[float]] | None = None
+        # Counts queries that fell back to lexical-only because the encoder was
+        # unreachable. Only reachable with GRAPHRAG_VECTOR_ALLOW_DEGRADED set.
+        self._vector_skips = 0
         if self.config.use_text_retriever and self.text_pipeline is None:
             # Without this warning a "hybrid"/"text_only" run silently degrades
             # to KG-only and the experiment looks valid while measuring the
@@ -244,7 +248,6 @@ class KGRetriever:
                 )
 
         context_sections = self._build_context_sections(
-            query_text=query_text,
             nodes=nodes,
             triples=triples,
             neighbors=neighbors,
@@ -867,13 +870,31 @@ class KGRetriever:
         try:
             vector = embeddings.encode_query(query_text)
         except embeddings.EmbeddingUnavailable as exc:
-            # Lexical retrieval still works, so a missing encoder degrades the
-            # result instead of failing the run — but it must be visible, since
-            # the cross-lingual half is where most of the recall lives.
+            # Degrading quietly to lexical-only produced a model-asymmetric
+            # experiment: three queries in three of six generators lost the
+            # cross-lingual channel, where most of the recall lives, and the run
+            # still looked complete. After the retries in `embeddings.encode`
+            # have been exhausted this is a real failure, so by default it stops
+            # the run instead of changing the retrieval method mid-campaign. Set
+            # GRAPHRAG_VECTOR_ALLOW_DEGRADED=1 for interactive use, where a
+            # lexical-only answer beats no answer.
+            self._vector_skips += 1
+            if os.getenv("GRAPHRAG_VECTOR_ALLOW_DEGRADED", "").strip() not in (
+                "1",
+                "true",
+                "yes",
+            ):
+                raise embeddings.EmbeddingUnavailable(
+                    f"vector channel is enabled but the encoder failed: {exc}. "
+                    "Start the encoder (scripts/start_vllm_encoder.sh) or set "
+                    "GRAPHRAG_VECTOR_ALLOW_DEGRADED=1 to accept lexical-only "
+                    "retrieval."
+                ) from exc
             logger.warning(
                 "embedding endpoint unavailable (%s): vector channel skipped, "
-                "retrieval is lexical-only for this query",
+                "retrieval is lexical-only for this query (skips so far: %d)",
                 exc,
+                self._vector_skips,
             )
             vector = []
         self._query_vector_cache = (query_text, vector)
@@ -1011,7 +1032,6 @@ class KGRetriever:
 
     def _build_context_sections(
         self,
-        query_text: str,
         nodes: Sequence[KGNode],
         triples: Sequence[KGTriple],
         neighbors: Sequence[KGNode],
@@ -1021,9 +1041,13 @@ class KGRetriever:
     ) -> list[str]:
         sections: list[str] = []
 
-        if query_text:
-            sections.append(f"Query: {query_text}")
-
+        # The query is deliberately NOT echoed here. It reaches the model
+        # through the prompt's own `question` slot, and prepending it made
+        # `context_text` non-empty for every query — which silently disabled the
+        # zero-evidence branch, the relevance grader and the whole `no_retrieval`
+        # baseline (whose context became the question itself, under a prompt
+        # instructing the model to use ONLY the provided context). See
+        # docs/code_audit_2026-08-15.md §1.1.
         if text_chunks:
             sections.append("Retrieved text:\n" + "\n\n---\n\n".join(text_chunks))
 
