@@ -40,7 +40,19 @@ LOGGER = logging.getLogger("kg_pipeline")
 def _set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
+    # PYTHONHASHSEED is read by CPython at interpreter startup only, so setting
+    # it here does nothing — the pipeline claimed to seed it and did not. Warn
+    # instead of pretending, and export it before launching if it matters. See
+    # docs/code_audit_2026-08-15.md §3.8.
+    if os.environ.get("PYTHONHASHSEED") != str(seed):
+        LOGGER.warning(
+            "PYTHONHASHSEED is %r, not %r: it can only be set before the "
+            "interpreter starts. Export PYTHONHASHSEED=%d before launching if "
+            "set-iteration order must be reproducible.",
+            os.environ.get("PYTHONHASHSEED"),
+            str(seed),
+            seed,
+        )
     try:
         import torch
 
@@ -433,10 +445,20 @@ def main() -> None:
         uri=uri, user=user, password=password, database=db
     )
 
+    # `triples_sent` is what it has always been: triples that reached the
+    # database. It is an upper bound on edges because MERGE deduplicates, so the
+    # authoritative edge count is the one read back from Neo4j in `summary`.
+    # It used to be called `relationships_written`, which it never was. See
+    # docs/code_audit_2026-08-15.md §3.3.
     _save_json(
-        paths["neo4j_summary"], {"relationships_written": written, "summary": summary}
+        paths["neo4j_summary"],
+        {
+            "triples_sent": written,
+            "relationships_written": written,  # kept for existing readers
+            "summary": summary,
+        },
     )
-    LOGGER.info("Neo4j ingestion complete, relationships_written=%d", written)
+    LOGGER.info("Neo4j ingestion complete, triples_sent=%d", written)
 
 
 if __name__ == "__main__":

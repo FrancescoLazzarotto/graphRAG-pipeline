@@ -295,6 +295,7 @@ def ingest_triples(
     triples) when a whole batch fails.
     """
     count = 0
+    skipped = 0
     total = len(triples)
     logger = logging.getLogger(__name__)
 
@@ -320,6 +321,7 @@ def ingest_triples(
                         rows = [row for _, row in batch]
                         try:
                             session.execute_write(_merge_triples_batch, query, rows)
+                            sent = len(batch)
                         except Exception as exc:
                             logger.warning(
                                 "Batch ingestion failed (%d triples), retrying "
@@ -327,13 +329,16 @@ def ingest_triples(
                                 len(batch),
                                 exc,
                             )
+                            sent = 0
                             for triple, _row in batch:
                                 try:
                                     session.execute_write(_merge_triple, triple)
+                                    sent += 1
                                 except Exception:
                                     # Errors surfacing at commit time (e.g.
                                     # ConstraintError) bypass _merge_triple's
                                     # internal handling — skip the triple.
+                                    skipped += 1
                                     logger.exception(
                                         "Skipping triple after per-triple retry "
                                         "failed: %s -[%s]-> %s",
@@ -341,12 +346,22 @@ def ingest_triples(
                                         triple.predicate,
                                         triple.object,
                                     )
-                        count += len(batch)
+                        # Only triples that actually reached the database. The
+                        # old `count += len(batch)` also counted a failed batch
+                        # whose per-triple retries were all skipped. It remains
+                        # an upper bound on *edges* because MERGE deduplicates —
+                        # hence the name below. See
+                        # docs/code_audit_2026-08-15.md §3.3.
+                        count += sent
                         progress.update(len(batch))
                         if log_every > 0 and count % log_every < batch_size:
                             logger.info(
                                 "ingest_progress count=%d total=%d", count, total
                             )
+    if skipped:
+        logger.warning(
+            "%d of %d triples were skipped and are NOT in the graph", skipped, total
+        )
     return count
 
 

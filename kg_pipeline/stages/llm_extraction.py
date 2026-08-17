@@ -26,6 +26,12 @@ from kg_pipeline.utils.validation import (
     write_failed_chunk,
 )
 
+LOGGER = logging.getLogger("kg_pipeline")
+
+
+class _EmptyExtraction(ValueError):
+    """The model returned a well-formed but empty triple array for a chunk."""
+
 
 _GENERIC_SECTION_TITLES = {
     "abstract",
@@ -262,12 +268,17 @@ async def _extract_chunk_async(
     raw = ""
     for attempt in range(1, max_retries + 1):
         try:
+            # Vary the seed per attempt. At temperature 0 with a fixed seed the
+            # retries re-sent a byte-identical request and got a byte-identical
+            # failure back, so `max_retries` bought nothing but latency. See
+            # docs/code_audit_2026-08-15.md §3.5.
+            attempt_seed = seed if attempt == 1 else seed + attempt
             raw = await _llm_call_async(
                 client=client,
                 model_name=model_name,
                 prompt=prompt,
                 temperature=temperature,
-                seed=seed,
+                seed=attempt_seed,
                 use_structured_output=use_structured_output,
                 semaphore=semaphore,
             )
@@ -295,6 +306,20 @@ async def _extract_chunk_async(
                 triple.relationship_properties = rel
                 cleaned.append(triple)
             return chunk_idx, cleaned, True
+        except _EmptyExtraction:
+            # A well-formed empty array is a real answer: some chunks are a
+            # figure caption or a column of numbers and carry no triple. Retry
+            # once in case the model was simply lazy, then accept it — burning
+            # every retry and writing a failure row per attempt inflated
+            # `failed_chunks.jsonl` with correct behaviour.
+            # See docs/code_audit_2026-08-15.md §3.5.
+            if attempt >= min(2, max_retries):
+                LOGGER.debug(
+                    "chunk %s yielded no triples after %d attempts; accepting",
+                    chunk.chunk_id,
+                    attempt,
+                )
+                return chunk_idx, [], True
         except Exception as exc:
             write_failed_chunk(
                 failed_path=failed_chunks_path,
@@ -447,9 +472,11 @@ def _validate_raw_triples(
     raw_response: str,
     allowed_predicates: list[str] | None,
 ) -> list[KGTriple]:
-    # Empty LLM response is worth retrying; individual item failures are not.
+    # Empty LLM response is worth one more attempt; individual item failures are
+    # not. Raised as its own type so the caller can tell "no triples here" from
+    # "the call failed" and stop counting the former as a failure.
     if not raw_items:
-        raise ValueError("LLM returned an empty items array for this chunk")
+        raise _EmptyExtraction("LLM returned an empty items array for this chunk")
 
     valid_triples: list[KGTriple] = []
 

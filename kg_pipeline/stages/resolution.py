@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -249,8 +250,14 @@ def _confirm_candidates_with_llm(
             "right_docs": right_docs,
         }
 
-        for doc in docs:
-            by_doc[doc].append(pair_payload)
+        # One vote per pair, cast in the first document that carries it. The
+        # pair used to be appended to *every* document bucket it touched, so a
+        # pair spanning five documents was judged five times and a single
+        # merge:true out of five merged the two entities — the exact opposite of
+        # the prompt's own "be conservative: if uncertain, return merge=false".
+        # It also multiplied the LLM calls for the widest, most consequential
+        # pairs. See docs/code_audit_2026-08-15.md §3.6.
+        by_doc[docs[0]].append(pair_payload)
 
     _CONFIRM_BATCH_SIZE = 40
 
@@ -326,6 +333,71 @@ Pairs:
     return approved
 
 
+def _group_fingerprint(
+    mentions: list[dict[str, Any]], groups: list[list[int]]
+) -> str:
+    """Stable hash of the group construction the merge indices refer to.
+
+    Args:
+        mentions: Mention records, in the order the groups index into.
+        groups: Mention-index groups from :func:`_initial_groups`.
+
+    Returns:
+        A hex digest that changes whenever the grouping changes.
+    """
+    hasher = hashlib.sha256()
+    hasher.update(str(len(groups)).encode("utf-8"))
+    for group in groups:
+        # The first mention's identity is enough to detect re-indexing without
+        # hashing the whole corpus.
+        head = mentions[group[0]] if group else {}
+        hasher.update(
+            f"|{len(group)}:{head.get('label', '')}:{head.get('name', '')}".encode(
+                "utf-8"
+            )
+        )
+    return hasher.hexdigest()[:16]
+
+
+def _cached_pairs_if_current(
+    payload: Any, fingerprint: str, path: Path | None
+) -> set[tuple[int, int]] | None:
+    """Return the cached merge pairs, or None when the cache cannot be trusted.
+
+    Args:
+        payload: Parsed cache file content, or None when absent.
+        fingerprint: Fingerprint of the current group construction.
+        path: Cache path, for logging.
+
+    Returns:
+        The approved pairs, or None to force LLM re-confirmation.
+    """
+    if payload is None:
+        return None
+    if isinstance(payload, list):
+        LOGGER.warning(
+            "Merge cache %s predates fingerprinting: its group indices cannot be "
+            "verified against the current grouping. Ignoring it and "
+            "re-confirming with the LLM.",
+            path,
+        )
+        return None
+    if not isinstance(payload, dict):
+        LOGGER.warning("Merge cache %s is malformed; ignoring it.", path)
+        return None
+    if payload.get("group_fingerprint") != fingerprint:
+        LOGGER.warning(
+            "Merge cache %s was built for a different group construction "
+            "(fingerprint %s, now %s): its indices point at other entities. "
+            "Ignoring it and re-confirming with the LLM.",
+            path,
+            payload.get("group_fingerprint"),
+            fingerprint,
+        )
+        return None
+    return {(int(a), int(b)) for a, b in payload.get("pairs", [])}
+
+
 def resolve_entities(
     triples: list[KGTriple],
     acronym_map: dict[str, str],
@@ -350,12 +422,24 @@ def resolve_entities(
         threshold=similarity_threshold,
     )
 
+    # The cached pairs are bare group indices, meaningful only for the exact
+    # group construction that produced them. Nothing enforced that: re-running
+    # stage 4 after stage 3 changed reused indices that now pointed at different
+    # entities, and the only guard was a range check — which caught one pair out
+    # of 11,853 in the July run. The fingerprint makes the mismatch loud instead.
+    # See docs/code_audit_2026-08-15.md §3.7.
+    group_fingerprint = _group_fingerprint(mentions, groups)
+
     approved: set[tuple[int, int]] = set()
+    cached_payload: Any = None
     if merge_cache_path is not None and merge_cache_path.exists():
-        # Cache indices are only meaningful for the identical (seeded) group
-        # construction of the same run dir; do not reuse across runs.
-        cached = json.loads(merge_cache_path.read_text(encoding="utf-8"))
-        approved = {(int(a), int(b)) for a, b in cached}
+        cached_payload = json.loads(merge_cache_path.read_text(encoding="utf-8"))
+
+    cached_pairs = _cached_pairs_if_current(
+        cached_payload, group_fingerprint, merge_cache_path
+    )
+    if cached_pairs is not None:
+        approved = cached_pairs
         LOGGER.info(
             "Loaded %d approved merge pairs from %s — skipping LLM confirmation",
             len(approved),
@@ -372,7 +456,14 @@ def resolve_entities(
         )
         if merge_cache_path is not None:
             merge_cache_path.write_text(
-                json.dumps(sorted(approved)), encoding="utf-8"
+                json.dumps(
+                    {
+                        "group_fingerprint": group_fingerprint,
+                        "n_groups": len(groups),
+                        "pairs": sorted(approved),
+                    }
+                ),
+                encoding="utf-8",
             )
             LOGGER.info(
                 "Saved %d approved merge pairs to %s",
@@ -422,13 +513,40 @@ def resolve_entities(
             for key, value in mentions[midx]["properties"].items():
                 merged_props.setdefault(key, value)
 
-        registry[canonical_name] = CanonicalEntityRecord(
-            canonical_name=canonical_name,
-            aliases=aliases,
-            labels=labels,
-            merged_properties=merged_props,
-            alias_sources=dict(alias_sources),
-        )
+        # Accumulate, never overwrite. Two merged groups legitimately reach the
+        # same canonical string — `_initial_groups` keys on (label,
+        # normalised_name), and splits further by predicate overlap, so the same
+        # surface name yields several groups whose longest alias is identical. A
+        # plain assignment discarded the earlier group's aliases and
+        # alias_sources: those aliases never entered `alias_to_canonical` and
+        # their triples kept unresolved surface names. See
+        # docs/code_audit_2026-08-15.md §3.1.
+        existing = registry.get(canonical_name)
+        if existing is None:
+            registry[canonical_name] = CanonicalEntityRecord(
+                canonical_name=canonical_name,
+                aliases=aliases,
+                labels=labels,
+                merged_properties=merged_props,
+                alias_sources=dict(alias_sources),
+            )
+            continue
+
+        for alias in aliases:
+            if alias not in existing.aliases:
+                existing.aliases.append(alias)
+        existing.aliases.sort(key=lambda x: (x.lower(), len(x)))
+        for label in labels:
+            if label not in existing.labels:
+                existing.labels.append(label)
+        existing.labels.sort()
+        for alias, docs in alias_sources.items():
+            target = existing.alias_sources.setdefault(alias, [])
+            for doc in docs:
+                if doc not in target:
+                    target.append(doc)
+        for key, value in merged_props.items():
+            existing.merged_properties.setdefault(key, value)
 
     def _cross_label_merge_registry(
         registry: dict[str, CanonicalEntityRecord],

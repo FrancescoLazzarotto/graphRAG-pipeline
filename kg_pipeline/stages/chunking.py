@@ -77,10 +77,17 @@ def _window_paragraphs(
 
         overlap = 0
         back = j - 1
-        while back >= idx and overlap < overlap_tokens:
+        while back > idx and overlap < overlap_tokens:
             overlap += _token_count(paragraphs[back].text)
             back -= 1
-        idx = max(back + 1, idx + 1)
+        # Guarantee real progress. When a run of short paragraphs sums to less
+        # than the overlap budget the walk-back reached `idx`, the window
+        # advanced by exactly one paragraph, and the next window re-emitted
+        # almost the same content — quadratic chunk count on documents with long
+        # or numerous small paragraphs. Half of the window just emitted is the
+        # most the overlap may claim. See docs/code_audit_2026-08-15.md §3.9.
+        min_next = idx + max(1, (j - idx) // 2)
+        idx = max(back + 1, min_next)
 
     return windows
 
