@@ -21,12 +21,20 @@ class TextChunk:
 
 
 class TextRAGManager:
-    """In-memory manager for standard textual RAG retrieval."""
+    """In-memory manager for standard textual RAG retrieval, ranked by BM25."""
+
+    # Okapi BM25 defaults. k1 bounds how fast term frequency saturates, b how
+    # strongly length is normalised; 1.5/0.75 are the standard settings and the
+    # ones Lucene uses, which keeps this channel comparable to the Neo4j
+    # full-text channel.
+    _BM25_K1 = 1.5
+    _BM25_B = 0.75
 
     def __init__(self) -> None:
         self._chunks: list[TextChunk] = []
         self._chunk_tokens: list[list[str]] = []
         self._idf: dict[str, float] = {}
+        self._avg_doc_len: float = 0.0
         self._idf_dirty = False
 
     @property
@@ -37,6 +45,7 @@ class TextRAGManager:
         self._chunks.clear()
         self._chunk_tokens.clear()
         self._idf.clear()
+        self._avg_doc_len = 0.0
         self._idf_dirty = False
 
     def add_chunks(self, chunks: Iterable[TextChunk]) -> int:
@@ -74,8 +83,24 @@ class TextRAGManager:
         return self.add_chunks(prepared_chunks)
 
     def retrieve_with_scores(
-        self, query: str, top_k: int = 5
+        self, query: str, top_k: int = 5, mmr_lambda: float | None = None
     ) -> list[tuple[TextChunk, float]]:
+        """Rank chunks against the query, optionally diversifying the result.
+
+        Args:
+            query: The question.
+            top_k: How many chunks to return.
+            mmr_lambda: Relevance/diversity trade-off in ``[0, 1]``; 1.0 is pure
+                relevance. ``None`` disables diversification. Accepting this
+                argument is what makes ``--text-retriever-mmr`` reach the lexical
+                backend at all: `StandardTextRAGPipeline` probes the signature
+                and silently dropped the flag while it was absent, so every run
+                that passed it got plain relevance ranking
+                (docs/code_audit_2026-08-15.md §5.9).
+
+        Returns:
+            ``(chunk, score)`` pairs, best first.
+        """
         if top_k <= 0:
             return []
 
@@ -88,15 +113,65 @@ class TextRAGManager:
             self._idf_dirty = False
 
         query_tf: Counter[str] = Counter(query_tokens)
-        scored_chunks: list[tuple[TextChunk, float]] = []
+        scored: list[tuple[TextChunk, float, set[str]]] = []
 
         for chunk, tokens in zip(self._chunks, self._chunk_tokens):
             score = self._score(query_tf, tokens)
             if score > 0:
-                scored_chunks.append((chunk, score))
+                scored.append((chunk, score, set(tokens)))
 
-        scored_chunks.sort(key=lambda item: item[1], reverse=True)
-        return scored_chunks[:top_k]
+        scored.sort(key=lambda item: item[1], reverse=True)
+
+        if mmr_lambda is None or not scored:
+            return [(chunk, score) for chunk, score, _ in scored[:top_k]]
+
+        return self._mmr_select(scored, top_k=top_k, lambda_=mmr_lambda)
+
+    @staticmethod
+    def _mmr_select(
+        scored: list[tuple[TextChunk, float, set[str]]],
+        top_k: int,
+        lambda_: float,
+    ) -> list[tuple[TextChunk, float]]:
+        """Maximal Marginal Relevance over the ranked candidates.
+
+        Similarity between chunks is Jaccard over their token sets — the same
+        surface signal the ranking uses, which keeps the trade-off interpretable
+        and needs no second model.
+
+        Args:
+            scored: Candidates as ``(chunk, score, tokens)``, best first.
+            top_k: How many to keep.
+            lambda_: Weight on relevance; ``1 - lambda_`` weights novelty.
+
+        Returns:
+            The selected ``(chunk, score)`` pairs, in selection order.
+        """
+        weight = min(1.0, max(0.0, float(lambda_)))
+        best_score = scored[0][1] or 1.0
+
+        selected: list[tuple[TextChunk, float, set[str]]] = [scored[0]]
+        remaining = list(scored[1:])
+
+        while remaining and len(selected) < top_k:
+            best_index = 0
+            best_value = float("-inf")
+            for index, (_, score, tokens) in enumerate(remaining):
+                redundancy = max(
+                    (
+                        len(tokens & chosen) / len(tokens | chosen)
+                        if (tokens | chosen)
+                        else 0.0
+                    )
+                    for _, _, chosen in selected
+                )
+                value = weight * (score / best_score) - (1.0 - weight) * redundancy
+                if value > best_value:
+                    best_value = value
+                    best_index = index
+            selected.append(remaining.pop(best_index))
+
+        return [(chunk, score) for chunk, score, _ in selected]
 
     def retrieve(self, query: str, top_k: int = 5) -> list[TextChunk]:
         return [
@@ -116,24 +191,52 @@ class TextRAGManager:
         for tokens in self._chunk_tokens:
             document_frequency.update(set(tokens))
 
+        # BM25 IDF in the always-non-negative form: the classic
+        # log((N - df + 0.5) / (df + 0.5)) goes negative for a token present in
+        # more than half the corpus, which on a 22-document corpus would make
+        # common domain words *subtract* from the score.
         self._idf = {
-            token: math.log((1 + doc_count) / (1 + frequency)) + 1.0
+            token: math.log(
+                1.0 + (doc_count - frequency + 0.5) / (frequency + 0.5)
+            )
             for token, frequency in document_frequency.items()
         }
+        total_tokens = sum(len(tokens) for tokens in self._chunk_tokens)
+        self._avg_doc_len = (total_tokens / doc_count) if doc_count else 0.0
 
     def _score(self, query_tf: Counter[str], document_tokens: list[str]) -> float:
+        """Okapi BM25 score of one chunk against the query.
+
+        This replaces a formula that was neither tf-idf cosine nor BM25: it
+        weighted the numerator by ``idf**2`` while normalising by the L2 norm of
+        the *raw* term frequencies, so the score was biased by chunk length in a
+        way that had no retrieval interpretation. See
+        docs/code_audit_2026-08-15.md §5.7.
+
+        Args:
+            query_tf: Term frequencies of the query.
+            document_tokens: Tokens of the candidate chunk.
+
+        Returns:
+            The BM25 score; higher is more relevant.
+        """
         document_tf: Counter[str] = Counter(document_tokens)
-        norm = math.sqrt(sum(freq * freq for freq in document_tf.values())) or 1.0
+        doc_len = len(document_tokens)
+        avg_len = self._avg_doc_len or float(doc_len or 1)
+        length_norm = self._BM25_K1 * (
+            1.0 - self._BM25_B + self._BM25_B * (doc_len / avg_len)
+        )
 
         score = 0.0
-        for token, query_frequency in query_tf.items():
-            document_frequency = document_tf.get(token, 0)
-            if document_frequency == 0:
+        for token in query_tf:
+            term_frequency = document_tf.get(token, 0)
+            if term_frequency == 0:
                 continue
-
-            idf = self._idf.get(token, 1.0)
-            score += (
-                query_frequency * (1.0 + math.log(document_frequency)) * (idf * idf)
+            idf = self._idf.get(token, 0.0)
+            score += idf * (
+                term_frequency
+                * (self._BM25_K1 + 1.0)
+                / (term_frequency + length_norm)
             )
 
-        return score / norm
+        return score

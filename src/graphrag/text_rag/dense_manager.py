@@ -87,6 +87,11 @@ def _update_fingerprint(h: "hashlib._Hash", chunks: Iterable[TextChunk]) -> None
     for c in chunks:
         h.update(c.chunk_id.encode())
         h.update(c.content.encode())
+        # Provenance belongs in the key. Without it, a re-index that only
+        # changed page tags reused the cached FAISS index together with its
+        # stale metadata, so citations kept pointing at the old page labels.
+        # See docs/code_audit_2026-08-15.md §5.6.
+        h.update((c.source or "").encode())
 
 
 def _corpus_fingerprint(model_name: str, chunks: list[TextChunk]) -> str:
