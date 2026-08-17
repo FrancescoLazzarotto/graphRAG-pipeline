@@ -21,6 +21,15 @@ dependencies = [
     "python-dotenv",
     "pymupdf",
     "psutil",
+    # Imported at module import time by kg_pipeline and graphrag.embeddings
+    # (audit §5.2).
+    "pymupdf4llm",
+    "gliner",
+    "openai",
+    "pyyaml",
+    "requests",
+    "faiss-cpu",
+    "sentence-transformers",
 ]
 
 [project.optional-dependencies]
