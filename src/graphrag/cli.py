@@ -835,10 +835,21 @@ def _run_experiments(
     summary_json_path = output_dir / "summary.json"
     config_json_path = output_dir / "config.json"
 
+    # Which graph the run actually read. The Neo4j target comes from the
+    # environment, never from the CLI, so it appeared nowhere in the artifacts —
+    # and a later question of the form "was this run against staging or Aura?"
+    # became unanswerable from the outputs alone. The password is deliberately
+    # not recorded.
     config_json_path.write_text(
         json.dumps(
             {
                 "cli_args": {k: v for k, v in vars(args).items()},
+                "graph_target": {
+                    "neo4j_url": os.getenv("NEO4J_URL", ""),
+                    "neo4j_database": os.getenv("NEO4J_DATABASE", ""),
+                    "embed_base_url": os.getenv("GRAPHRAG_EMBED_BASE_URL", ""),
+                    "embed_model": os.getenv("GRAPHRAG_EMBED_MODEL", ""),
+                },
                 "strategy_configs": strategy_configs,
             },
             ensure_ascii=False,
