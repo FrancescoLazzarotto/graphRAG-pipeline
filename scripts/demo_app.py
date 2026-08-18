@@ -323,88 +323,9 @@ def _ask(
     return shown
 
 
-st.set_page_config(
-    page_title="Demo GraphRAG — Economia Circolare del Cibo",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Presentation only — every value below is cosmetic, no functional state lives
-# here. Keeps the demo legible for a non-technical expert without touching
-# the agent/session logic.
-st.markdown(
-    """
-    <style>
-    :root {
-        --grag-primary: #3A7D44;
-        --grag-primary-dark: #2C5E34;
-        --grag-accent: #E2984A;
-        --grag-bg-soft: #F3F1EA;
-        --grag-border: #E4E0D6;
-    }
-    .block-container { padding-top: 1.5rem; max-width: 900px; }
-    .grag-header {
-        display: flex;
-        align-items: center;
-        gap: 0.9rem;
-        padding: 1.1rem 1.4rem;
-        margin-bottom: 0.6rem;
-        border-radius: 14px;
-        background: linear-gradient(135deg, var(--grag-primary) 0%, var(--grag-primary-dark) 100%);
-        color: #FFFFFF;
-    }
-    .grag-header h1 {
-        font-size: 1.35rem;
-        font-weight: 700;
-        margin: 0;
-        color: #FFFFFF;
-    }
-    .grag-header p {
-        margin: 0.15rem 0 0 0;
-        font-size: 0.88rem;
-        color: rgba(255, 255, 255, 0.85);
-    }
-    .grag-badges { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
-    .grag-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 0.25rem 0.7rem;
-        border-radius: 999px;
-        background: var(--grag-bg-soft);
-        border: 1px solid var(--grag-border);
-        font-size: 0.78rem;
-        font-weight: 600;
-        color: var(--grag-primary-dark);
-    }
-    section[data-testid="stSidebar"] .stButton button { text-align: left; }
-    section[data-testid="stSidebar"] h3 {
-        font-size: 0.78rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #6B7280;
-        margin-top: 0.4rem;
-    }
-    [data-testid="stChatMessage"] {
-        border-radius: 12px;
-        border: 1px solid var(--grag-border);
-        padding: 0.2rem 0.4rem;
-        margin-bottom: 0.4rem;
-    }
-    div[data-testid="stExpander"] {
-        border-radius: 10px;
-        border: 1px solid var(--grag-border);
-    }
-    </style>
-    <div class="grag-header">
-        <div>
-            <h1>Demo GraphRAG — Economia Circolare del Cibo</h1>
-            <p>Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.</p>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+st.set_page_config(page_title="Demo GraphRAG — Economia Circolare del Cibo", page_icon="")
+st.title("Demo GraphRAG")
+st.caption("Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.")
 
 models = _available_models()
 if not models:
@@ -419,11 +340,11 @@ default_index = next(
 _init_chats()
 
 with st.sidebar:
-    st.markdown("### Modello")
-    choice = st.selectbox("Modello", labels, index=default_index, label_visibility="collapsed")
+    choice = st.selectbox("Modello", labels, index=default_index)
 
-    st.markdown("### Conversazioni")
-    if st.button("+ Nuova chat", use_container_width=True, type="primary"):
+    st.divider()
+    st.markdown("**Conversazioni**")
+    if st.button("+ Nuova chat", use_container_width=True):
         _new_chat()
         st.rerun()
     for chat_id in list(st.session_state.chat_order):
@@ -454,24 +375,15 @@ with st.sidebar:
 
     if MEMORY and chat["memory"] is not None:
         active = chat["memory"].seed_entities()
-        st.caption(
-            "In conversazione su: " + ", ".join(active)
-            if active
-            else "Nessun argomento attivo."
-        )
+        if active:
+            st.caption("In conversazione su: " + ", ".join(active))
+        else:
+            st.caption("Nessun argomento attivo.")
 
 base_url, model_id = models[choice]
 
 agent, model_id = _load_agent(base_url, model_id)
-st.markdown(
-    f"""
-    <div class="grag-badges">
-        <span class="grag-badge">Strategia: {STRATEGY}</span>
-        <span class="grag-badge">Modello: {model_id}</span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+st.caption(f"strategia: {STRATEGY} | modello: {model_id}")
 
 def _render(content: str) -> None:
     body, sep, evidence = content.partition(EVIDENCE_MARKER)
