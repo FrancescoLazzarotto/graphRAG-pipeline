@@ -1,91 +1,121 @@
 <div align="center">
 
-# GraphRAG Pipeline
+<h1>GraphRAG Pipeline</h1>
 
-**An experiment-oriented Retrieval-Augmented Generation pipeline combining Knowledge Graph retrieval with LLM-based answer generation.**
+<p><strong>An experiment-oriented Retrieval-Augmented Generation pipeline that builds a Knowledge Graph from a document corpus, retrieves over it through eight configurable strategies, and scores the answers against a frozen reference set.</strong></p>
 
 [![CI](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/FrancescoLazzarotto/graphRAG-pipeline/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-480%20passing-brightgreen.svg)](#testing)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Neo4j](https://img.shields.io/badge/Neo4j-knowledge%20graph-008CC1?logo=neo4j&logoColor=white)](https://neo4j.com/)
+[![LangGraph](https://img.shields.io/badge/agent-LangGraph-1C3C3C)](https://langchain-ai.github.io/langgraph/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Neo4j](https://img.shields.io/badge/Neo4j-Knowledge%20Graph-008CC1?logo=neo4j)](https://neo4j.com/)
+
+<sub>Applied to a bilingual Italian/English corpus on the circular economy of food · retrieval, generation and evaluation in one repository</sub>
 
 </div>
 
 ---
 
+> [!NOTE]
+> This is a research codebase. Every number it produces is traceable to a
+> configuration file written next to it, and the sections that would let a
+> reader over-read a result — [Known Limitations](#known-limitations) and
+> [Reproducibility Notes](#reproducibility-notes) — are part of the
+> documentation, not an appendix.
+
 ## Table of Contents
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Knowledge Graph Pipeline](#knowledge-graph-pipeline)
-- [Retrieval Channels](#retrieval-channels)
-- [Experiments & Retrieval Matrices](#experiments--retrieval-matrices)
-- [Analysis & Telemetry](#analysis--telemetry)
-- [Evaluation](#evaluation)
-- [Interactive Demos](#interactive-demos)
-- [Testing](#testing)
-- [Cluster & Batch Jobs](#cluster--batch-jobs)
-- [Repository Structure](#repository-structure)
-- [Troubleshooting](#troubleshooting)
-- [Known Limitations](#known-limitations)
-- [License](#license)
+| | | |
+|---|---|---|
+| [Overview](#overview) | [Knowledge Graph Pipeline](#knowledge-graph-pipeline) | [Testing](#testing) |
+| [Quick Start](#quick-start) | [Retrieval](#retrieval) | [Cluster & Batch Jobs](#cluster--batch-jobs) |
+| [Architecture](#architecture) | [Experiments](#experiments) | [Repository Structure](#repository-structure) |
+| [Installation](#installation) | [Analysis & Telemetry](#analysis--telemetry) | [Troubleshooting](#troubleshooting) |
+| [Configuration](#configuration) | [Evaluation](#evaluation) | [Known Limitations](#known-limitations) |
+| [Usage](#usage) | [Interactive Demos](#interactive-demos) | [Reproducibility Notes](#reproducibility-notes) |
 
 ---
 
 ## Overview
 
-This repository implements a full GraphRAG pipeline that:
+The repository covers the full path from a folder of PDFs to a scored table:
 
-- **Ingests** documents (PDF, Markdown, plain text), chunks them, and extracts entities and triples via NER (GLiNER) and LLM-based extraction.
-- **Builds a Knowledge Graph** by resolving and linking entities/triples, then ingesting them into Neo4j.
-- **Retrieves** graph and text evidence through eight configurable strategies — from pure text retrieval to 2-hop subgraph expansion and shortest-path traversal — over a **lexical** full-text channel and an optional **multilingual vector** channel.
-- **Generates answers** with a LangGraph agent (scope → retrieve → grade → generate, with a bounded rewrite loop), backed by either local Hugging Face models or an OpenAI-compatible vLLM server.
-- **Grounds and verifies** answers: numbered evidence with document and page, a citation gate that checks every `[S1]`/`[T3]` tag against the index, a quote gate that checks every «quoted» passage against the retrieved text, and an optional verbatim-definition opener.
-- **Runs reproducible experiment matrices** comparing retrieval strategies and LLMs, with full resource telemetry for sizing studies.
-- **Evaluates** results with a dedicated toolkit (`evalkit`): retrieval metrics, text-similarity metrics, LLM-as-a-Judge scoring, optional RAGAS, and a two-channel / two-level gold scorer.
+| Stage | What happens |
+|---|---|
+| **Ingest** | PDF, Markdown and plain text are loaded, chunked by page-count profile, and passed through NER (GLiNER, multilingual) and LLM triple extraction |
+| **Build** | Entities are resolved and linked — embeddings, predicate Jaccard, LLM confirmation — then ingested into Neo4j |
+| **Retrieve** | Eight strategies, from pure text to 2-hop subgraph expansion and shortest-path traversal, over a **lexical** full-text channel and an optional **multilingual vector** channel |
+| **Generate** | A LangGraph agent — scope → retrieve → grade → generate, with a bounded rewrite loop — backed by local Hugging Face models or an OpenAI-compatible vLLM server |
+| **Ground** | Numbered evidence with document and page, a citation gate that checks every `[S1]`/`[T3]` tag against the visible index, a quote gate that checks every «quoted» passage against the retrieved text, and an optional verbatim-definition opener |
+| **Measure** | Reproducible experiment matrices with resource telemetry, and an evaluation toolkit: retrieval metrics, text similarity, LLM-as-a-Judge, optional RAGAS, and a two-channel / two-level gold scorer |
 
 ### Entry points
 
 | Entry point | Purpose |
 |---|---|
-| `graphrag-demo` (or `python -m graphrag.cli`) | Single-question retrieval/generation and batch experiments — the full option surface |
+| `graphrag-demo` — or `python -m graphrag.cli` | Single-question retrieval/generation and batch experiments; the full option surface |
 | `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
 | `python scripts/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
-| `python -m evalkit.cli` (with `PYTHONPATH=evaluation`) | Evaluation toolkit |
-| `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper (two channels, two levels) |
+| `python -m evalkit.cli` — with `PYTHONPATH=evaluation` | Evaluation toolkit |
+| `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
 | `streamlit run scripts/demo_app.py` | Expert demo console |
 
-A complete command reference is available in [COMMANDS.md](COMMANDS.md).
+A complete command reference lives in **[COMMANDS.md](COMMANDS.md)**.
+
+---
+
+## Quick Start
+
+Assumes a populated Neo4j instance and a vLLM server already running.
+
+```bash
+# 1. environment
+conda create -n graphllm python=3.10 -y && conda activate graphllm
+pip install -r requirements.txt && pip install -e .
+
+# 2. credentials
+cp .env.example .env && $EDITOR .env
+
+# 3. health check — Neo4j and LLM connectivity
+python scripts/smoke_check.py
+
+# 4. one grounded, cited answer
+graphrag-demo --llm --vllm --strategies hybrid \
+  --question "What are the three C's of the Circular Economy for Food framework?" \
+  --cite-evidence --citation-display label --enforce-language
+
+# 5. the full reference campaign, 30 questions x 8 strategies
+bash scripts/run_abstention_arms.sh
+```
+
+Starting from an empty graph instead? Go to
+[Knowledge Graph Pipeline](#knowledge-graph-pipeline) first — retrieval quality
+depends on the two index-building scripts run at its end.
 
 ---
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    A["Documents<br/>PDF · Markdown · text"] --> B["KG Pipeline<br/>7 checkpointed stages"]
+    B --> C[("Neo4j Knowledge Graph")]
+    C -.-> C1["full-text index<br/>node_search"]
+    C -.-> C2["vector index<br/>node_embedding on :NodeVec"]
+    C --> D["KGRetriever<br/>8 strategies · lexical + vector + text"]
+    D --> E["LangGraph agent<br/>scope → decompose → route →<br/>retrieve → grade → generate<br/>rewrite loop, max 3"]
+    E --> F["LLMManager<br/>local Hugging Face or vLLM"]
+    F --> G["Answer + citations + provenance<br/>+ resource telemetry"]
+
+    style C fill:#008CC1,stroke:#005f85,color:#fff
+    style E fill:#1C3C3C,stroke:#0f2424,color:#fff
+    style G fill:#2d6a4f,stroke:#1b4332,color:#fff
 ```
-Documents (PDF / Markdown / text)
-        │
-        ▼
-KG Pipeline — 7 checkpointed stages
-(ingest → chunk → NER → LLM triples → resolution → linking → Neo4j)
-        │
-        ▼
-Neo4j Knowledge Graph  ──  full-text index (node_search)
-        │                  vector index (node_embedding, :NodeVec carriers)
-        ▼
-KGRetriever — 8 strategies over lexical + vector + text channels
-        │
-        ▼
-LangGraph agent: scope → decompose → route → retrieve → grade → generate
-        │           (rewrite loop, max 3)
-        ▼
-LLMManager (local Hugging Face or vLLM server)
-        │
-        ▼
-Answer + citations + provenance + resource telemetry
-```
+
+The two dotted boxes are not optional decoration: the lexical index carries
+in-language lookup and the vector index is the only channel that crosses the
+Italian/English gap. Both are built by scripts, not by ingestion.
 
 ---
 
@@ -93,42 +123,42 @@ Answer + citations + provenance + resource telemetry
 
 Recommended environment: Conda, named `graphllm`, Python 3.10+.
 
-**1. Create and activate the environment:**
-
 ```bash
 conda create -n graphllm python=3.10 -y
 conda activate graphllm
 ```
 
-**2. Install dependencies** — pick **one** requirements file for your target:
+Pick **one** requirements file for your target — the three form a hierarchy, not
+a sequence:
+
+| File | Target | Notes |
+|---|---|---|
+| `requirements.txt` | Local development | Loose bounds |
+| `requirements-cpu.txt` | CPU cluster nodes | Bounded versions, reproducible |
+| `requirements-gpu.txt` | GPU nodes, CUDA 12.4 | Pins `torch==2.5.1+cu124`, `torchvision==0.20.1+cu124`, vLLM |
 
 ```bash
-pip install -r requirements.txt        # development (loose bounds)
-pip install -r requirements-cpu.txt    # CPU-only nodes (bounded versions)
-pip install -r requirements-gpu.txt    # GPU nodes, CUDA 12.4 (pinned torch/torchvision + vLLM)
+pip install -r requirements.txt
 pip install -e .
 ```
 
-The three files form a hierarchy, not a sequence: `requirements.txt` is for local
-development, `-cpu`/`-gpu` are the reproducible cluster installs. Evaluation
-extras (RAGAS, ROUGE, plotting) live in `evaluation/requirements.txt`.
+Every runtime import is now declared — `pymupdf4llm`, `gliner`, `openai`,
+`pyyaml`, `requests`, `faiss-cpu`, `sentence-transformers` and `sacrebleu` are in
+all three files and in `pyproject.toml`. No manual follow-up install is needed.
 
-**3. The KG pipeline needs packages none of those files declare yet:**
+Evaluation extras — RAGAS, ROUGE, plotting — are separate and optional:
 
 ```bash
-pip install pymupdf4llm gliner openai pyyaml requests
+pip install -r evaluation/requirements.txt
 ```
 
-`kg_pipeline/stages/ingestion.py` imports `pymupdf4llm`, `ner.py` imports `gliner`,
-`llm_extraction.py` / `resolution.py` import `openai`, `kg_pipeline/main.py` imports `yaml`,
-and `graphrag/embeddings.py` imports `requests`. Until they are added to the requirements
-files this step is mandatory — see [Known Limitations](#known-limitations).
+> [!TIP]
+> Without `sacrebleu`, evalkit falls back to a simplified local BLEU. Keep it
+> installed so published metrics come from the reference implementation.
 
 ---
 
 ## Configuration
-
-Copy the template and fill in your credentials:
 
 ```bash
 cp .env.example .env
@@ -138,60 +168,78 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |---|---|---|
-| `NEO4J_URL` | yes | Connection URI, e.g. `bolt://localhost:7687` or `neo4j+s://<instance>` |
-| `NEO4J_USERNAME` | yes | Database user |
-| `NEO4J_PASSWORD` | yes | Database password |
-| `NEO4J_DATABASE` | no | Target database name |
-| `NEO4J_URI` | no | Same value as `NEO4J_URL` — read by the `scripts/kg_repair3/4/5.py` post-processing passes |
+| `NEO4J_URL` | ✅ | Connection URI, e.g. `bolt://localhost:7687` or `neo4j+s://<instance>` |
+| `NEO4J_USERNAME` | ✅ | Database user |
+| `NEO4J_PASSWORD` | ✅ | Database password |
+| `NEO4J_DATABASE` | — | Target database name |
+| `NEO4J_URI` | — | Same value as `NEO4J_URL`; read by the `scripts/kg_repair3/4/5.py` post-processing passes |
 
-The Neo4j instance must have **APOC** available: every node and triple projection goes through
-`apoc.map.removeKey` to strip the embedding vector from the returned properties.
+> [!IMPORTANT]
+> The instance must have **APOC** available. Every node and triple projection
+> goes through `apoc.map.removeKey` to strip the embedding vector from the
+> returned properties, and there is no fallback projection.
 
-### Hugging Face (gated models)
-
-```bash
-export HF_TOKEN="<your-hf-token>"
-```
-
-### vLLM / OpenAI-compatible server
+### Generation endpoint
 
 | Variable | Default | Description |
 |---|---|---|
-| `VLLM_BASE_URL` | `http://localhost:8000/v1` | vLLM server endpoint |
-| `VLLM_MODEL_NAME` | — | Model name served by vLLM |
+| `VLLM_BASE_URL` | `http://localhost:8000/v1` | vLLM / OpenAI-compatible endpoint |
+| `VLLM_MODEL_NAME` | — | Model name served there |
 | `VLLM_API_KEY` / `OPENAI_API_KEY` | — | API key, if required |
+| `HF_TOKEN` | — | Hugging Face token for gated models |
 
-### Embedding endpoint (multilingual vector channel)
+### Embedding endpoint — the cross-lingual vector channel
 
 | Variable | Default | Description |
 |---|---|---|
 | `GRAPHRAG_EMBED_BASE_URL` | `http://localhost:8002/v1` | OpenAI-compatible `/embeddings` endpoint |
-| `GRAPHRAG_EMBED_MODEL` | `intfloat/multilingual-e5-base` | Encoder id; must match the one the index was built with |
+| `GRAPHRAG_EMBED_MODEL` | `intfloat/multilingual-e5-base` | Encoder id; **must match the one the index was built with** |
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 vllm serve intfloat/multilingual-e5-base \
-    --runner pooling --port 8002 --gpu-memory-utilization 0.12 --max-model-len 512
+bash scripts/start_vllm_encoder.sh        # GPU 1, port 8002, pooling runner
 ```
 
-### Optional runtime knobs
+The script exists because the command used to live only inside an abort message,
+and a mistyped restart cost a campaign its vector channel on three of six models.
+Changing `GRAPHRAG_EMBED_MODEL` means rebuilding the index with
+`scripts/kg_vector_index.py`.
+
+<details>
+<summary><b>Optional runtime knobs</b></summary>
 
 | Variable | Default | Effect |
 |---|---|---|
 | `GRAPHRAG_FULLTEXT_INDEX` | `node_search` | Full-text index name |
 | `GRAPHRAG_VECTOR_PROPERTY` | `embedding` | Property stripped from node projections |
+| `GRAPHRAG_VECTOR_ALLOW_DEGRADED` | unset | `1` lets a failed encoder degrade to lexical-only instead of raising. **Interactive use only** — see [Reproducibility Notes](#reproducibility-notes) |
+| `GRAPHRAG_EMBED_RETRIES` | `3` | Encoder retries before the channel gives up |
+| `GRAPHRAG_EMBED_RETRY_BACKOFF_SEC` | `1.0` | Backoff between encoder retries |
+| `GRAPHRAG_EMBED_MAX_CHARS` | — | Truncation applied before the encoder's context window |
 | `GRAPHRAG_NEO4J_QUERY_RETRIES` | `3` | Transient-error retries per Cypher query |
+| `GRAPHRAG_NEO4J_QUERY_RETRY_BACKOFF_SEC` | `1.0` | Backoff between Cypher retries |
 | `GRAPHRAG_LLM_GENERATE_RETRIES` | `2` | Transient-error retries per LLM call |
+| `GRAPHRAG_LLM_GENERATE_RETRY_BACKOFF_SEC` | `1.0` | Backoff between LLM retries |
+| `GRAPHRAG_VLLM_HEALTHCHECK_TIMEOUT_SEC` | `5` | Endpoint health-check timeout |
 | `GRAPHRAG_LLM_CONCURRENT_REQUESTS` | `8` | Stage-3 extraction concurrency |
+| `GRAPHRAG_OFFLOAD_DIR` / `GRAPHRAG_CPU_OFFLOAD_GIB` | — | Local-model offload target and budget |
+| `GRAPHRAG_TORCH_COMPILE` | unset | Opt into `torch.compile` for local models |
 | `KG_EXTRACTION_MAX_TOKENS` | `4096` | Output cap per extraction call |
+| `KG_NER_DEVICE` / `KG_EMBED_DEVICE` | — | Device placement for GLiNER and the resolution encoder |
+| `KG_PIPELINE_DEBUG_OPENAI` | unset | Log raw extraction requests and responses |
 | `VLLM_HTTP_TIMEOUT` | `900` | OpenAI-client timeout in the KG pipeline |
+| `PYTHONHASHSEED` | — | Export before launching if set-iteration order must be reproducible; the pipeline warns when it is unset |
 
-> **Note:** `scripts/smoke_check.py` reads exported environment variables only — it does **not** auto-load `.env`.
+</details>
+
+> [!WARNING]
+> `scripts/smoke_check.py` reads **exported** environment variables only — it
+> does not auto-load `.env`.
 
 ---
 
 ## Usage
 
-### Single-question demo (retrieval only)
+### Retrieval only
 
 ```bash
 graphrag-demo \
@@ -199,17 +247,14 @@ graphrag-demo \
   --entity "Entity A"
 ```
 
-### Local LLM generation
+### Generation
 
 ```bash
+# local Hugging Face weights
 graphrag-demo --llm --model-id Qwen/Qwen2.5-7B-Instruct
-```
 
-### Server-backed generation (vLLM / OpenAI-compatible)
-
-```bash
-graphrag-demo \
-  --llm --vllm \
+# vLLM / OpenAI-compatible server
+graphrag-demo --llm --vllm \
   --vllm-base-url http://localhost:8000/v1 \
   --model-id Qwen/Qwen2.5-7B-Instruct
 ```
@@ -219,25 +264,27 @@ graphrag-demo \
 ```bash
 graphrag-demo --llm --vllm \
   --strategies hybrid \
-  --cite-evidence --citation-display label \
+  --cite-evidence --citation-policy mark --citation-display label \
   --prefer-verbatim-definitions \
-  --enforce-language --complexity high
+  --enforce-language --focused-answer --complexity high
 ```
 
 | Flag | Effect |
 |---|---|
-| `--cite-evidence` | Numbers the retrieved evidence, asks for `[S1]`/`[T1]` tags, and verifies every tag against the index |
+| `--cite-evidence` | Numbers the evidence, asks for `[S1]`/`[T1]` tags, verifies every tag against the **visible** index — the refs that survived context compression |
 | `--citation-policy` | `mark` flags an invented tag in place, `strip` deletes it |
-| `--citation-display` | `id` keeps `[S1]`, `label` rewrites it as `[Document, p. 12]` after the gate |
+| `--citation-display` | `id` keeps `[S1]`; `label` rewrites it as `[Document, p. 12]` after the gate |
 | `--prefer-verbatim-definitions` | Ranks the defining passage first and opens the answer with it, quoted and checked |
 | `--enforce-language` | Pins the answer to the question's language, with one retry on a mismatch |
 | `--focused-answer` | Answer only what was asked, not every related concept in the evidence |
 | `--complexity` | `low` / `medium` / `high`; `high` drops the two-paragraph cap and adds the specificity rule |
+| `--allow-parametric-fallback` | Permits parametric knowledge where evidence does not cover the question, marked `(not in the retrieved evidence)` so grounded and ungrounded stay separable |
+| `--evidence-max-triple-items` | Cap on numbered triple evidence blocks in the context (default **30**) |
 
 ### Cross-lingual retrieval
 
-The graph is largely Italian; English questions cannot reach Italian node names lexically.
-The vector channel bridges that gap and is added to the lexical one, never replacing it.
+The graph is largely Italian; English questions cannot reach Italian node names
+lexically. The vector channel is **added** to the lexical one, never replacing it.
 
 ```bash
 python scripts/kg_vector_index.py    # once, after the KG is built
@@ -254,30 +301,52 @@ graphrag-demo --llm --vllm \
 graphrag-demo --llm --vllm --enable-domain-gate
 ```
 
-One classification call before retrieval. Without it the agent has no path to abstain: the
-dense retriever has no score floor, so `grade` always sees evidence and every question reaches
-`generate`.
+One classification call before retrieval. Without it the agent has no terminal
+refusal state: the dense retriever has no score floor, so `grade` always sees
+evidence and every question reaches `generate`.
 
-### Model tuning — cost and GPU memory
+<details>
+<summary><b>Full flag reference — retrieval shape, text channel, generation</b></summary>
 
-```bash
-graphrag-demo \
-  --llm \
-  --model-id Qwen/Qwen2.5-14B-Instruct \
-  --max-new-tokens 128 \
-  --gpu-memory-fraction 0.90
-```
+**Graph channels**
 
 | Flag | Effect |
 |---|---|
-| `--max-new-tokens` | Caps generation length (and cost) |
+| `--strategies` | Comma-separated presets; see [Retrieval strategies](#retrieval-strategies) |
+| `--seed-from-retrieved` | Anchor the neighbour / subgraph / shortest-path channels on names retrieval actually returned, not on raw question words |
+| `--subgraph-seed-count` | How many anchors the subgraph channel expands from (default 1 = best only) |
+| `--subgraph-limit` | Triples the subgraph channel may pull per anchor set **before** ranking. Applied in Cypher, so it truncates in graph order and the ranker never sees what was cut |
+| `--drop-predicates` | Comma-separated predicates removed from retrieved triples |
+| `--vector-retrieval` / `--vector-index` / `--vector-nodes-limit` / `--vector-triples-limit` | The multilingual vector channel and its budgets |
+
+**Text channel**
+
+| Flag | Effect |
+|---|---|
+| `--text-retriever-backend` | `tfidf` (lexical, default — ranked with Okapi BM25) or `dense` (cosine/FAISS) |
+| `--text-docs-dir` | Documents to index for the text channel; auto-discovered from the latest stage-0 artifacts when omitted |
+| `--text-stage0-runs` | Which `kg_pipeline/artifacts` runs feed the text index, most authoritative first |
+| `--text-retriever-mmr` / `--text-retriever-mmr-lambda` | Maximal Marginal Relevance instead of pure top-k; `1.0` is pure similarity |
+| `--text-retriever-max-per-doc` | Cap on chunks from one document (`0` disables); enumerative questions get twice the budget |
+| `--dense-embedding-model` / `--vector-index-dir` | Dense backend model and persisted FAISS cache |
+
+**Agent and generation**
+
+| Flag | Effect |
+|---|---|
+| `--enable-decomposition-step` / `--enable-adaptive-routing-step` | Optional LLM steps before retrieval |
+| `--enable-domain-gate` | Scope classification and refusal |
+| `--legacy-insufficiency-wording` | Restores the pre-repair closing line of the answer prompt; for reproducing campaigns E1–E8 |
+| `--max-new-tokens` | Caps generation length and cost |
 | `--max-context-tokens` | Caps the compressed prompt context (default **6000**) |
-| `--gpu-memory-fraction` | Reserves headroom when loading large local models to reduce OOMs |
-| `--allow-large-model-fp16-fallback` | For models ≥ 30B, fp16 fallback is disabled by default; enable only if you understand the memory/precision trade-offs |
+| `--recursion-limit` | Maximum LangGraph steps before aborting |
+| `--llm-warmup` | Preload the model at startup |
+| `--gpu-memory-fraction` | Reserves headroom when loading large local models |
+| `--allow-large-model-fp16-fallback` | For models ≥ 30B, fp16 fallback is off by default; enable only with the memory/precision trade-off understood |
+
+</details>
 
 ### Test-suite generation
-
-Generate a JSON question suite from the latest KG pipeline run (uses the local vLLM endpoint):
 
 ```bash
 conda run -n graphllm python scripts/generate_questions.py generate
@@ -285,15 +354,17 @@ conda run -n graphllm python scripts/generate_questions.py generate --question-l
 conda run -n graphllm python scripts/generate_questions.py stats --input artifacts/tmp/graphrag_test_suite.json
 ```
 
-The generator defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to `artifacts/tmp/graphrag_test_suite.json` unless `--output` is provided. Use `--matrix-output` to export one-question-per-line text for matrix runs.
+Defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to
+`artifacts/tmp/graphrag_test_suite.json` unless `--output` is given. Use
+`--matrix-output` for one-question-per-line text.
 
 ---
 
 ## Knowledge Graph Pipeline
 
-The KG pipeline lives in `kg_pipeline/` and writes checkpointed stage artifacts to a run directory. Defaults are controlled by `kg_pipeline/config.yaml`.
-
-### Run the full pipeline
+The pipeline lives in [`kg_pipeline/`](kg_pipeline/) and writes checkpointed
+stage artifacts to a run directory. Defaults come from
+[`kg_pipeline/config.yaml`](kg_pipeline/config.yaml).
 
 ```bash
 conda activate graphllm
@@ -303,31 +374,30 @@ PYTHONUNBUFFERED=1 python -m kg_pipeline.main \
   --log-level INFO
 ```
 
-### Pipeline stages
+### Stages
 
-Stages run sequentially with JSON checkpoint recovery — each stage reads the artifacts of the
-previous one. Reuse the same `--run-dir` to resume an existing run. `--stage <name>` runs
-everything **up to and including** that stage, reusing earlier artifacts where they exist; it
-does not run one stage in isolation.
+Stages run sequentially with JSON checkpoint recovery — each reads the artifacts
+of the previous one. `--stage <name>` runs everything **up to and including**
+that stage, reusing earlier artifacts where they exist; it does not run one stage
+in isolation. Reuse the same `--run-dir` to resume.
 
 | `--stage` | Description | Main artifact |
 |---|---|---|
-| `ingestion` | Load raw documents (PDF → markdown, page chunks, sections) | `stage0_documents.json` |
-| `chunking` | Token-windowed paragraph chunks (three size profiles by page count) | `stage1_chunks.json` |
-| `ner` | Named Entity Recognition (GLiNER, multilingual) | `stage2_ner.json` |
-| `llm` | LLM-based triple extraction (async, batched, checkpointed) | `stage3_triples_raw.json`, `stage3_acronyms.json` |
-| `resolution` | Entity resolution (embeddings + predicate Jaccard + LLM confirmation) | `stage4_triples_resolved.json`, `stage4_registry.json`, `stage4_merge_approved.json` |
+| `ingestion` | Load raw documents — PDF → markdown, page chunks, sections | `stage0_documents.json` |
+| `chunking` | Token-windowed paragraph chunks, three size profiles by page count | `stage1_chunks.json` |
+| `ner` | Named Entity Recognition — GLiNER, multilingual | `stage2_ner.json` |
+| `llm` | LLM triple extraction — async, batched, checkpointed | `stage3_triples_raw.json`, `stage3_acronyms.json` |
+| `resolution` | Entity resolution — embeddings + predicate Jaccard + LLM confirmation | `stage4_triples_resolved.json`, `stage4_registry.json`, `stage4_merge_approved.json` |
 | `linking` | `SAME_AS` alias edges, optional `MENTIONED_IN` | `stage5_triples_linked.json` |
-| `neo4j` | Graph ingestion into Neo4j (UNWIND + MERGE per label/predicate signature) | `stage6_neo4j_summary.json` |
+| `neo4j` | Graph ingestion — UNWIND + MERGE per label/predicate signature | `stage6_neo4j_summary.json` |
 
-Useful flags:
+Useful flags: `--dry-run` skips Neo4j ingestion; `--single-doc <name>` processes
+one document; `--run-dir <path>` resumes. Stage 3 checkpoints every
+`llm.checkpoint_every` chunks with atomic writes, and re-running without clearing
+the checkpoint resumes from the last saved chunk.
 
-- `--dry-run` — skip Neo4j ingestion (test the extraction stages only).
-- `--single-doc <name>` — process a single document.
-- `--run-dir <path>` — resume an existing run directory.
-- Stage 3 checkpoints every `llm.checkpoint_every` chunks (atomic writes); re-running without clearing it resumes from the last saved chunk.
-
-### Run directory layout
+<details>
+<summary><b>Run directory layout</b></summary>
 
 ```text
 kg_pipeline/artifacts/run_<tag>/
@@ -335,7 +405,7 @@ kg_pipeline/artifacts/run_<tag>/
 ├── run_metadata.json           # seed, models, git commit, vLLM endpoint
 ├── config.yaml                 # snapshot of the config used
 ├── relation_vocab_*.json       # snapshot of the predicate vocabulary
-├── failed_chunks.jsonl         # malformed LLM outputs (logged, pipeline continues)
+├── failed_chunks.jsonl         # malformed LLM outputs; the pipeline continues
 ├── new_labels.log
 ├── stage0_documents.json
 ├── stage1_chunks.json
@@ -348,78 +418,106 @@ kg_pipeline/artifacts/run_<tag>/
 ├── stage4_registry.json
 ├── stage4_merge_approved.json
 ├── stage5_triples_linked.json
-└── stage6_neo4j_summary.json
+└── stage6_neo4j_summary.json   # triples_sent + counts read back from Neo4j
 ```
+
+</details>
 
 ### Post-processing and indexes
 
-After Neo4j ingestion, in this order:
+After Neo4j ingestion, **in this order**:
 
 ```bash
-python scripts/kg_postprocess.py --passes 1,2,3,4,5   # repair passes (kg_repair.py .. kg_repair5.py)
-python scripts/kg_search_index.py                     # full-text index used by lexical retrieval
-python scripts/kg_vector_index.py                     # :NodeVec carriers + vector index (cross-lingual)
+python scripts/kg_postprocess.py --passes 1,2,3,4,5   # repair passes kg_repair.py .. kg_repair5.py
+python scripts/kg_search_index.py                     # full-text index — lexical retrieval
+python scripts/kg_vector_index.py                     # :NodeVec carriers + vector index — cross-lingual
 ```
 
-The passes are distinct, ordered repair rounds, not versions of one script. Retrieval quality
-depends on the last two commands having been run against the live graph.
+The passes are distinct ordered repair rounds, not versions of one script.
+Retrieval quality depends on the last two commands having been run against the
+live graph.
 
 Other graph utilities: `kg_backup.py` / `kg_restore.py`, `kg_densify.py`,
-`kg_ontology_align.py`, `kg_translate_names.py`, `kg_collapse_aliases.py`,
-`kg_evaluator.py`, `compare_kg_variants.py`, `kg_wipe.py`.
+`kg_ontology_align.py`, `kg_translate_names.py`, `kg_apply_translations.py`,
+`kg_collapse_aliases.py`, `kg_slot_ceiling.py`, `kg_evaluator.py`,
+`compare_kg_variants.py`, `kg_wipe.py`, and the passes under `scripts/kg_quality/`.
 
 ---
 
-## Retrieval Channels
+## Retrieval
 
-For each retrieval query the `KGRetriever`:
+For each query the `KGRetriever`:
 
-1. extracts entity candidates (quoted spans, capitalised phrases, numeric terms) and content keywords, optionally weighted by node-name document frequency (`lexical_specificity`);
-2. runs one **lexical** full-text query (a Lucene OR-query with per-term boosts) for nodes and for triples;
-3. optionally runs a **vector** query against the `:NodeVec` carriers, which is the only channel that can cross the IT/EN gap;
-4. picks anchors — by default only names retrieval actually returned (`verify_anchor_exists`), which avoids a full graph scan on an anchor that matches nothing;
-5. expands neighbours, the 2-hop subgraph (from `subgraph_seed_count` anchors) and the shortest path;
-6. drops uninformative predicates, ranks triples (lexical overlap · mention count · confidence, with a penalty for system links);
-7. optionally retrieves raw text (TF-IDF or dense FAISS), capped per document and re-ranked for definitional questions.
+1. extracts entity candidates — quoted spans, capitalised phrases, numeric terms — and content keywords, optionally weighted by node-name document frequency (`lexical_specificity`);
+2. runs one **lexical** full-text query, a Lucene OR-query with per-term boosts, for nodes and for triples;
+3. optionally runs a **vector** query against the `:NodeVec` carriers — the only channel that crosses the IT/EN gap;
+4. picks anchors, by default only names retrieval actually returned (`verify_anchor_exists`), which avoids a full graph scan on an anchor that matches nothing;
+5. expands neighbours, the 2-hop subgraph from `subgraph_seed_count` anchors, and the shortest path;
+6. drops uninformative predicates and ranks triples — lexical overlap · mention count · confidence, penalised for system links;
+7. optionally retrieves raw text (BM25 or dense FAISS), capped per document and re-ranked for definitional questions.
 
-Missing infrastructure degrades rather than fails: no vector index or no embedding endpoint →
-lexical only, with a WARNING; no full-text index → a per-term `CONTAINS` scan.
+**Failure behaviour differs by channel, on purpose:**
 
----
-
-## Experiments & Retrieval Matrices
+| Missing | Behaviour |
+|---|---|
+| Full-text index | Falls back to a per-term `CONTAINS` scan, with a warning |
+| Vector index not built | Lexical only, with a warning |
+| Embedding endpoint failing after its retries | **Raises.** A silent, model-asymmetric change of retrieval method mid-comparison is worse than a stopped run. Set `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` to restore degradation for interactive use |
 
 ### Retrieval strategies
 
 | Strategy | Evidence used |
 |---|---|
 | `default` | All KG channels: nodes, triples, neighborhoods, 2-hop subgraph, shortest paths |
-| `hybrid` | All KG channels plus raw-text retrieval |
-| `text_only` | Text retrieval only (no KG) |
+| `hybrid` | All KG channels **plus** raw-text retrieval |
+| `text_only` | Text retrieval only — no KG |
 | `no_retrieval` | No retrieval channel — the LLM-only baseline |
-| `text_plus_triples` | Entity nodes and triples only (no graph traversal) |
+| `text_plus_triples` | Entity nodes and triples only — no graph traversal |
 | `neighbors_focus` | Triples plus local entity neighborhoods |
 | `subgraph_2hop` | Triples plus 2-hop subgraph expansion |
 | `shortest_path` | Triples plus shortest paths between entities |
 
+Defined once in [`src/graphrag/strategies.py`](src/graphrag/strategies.py) and
+shared by the CLI and the matrix runner. Presets toggle only the channel flags;
+cardinality limits and ranking options come from the base `AgentConfig`, and the
+fully resolved per-strategy config is serialised into every run's `config.json`.
+
+---
+
+## Experiments
+
+### Reference sets
+
+Two frozen sets ship with the repository, 30 questions each, same annotation:
+
+| File | Language | Notes |
+|---|---|---|
+| [`gold_v3.json`](gold_v3.json) | English | The reference set every thesis number is measured on |
+| [`gold_v3_it.json`](gold_v3_it.json) | Italian | Same expected entities, relations, reference answer and scoring block; only `query` changes, and `query_en` carries the original. Built by `scripts/build_gold_it.py` |
+
+Each entry carries `query_id`, `query_type`, `query`, `expected_answer`,
+`expected_entities`, `expected_relations`, `source_verified` and `scoring`.
+Passing the `.json` straight to `--questions-file` makes the run emit `query_id`,
+so the evaluator joins by id rather than by question text.
+
 ### Which runner to use
 
 | | `python -m graphrag.cli --experiment` | `scripts/run_retrieval_matrix.py` |
-|---|---|---|
+|---|:---:|:---:|
 | GraphRAG strategies | ✅ | ✅ |
-| Standard-RAG baselines (tfidf / dense presets) | ❌ | ✅ |
-| Resource telemetry (CPU/RAM/GPU) | ❌ | ✅ |
+| Standard-RAG baselines — tfidf / dense presets | ❌ | ✅ |
+| Resource telemetry — CPU/RAM/GPU | ❌ | ✅ |
 | `query_id` carried into `results.jsonl` | ✅ | ❌ |
 | Vector channel, citations, domain gate, complexity, … | ✅ | ❌ |
 
-Use the CLI for anything the gold evaluation will score; use the matrix runner for
-Standard-RAG comparisons and sizing studies.
+Use the CLI for anything the gold evaluation will score; use the matrix runner
+for Standard-RAG comparisons and sizing studies.
 
 ### Batch run via the CLI
 
 ```bash
 conda run -n graphllm python -m graphrag.cli --experiment \
-  --questions-file gold.json \
+  --questions-file gold_v3.json \
   --strategies "default,hybrid,text_only,no_retrieval,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
   --llm --vllm --vllm-base-url http://localhost:8000/v1 \
   --model-id Qwen/Qwen2.5-32B-Instruct \
@@ -428,12 +526,37 @@ conda run -n graphllm python -m graphrag.cli --experiment \
   --output-dir exp_results --experiment-tag thesis_qwen25_32b
 ```
 
-Passing the gold `.json` straight to `--questions-file` guarantees the run emits `query_id`
-and joins to the gold by id rather than by question text.
+### Prepared campaign drivers
 
-### Smoke matrix (fast sanity check)
+Each script runs a whole family of arms in **one server session**, so the
+comparison is within-session and the cross-session noise band does not apply.
+All three preflight the generator, the encoder, and — critically — that the
+vector index still *resolves*.
+
+| Script | What it measures |
+|---|---|
+| [`scripts/run_abstention_arms.sh`](scripts/run_abstention_arms.sh) | Three arms isolating the abstention path: `a0` pre-repair prompt wording, `a1` repaired wording, `a2` repaired wording plus domain gate |
+| [`scripts/run_italian_arm.sh`](scripts/run_italian_arm.sh) | The same 30 questions asked in Italian. Its control is the `a1` arm above; 44% of expected concept slots exist in the graph only under an Italian name, against 22% reachable under an English one |
+| [`scripts/run_gold_variant.sh`](scripts/run_gold_variant.sh) | One gold campaign per KG variant against the local staging graph — comparable to each other, not to the Aura runs |
 
 ```bash
+bash scripts/run_abstention_arms.sh
+bash scripts/run_italian_arm.sh
+VARIANT=v2_baseline bash scripts/run_gold_variant.sh
+```
+
+> [!WARNING]
+> A carrier count cannot tell a live vector index from one whose identifiers went
+> stale under a store reload — the count passes, the channel silently degrades to
+> lexical, and the campaign looks complete. Measured once, that cost 0.03–0.06
+> concept F1 on every graph strategy. Guard with
+> `python scripts/check_vector_index.py --min-resolving 1000`, which counts
+> carriers that still resolve to a node.
+
+### Retrieval matrices
+
+```bash
+# smoke matrix — always run this before a long job
 python scripts/run_retrieval_matrix.py \
   --smoke \
   --questions-file artifacts/experiments/questions_smoke.txt \
@@ -441,11 +564,8 @@ python scripts/run_retrieval_matrix.py \
   --runs-per-strategy 1 \
   --output-dir artifacts/experiments \
   --experiment-tag retrieval_matrix_smoke
-```
 
-### Full vLLM-backed matrix
-
-```bash
+# full vLLM-backed matrix
 python scripts/run_retrieval_matrix.py \
   --llm --vllm \
   --vllm-base-url http://localhost:8000/v1 \
@@ -455,28 +575,30 @@ python scripts/run_retrieval_matrix.py \
   --runs-per-strategy 1
 ```
 
-`--questions-file` accepts both plain text (one question per line) and JSON suites produced by
-`scripts/generate_questions.py`. Before any long run, start with the smoke matrix and verify
-that `summary.json` and `results.jsonl` appear in the output directory.
+`--questions-file` accepts plain text (one question per line) and JSON suites
+from `scripts/generate_questions.py`. Verify that `summary.json` and
+`results.jsonl` appear in the output directory before committing to a long run.
 
 ---
 
 ## Analysis & Telemetry
 
-Each experiment run produces a structured set of artifacts:
-
 ```text
 <output-dir>/<timestamp>_<tag>/
 ├── results.jsonl           # one record per question/strategy/run
-├── results.csv             # tabular version (does not carry insufficient_answer / text sources)
+├── results.csv             # tabular version
 ├── summary.txt             # fast human-readable check
 ├── summary.json            # structured statistics per strategy
-├── config.json             # CLI args + fully resolved AgentConfig per strategy
-├── resource_samples.jsonl  # raw resource telemetry samples (matrix runner)
+├── config.json             # CLI args + graph_target + resolved AgentConfig per strategy
+├── resource_samples.jsonl  # raw telemetry samples (matrix runner)
 └── resource_summary.json   # peak and average resource usage (matrix runner)
 ```
 
-`config.json` makes every metric traceable to its exact configuration.
+`config.json` makes every metric traceable to its exact configuration. Its
+`graph_target` block records the Neo4j URL and database and the embedding
+endpoint and model actually used — the password is deliberately not recorded — so
+"was this run against staging or against Aura?" is answerable from the outputs
+alone.
 
 | Script | Purpose |
 |---|---|
@@ -486,88 +608,91 @@ Each experiment run produces a structured set of artifacts:
 | `scripts/answer_diff.py` | Side-by-side answer comparison between runs |
 | `scripts/provenance_precision.py` | Attribute retrieved text back to its origin documents |
 | `scripts/kg_variant_significance.py` | Significance testing across KG variants |
+| `evaluation/scripts/build_results_tables.py` | Build the paper's result tables |
+| `evaluation/scripts/hard_subset.py` | Isolate the hard subset of the reference set |
 
 ---
 
 ## Evaluation
 
-The evaluation workspace under [`evaluation/`](evaluation/README.md) supports paper-oriented comparisons through the `evalkit` toolkit:
-
-- Build a gold QA dataset from run outputs and manual labels (templates and schema in `evaluation/gold/`).
-- Compute retrieval metrics (entity coverage, precision/recall@k, MRR, nDCG, MAP) with bootstrap confidence intervals.
-- Score answers with an LLM-as-a-Judge (Anthropic API, local vLLM/HF, or Claude Code backends), batched and resumable, and compare judge models.
-- Optionally run RAGAS, and generate experiment- or project-level reports.
-
-### Typical sequence
+The workspace under [`evaluation/`](evaluation/) supports paper-oriented
+comparisons through the `evalkit` toolkit.
 
 ```bash
-# 1. Join run output with the gold set
+# 1. join run output with the gold set
 PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
   --input exp_results/<run_dir> \
-  --gold-file gold.json \
+  --gold-file gold_v3.json \
   --output artifacts/evaluation/eval_dataset.csv
 
-# 2. Retrieval metrics
+# 2. retrieval metrics
 PYTHONPATH=evaluation python -m evalkit.cli retrieval \
   --input artifacts/evaluation/eval_dataset.csv \
   --save-json artifacts/evaluation/retrieval_summary.json
 
-# 3. (Optional) LLM-as-a-Judge and RAGAS
+# 3. optional: LLM-as-a-Judge and RAGAS
 PYTHONPATH=evaluation python -m evalkit.cli judge --input artifacts/evaluation/eval_dataset.csv ...
 PYTHONPATH=evaluation python -m evalkit.cli ragas --input artifacts/evaluation/eval_dataset.csv ...
 ```
 
-Available subcommands: `build-dataset`, `retrieval`, `text`, `judge`, `judge-compare`, `ragas`,
-`kg`, `gold-triples`, `report-experiment`, `report-project`, `baseline-update`. See
-[`evaluation/README.md`](evaluation/README.md) for backends, judge configuration, and the
-recommended paper table schema.
+Subcommands: `build-dataset`, `retrieval`, `text`, `judge`, `judge-compare`,
+`ragas`, `kg`, `gold-triples`, `report-experiment`, `report-project`,
+`baseline-update`.
 
-### Gold scoring (the paper path)
+Retrieval metrics carry bootstrap confidence intervals, and a metric with **zero
+observations reports `None`, not `0.0`** — a printed zero reads as "the system
+scored zero" when it means "never measured".
+
+### Gold scoring — the paper path
 
 ```bash
 python evaluation/scripts/score_gold_run.py \
   --run-dir exp_results/<run_dir>/ \
-  --gold gold.json \
+  --gold gold_v3.json \
   --out-prefix artifacts/evaluation/<name>
 ```
 
-Scores one run on two channels — the entities the retriever surfaced, and the gold surface
-forms the answer text actually contains (deterministic gazetteer) — at two levels:
+Scores one run on **two channels**:
 
-- **concept level**: normalised surface forms against the gold's `surface_forms`, over all expected entities. The pipeline-agnostic retrieval measure.
-- **grounding level**: resolved canonical URIs, over `mapping_status == exact` entities only. The interoperability measure.
+- **retrieval channel** — `retrieved_entities` as reported by the run: what the retriever surfaced from the KG. Text-RAG reports none by design.
+- **answer channel** — gold surface forms found in the generated answer by a deterministic gazetteer. Symmetric across pipelines, and the only channel where `text_only` and `no_retrieval` can score at all.
 
-The two levels are reported side by side and never averaged into one number; the gap between
-them is itself a result.
+at **two levels**:
+
+- **concept level** — normalised surface forms against the gold's `surface_forms`, over all expected entities. The pipeline-agnostic retrieval measure.
+- **grounding level** — resolved canonical URIs, over `mapping_status == exact` entities only. The interoperability measure.
+
+Both levels are reported side by side and **never averaged into one number**; the
+gap between them is itself a result.
 
 ---
 
 ## Interactive Demos
 
 ```bash
-# Streamlit console: multi-chat, intra-session memory, citations, domain gate
+# Streamlit console: multi-chat, per-chat memory, citations, domain gate
 conda run -n graphllm streamlit run scripts/demo_app.py
 
-# Same stack, terminal only
+# same stack, terminal only
 conda run -n graphllm python scripts/expert_demo.py --strategy hybrid --max-context-tokens 6000
 ```
 
-The demos build their own `AgentConfig` inline (citations on, verbatim definitions on, language
-enforcement on, domain gate on). They do not read the CLI flags, and they do not currently
-enable the vector channel.
+The demos build their own `AgentConfig` inline — citations on, verbatim
+definitions on, language enforcement on, domain gate on. They do not read the CLI
+flags, and they do not currently enable the vector channel.
 
 ---
 
 ## Testing
 
-### Unit tests
-
 ```bash
-pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 448 tests
+pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 480 tests
 ```
 
-CI (GitHub Actions) runs a syntax check (`python -m compileall src scripts`) and the full test
-suite on every push and pull request, using the CPU requirements.
+31 of them live in `tests/test_audit_fixes.py` and each locks one finding from
+the [August 2026 audit](docs/code_audit_2026-08-15.md). Every one of them passed
+*before* its fix — which is why the suite gave no signal at all, and why they are
+worth keeping.
 
 ### Smoke tests
 
@@ -576,17 +701,26 @@ python scripts/smoke_check.py            # health check: Neo4j + LLM connectivit
 python scripts/smoke_kg_retriever.py     # KG retriever
 python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
 python scripts/smoke_dense_rag.py        # dense text backend
-python scripts/check_vector_index.py     # vector index presence and shape
+python scripts/check_vector_index.py --min-resolving 1000
 python scripts/run_pipeline_smoke_full.py
 ```
 
-On Windows, a preflight helper is available: `powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1`.
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1`.
+
+### CI
+
+GitHub Actions runs a **syntax check only** —
+`python -m compileall src scripts kg_pipeline evaluation` — on every push to
+`main`/`master` and on every pull request. The unit suite is not part of CI;
+run it locally before pushing.
 
 ---
 
 ## Cluster & Batch Jobs
 
-Install with `requirements-cpu.txt` on CPU nodes and `requirements-gpu.txt` on GPU nodes. Export the Neo4j variables before submission, then use the SLURM templates:
+Install `requirements-cpu.txt` on CPU nodes and `requirements-gpu.txt` on GPU
+nodes. Export the Neo4j variables before submission, then use the SLURM
+templates.
 
 | Script | Purpose |
 |---|---|
@@ -594,7 +728,8 @@ Install with `requirements-cpu.txt` on CPU nodes and `requirements-gpu.txt` on G
 | `scripts/run_graphrag.sbatch` | GraphRAG job on a GPU node |
 | `scripts/run_graphrag_cpu.sbatch` | GraphRAG job on a CPU node |
 | `scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix on a GPU node |
-| `scripts/start_vllm.sh` and `start_vllm_qwen25_7b.sh` / `_qwen25_72b.sh` / `_qwen3*.sh` | Start a local vLLM server for a specific model |
+| `scripts/start_vllm.sh`, `start_vllm_qwen25_7b.sh`, `_qwen25_72b.sh`, `start_vllm_qwen3.sh`, `start_vllm_qwen3_32b.sh`, `start_vllm_densify.sh` | Generation servers, one per model |
+| `scripts/start_vllm_encoder.sh` | Multilingual sentence encoder for the vector channel |
 | `scripts/start_neo4j_staging.sh` / `promote_staging_to_aura.sh` | Local staging graph and promotion |
 | `scripts/submit_matrix_from_env.sh` | Submit a matrix parameterized via environment variables |
 
@@ -608,7 +743,7 @@ sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
 sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
 ```
 
-See [docs/cluster.md](docs/cluster.md) for the full deployment guide.
+Full deployment guide: [docs/cluster.md](docs/cluster.md).
 
 ---
 
@@ -616,34 +751,48 @@ See [docs/cluster.md](docs/cluster.md) for the full deployment guide.
 
 ```text
 .
-├── src/graphrag/         # Main package
-│   ├── cli.py            #   CLI + experiment orchestration
-│   ├── config.py         #   AgentConfig / KGConfig
-│   ├── strategies.py     #   the 8 retrieval presets (single source of truth)
-│   ├── agent/            #   LangGraph state machine, evidence/citations, memory, cache
-│   ├── kg/               #   Neo4j manager and retriever
-│   ├── llm/              #   backends, prompt library, refusal markers
-│   ├── text_rag/         #   TF-IDF and dense (FAISS) text channels
-│   ├── embeddings.py     #   shared multilingual encoder client
-│   └── experiments/      #   experiment runner and resource monitor
-├── kg_pipeline/          # KG construction pipeline (config.yaml, main.py, stages/)
-├── scripts/              # Runners, analyzers, KG repair/index utilities, demos, SLURM templates
-├── evaluation/           # Evaluation workspace
-│   ├── evalkit/          #   metrics, LLM judge, reports (CLI: python -m evalkit.cli)
-│   ├── gold/             #   gold QA datasets, templates and schema
-│   ├── scripts/          #   score_gold_run.py and companions
-│   ├── fixtures/         #   question sets for matrix runs
-│   └── tests/            #   evaluation unit tests
-├── tests/                # Core unit tests
-├── documents/            # Source corpus (PDFs)
-├── docs/                 # Cluster guide, plans, audits, worklogs
-├── artifacts/            # Experiment and evaluation outputs (not committed)
-├── exp_results*/         # Thesis campaign outputs (not committed)
-├── COMMANDS.md           # Full command reference
+├── src/graphrag/            # main package
+│   ├── cli.py               #   CLI + experiment orchestration
+│   ├── config.py            #   AgentConfig / KGConfig
+│   ├── strategies.py        #   the 8 retrieval presets — single source of truth
+│   ├── questions.py         #   question-file parsing (txt / json / jsonl / csv)
+│   ├── embeddings.py        #   shared multilingual encoder client
+│   ├── types.py             #   RAGState and the retrieval contract
+│   ├── agent/               #   LangGraph state machine, evidence/citations, memory, cache, compression
+│   ├── kg/                  #   Neo4j manager and retriever
+│   ├── llm/                 #   backends, prompt library, refusal markers
+│   ├── text_rag/            #   BM25 lexical and dense (FAISS) text channels
+│   └── experiments/         #   experiment runner, standard-RAG presets, resource monitor
+├── kg_pipeline/             # KG construction pipeline
+│   ├── config.yaml          #   ontology, chunking profiles, model choices
+│   ├── main.py              #   stage orchestration and checkpoint recovery
+│   ├── stages/              #   ingestion → chunking → ner → llm → resolution → linking → neo4j
+│   └── tests/
+├── evaluation/              # evaluation workspace
+│   ├── evalkit/             #   metrics, LLM judge, reports (CLI: python -m evalkit.cli)
+│   ├── gold/                #   gold QA datasets, templates, schema
+│   ├── scripts/             #   score_gold_run.py, build_results_tables.py, hard_subset.py
+│   ├── fixtures/            #   question sets for matrix runs
+│   ├── baselines/           #   regression baselines
+│   └── tests/
+├── scripts/                 # runners, analyzers, KG repair/index utilities, demos, SLURM templates
+│   ├── kg_quality/          #   graph cleanup passes
+│   └── chat_templates/      #   per-model chat templates
+├── tests/                   # core unit tests, incl. test_audit_fixes.py
+├── docs/                    # cluster guide, audits, worklogs, plans
+├── gold_v3.json             # frozen reference set, English
+├── gold_v3_it.json          # frozen reference set, Italian
+├── COMMANDS.md              # full command reference
+├── CITATION.cff
 ├── pyproject.toml
-├── requirements.txt      # + requirements-cpu.txt / requirements-gpu.txt
-└── .env.example          # Configuration template
+├── requirements.txt         # + requirements-cpu.txt / requirements-gpu.txt
+└── .env.example             # configuration template
 ```
+
+Not tracked by git, created at runtime: `documents/` (source corpus),
+`artifacts/` (experiment and evaluation outputs), `logs/`,
+`kg_pipeline/artifacts/`. Thesis campaign outputs (`exp_results*/`) live outside
+the repository tree.
 
 ---
 
@@ -652,55 +801,88 @@ See [docs/cluster.md](docs/cluster.md) for the full deployment guide.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `graphrag-demo` exits with code 126 | Stale console-script shim | Use `conda run -n graphllm python -m graphrag.cli` |
-| `ModuleNotFoundError: pymupdf4llm` / `gliner` / `openai` | Undeclared KG-pipeline dependency | `pip install pymupdf4llm gliner openai pyyaml requests` |
 | CLI cannot connect to Neo4j | Wrong credentials or DB name | Verify `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`, `NEO4J_DATABASE` |
 | `Unknown function 'apoc.map.removeKey'` | APOC not installed on the instance | Install APOC; there is no fallback projection |
 | `smoke_check.py` reports missing variables | `.env` not loaded | The script reads exported variables only — `export` them or source your `.env` |
-| Local model loading fails | Insufficient GPU memory | Try a smaller model, reduce `--max-new-tokens`, tune `--gpu-memory-fraction` |
-| torch/torchvision mismatch on GPU nodes | Unpinned installs | Use `requirements-gpu.txt` (pins `torch==2.5.1+cu124`, `torchvision==0.20.1+cu124`) |
+| `ModuleNotFoundError` on a KG-pipeline import | Environment installed before the dependency declarations landed | Reinstall from a current `requirements*.txt`, then `pip install -e .` |
+| Local model loading fails | Insufficient GPU memory | Smaller model, lower `--max-new-tokens`, tune `--gpu-memory-fraction` |
+| torch/torchvision mismatch on GPU nodes | Unpinned installs | Use `requirements-gpu.txt` |
 | `import vllm` fails inside `graphllm` | Broken vLLM install in that env | Serve models from the `vllm-serve` virtualenv (`scripts/start_vllm*.sh`) |
-| vLLM run produces no answers | Server URL or model name mismatch | Confirm `VLLM_BASE_URL` and model name match the running server |
-| "vector channel skipped" warnings | Embedding endpoint down, or index missing | Start the encoder on `GRAPHRAG_EMBED_BASE_URL`, rerun `scripts/kg_vector_index.py` |
-| "Full-text index unavailable" warning, then slow queries | The index is missing — or was disabled for the session by one bad query | Run `scripts/kg_search_index.py`; if the index exists, restart the process (see audit §2.1) |
+| vLLM run produces no answers | Server URL or model name mismatch | Confirm `VLLM_BASE_URL` and the model name match the running server |
+| Run aborts on `EmbeddingUnavailable` | Encoder down or overloaded | Start it with `scripts/start_vllm_encoder.sh`. This is a stop, not a degradation, by design |
+| "vector channel skipped" warnings | Vector index missing | Rerun `scripts/kg_vector_index.py` |
+| Vector channel looks healthy but recall drops | Carriers went stale after a store reload | `python scripts/check_vector_index.py --min-resolving 1000`, then rebuild the index |
+| "Full-text index unavailable" warning, then slow queries | Index missing | Run `scripts/kg_search_index.py` |
 | Evaluation warns "GOLD JOIN FALLBACK" | The run emitted no `query_id` | Use `python -m graphrag.cli --experiment` with a `.json`/`.csv` gold as `--questions-file` |
 | Runs complete but context is empty | Retrieval or extraction issue | Inspect `summary.json` and `results.jsonl` before modifying the pipeline |
-| KG stage 3 crashes on malformed LLM output | Expected behavior | Failures are logged to `failed_chunks.jsonl`; the pipeline continues |
+| KG stage 3 hits malformed LLM output | Expected behaviour | Failures are logged to `failed_chunks.jsonl`; the pipeline continues |
 
 ---
 
 ## Known Limitations
 
-Documented so results are read correctly. The full catalogue, with file and line references,
-is in [`docs/code_audit_2026-08-15.md`](docs/code_audit_2026-08-15.md).
+Documented so results are read correctly. Each was checked against the artifacts
+of real runs; the full catalogue, with file and line references and the measured
+effect of every fix, is in
+[`docs/code_audit_2026-08-15.md`](docs/code_audit_2026-08-15.md).
 
-- **The retrieved context always opens with `Query: <question>`.** Because of this the context
-  is never empty, so the agent's zero-evidence guard never fires and the `no_retrieval` arm
-  receives the question itself as its context.
-- **`run_retrieval_matrix.py` cannot express the newer options.** Vector retrieval, citations,
-  the domain gate, `--complexity`, `--drop-predicates` and the rest are CLI-only. Matrix runs
-  measure stock defaults.
+**Accepted, with the measurement that justifies accepting them**
+
+- **Edge provenance is single-valued.** A triple attested in several documents keeps the `source_doc` / `page_range` of the last ingestion. Measured: **106 of 13 058 edges (0.8%)** carry more than one document — a schema change to list-valued provenance was not worth the risk to the citation layer.
+- **APOC is a hard dependency** with no whitelist fallback for node projection.
+- **Entity resolution materialises a full similarity matrix** (~576 MB at 12k groups). A scaling limit on larger corpora, not a defect on this one.
+- **`PYTHONHASHSEED` cannot be set from inside the pipeline** — CPython reads it at interpreter startup. The pipeline now warns instead of claiming to seed it; export it before launching if set-iteration order must be reproducible.
+
+**Gaps in the matrix runner** — outside the thesis path, since every reported number comes from `graphrag.cli --experiment`
+
+- **`run_retrieval_matrix.py` cannot express the newer options.** Vector retrieval, citations, the domain gate, `--complexity`, `--drop-predicates` and the rest are CLI-only. Matrix runs measure stock defaults.
 - **Matrix runs carry no `query_id`,** so the evaluator joins them to the gold by question text.
-- **`entity_coverage` in `evalkit.cli retrieval` reads the wrong field** for node entities
-  (Neo4j elementId instead of the name). Use `evaluation/scripts/score_gold_run.py` for entity
-  numbers.
-- **A metric with zero observations is reported as `0.0`, not as "not measured"** — relevant
-  for triple metrics under a JSON gold, where `gold_triples` is never populated.
-- **Edge provenance is single-valued.** A triple attested in several documents keeps the
-  `source_doc` / `page_range` of the last ingestion.
-- **`stage6_neo4j_summary.json:relationships_written` counts triples sent, not edges written.**
-- **MMR now applies to both text backends.** `TextRAGManager.retrieve_with_scores`
-  accepts `mmr_lambda` (Jaccard similarity over chunk tokens), so
-  `--text-retriever-mmr` is honoured on the default lexical backend as well as on
-  `--text-retriever-backend dense`. Runs before 2026-08-17 passed the flag and
-  silently got plain relevance ranking.
-- **The lexical backend ranks with Okapi BM25** (k1 1.5, b 0.75). Runs before
-  2026-08-17 used a formula that was neither tf-idf cosine nor BM25 and was
-  biased by chunk length.
-- **The KG pipeline does not control `PYTHONHASHSEED`** despite setting it at runtime; export it
-  before launching if you need it fixed.
+
+**Interpretation**
+
+- **`stage6_neo4j_summary.json`** reports `triples_sent` — triples that reached the database, an upper bound on edges because MERGE deduplicates. The authoritative edge count is the one read back from Neo4j in the same file. The old `relationships_written` key is kept for existing readers and holds the same value.
+- **`--subgraph-limit` truncates in Cypher, before ranking.** On a sparse graph the cap never binds; on a dense one it decides the answer.
+- **The demos do not enable the vector channel,** so a demo answer is not a retrieval measurement.
 
 ---
 
+## Reproducibility Notes
+
+Several behaviours changed on **2026-08-17**. Runs produced before that date are
+not directly comparable to runs produced after it.
+
+| Change | Effect on earlier runs |
+|---|---|
+| The retrieved context no longer echoes `Query: <question>` | `context_text` was never empty while a query existed. The zero-evidence guard was unreachable, the relevance grader matched the question against itself so no rewrite ever fired, and `no_retrieval` received the question as its context under a prompt saying to use ONLY the provided context |
+| The lexical text backend ranks with **Okapi BM25** (k1 1.5, b 0.75) | Earlier runs used a formula that was neither tf-idf cosine nor BM25 and was biased by chunk length |
+| **MMR applies to both text backends** | `--text-retriever-mmr` was silently inert on the default lexical backend; earlier runs passed the flag and got plain relevance ranking |
+| The citation gate validates against `visible_evidence_refs` | Earlier runs let a tag pointing at a compression-dropped block pass |
+| The vector channel **raises** instead of degrading | Earlier runs dropped the channel on 3 queries in 3 of 6 compared models and 0 in the other 3 — a model-asymmetric change of retrieval method mid-comparison |
+| Salient-term extraction is bilingual and word-boundary matched | An Italian-only stopword list made `the`, `and`, `are` salient on every English question, and substring matching then accepted every triple |
+| Entity resolution accumulates aliases | Registry entries used to overwrite each other on a canonical-name collision: 17 333 initial groups → 11 792 registry entries in the July run |
+| Merge confirmation votes once per pair | A pair was judged once per document bucket it touched, and a single `merge:true` out of five approved |
+| `config.json` records `graph_target` | Earlier runs do not record which Neo4j instance they read |
+
+Measured effect of the fixes — same model (Qwen2.5-7B), same graph, same 30
+questions, answer channel:
+
+| Pipeline | Concept F1 before | after | Δ |
+|---|---|---|---|
+| `hybrid` | 0.620 | **0.667** | +0.047 |
+| `text_only` | 0.590 | 0.630 | +0.041 |
+| `default` | 0.550 | 0.560 | +0.010 |
+| `no_retrieval` | 0.531 | 0.544 | +0.014 |
+
+The baseline moving by only +0.014 is the number that matters most: the
+`hybrid` − `no_retrieval` gap is **+0.159 concept recall before and after**, so
+the advantage was never an artefact of a damaged control.
+
+---
+
+## Citation
+
+If you use this software, cite it via [`CITATION.cff`](CITATION.cff).
+
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).
