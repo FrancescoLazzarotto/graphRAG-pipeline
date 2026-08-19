@@ -154,7 +154,7 @@ def is_definitional(question: str) -> bool:
     are the four implementation cycles of metabolisation?" opens like a
     definition but promises an enumeration, and sending it through the
     quote-then-explain prompt spends the answer's opening on a quotation of a
-    list item. See docs/code_audit_2026-08-15.md §1.8.
+    list item. 
     """
     if is_enumerative(question):
         return False
