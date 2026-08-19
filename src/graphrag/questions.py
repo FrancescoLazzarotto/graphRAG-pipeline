@@ -1,6 +1,5 @@
 """Deterministic question typing: definitional and enumerative questions.
-
-WP3/WP4 of ``docs/demo_quality_plan_2026-07.md``. Two question shapes need a
+Two question shapes need a
 different retrieval and a different answer:
 
 * **definitional** — "che cos'è SEeD?". The answer *is* the author's wording, so
