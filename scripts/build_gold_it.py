@@ -125,8 +125,9 @@ IT_QUERIES: dict[str, str] = {
 
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
-    src = root / "gold_v3.json"
-    dst = root / "gold_v3_it.json"
+    gold_dir = root / "evaluation" / "gold"
+    src = gold_dir / "gold_v3.json"
+    dst = gold_dir / "gold_v3_it.json"
 
     data = json.loads(src.read_text(encoding="utf-8"))
     queries = data["queries"]

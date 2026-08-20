@@ -20,7 +20,7 @@ Usage::
 
     conda run -n graphllm python evaluation/scripts/hard_subset.py \\
         --run-dir exp_results_v3graph/qwen25_32b_awq/<run> \\
-        --gold gold_v3.json
+        --gold evaluation/gold/gold_v3.json
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def matched_slots(row, gazetteer) -> tuple[set[tuple[str, str]], set[tuple[str, 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--gold", type=Path, default=REPO / "gold_v3.json")
+    parser.add_argument("--gold", type=Path, default=REPO / "evaluation" / "gold" / "gold_v3.json")
     args = parser.parse_args(argv)
 
     rows = [r for r in build_dataset([args.run_dir], gold_path=args.gold)

@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="compare every strategy of --variant against this one, inside the "
                              "same run; use --within text_only to ask whether the graph beats "
                              "the text-only pipeline")
-    parser.add_argument("--gold", type=Path, default=REPO / "gold_v3.json")
+    parser.add_argument("--gold", type=Path, default=REPO / "evaluation" / "gold" / "gold_v3.json")
     parser.add_argument("--channel", choices=("answer", "retrieval"), default="answer")
     parser.add_argument("--metric", choices=("f1", "recall", "precision"), default="f1")
     parser.add_argument("--resamples", type=int, default=10000)

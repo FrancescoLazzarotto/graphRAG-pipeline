@@ -151,7 +151,7 @@ def classify(entity: dict, table: dict[str, str], names: list[str]) -> tuple[str
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold", default=str(REPO / "gold_v3.json"))
+    parser.add_argument("--gold", default=str(REPO / "evaluation" / "gold" / "gold_v3.json"))
     parser.add_argument("--uri", default="bolt://localhost:7689")
     parser.add_argument("--user", default="neo4j")
     parser.add_argument("--password", default="staging-kg-v2")

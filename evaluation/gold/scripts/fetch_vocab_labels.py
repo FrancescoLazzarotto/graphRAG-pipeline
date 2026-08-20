@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-GOLD = Path("/srv/projects/graphllm/experiments/graphRAGPipelineExp1/gold.json")
+GOLD = Path(__file__).resolve().parents[1] / "gold.json"
 OUT = Path(__file__).with_name("vocab_labels.json")
 
 AGROVOC_API = "https://agrovoc.fao.org/browse/rest/v1/agrovoc/data"

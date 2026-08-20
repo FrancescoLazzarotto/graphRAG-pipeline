@@ -52,7 +52,7 @@ from graphrag.kg.retriever import KGRetriever  # noqa: E402
 from graphrag.strategies import STRATEGY_PRESETS, apply_strategy  # noqa: E402
 from graphrag.text_rag.factory import make_text_pipeline  # noqa: E402
 
-DEFAULT_GOLD = REPO / "gold_v3.json"
+DEFAULT_GOLD = REPO / "evaluation" / "gold" / "gold_v3.json"
 DEFAULT_DOCS = REPO / "artifacts" / "corpus_circular22"
 DEFAULT_OUT = REPO / "artifacts" / "retrieval_bench"
 

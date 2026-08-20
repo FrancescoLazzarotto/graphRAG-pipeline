@@ -24,12 +24,11 @@ from evalkit.models import GoldEntity, GoldQuery
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# The gold lives in the repo root today; docs/gold_eval_implementation_plan.md
-# §1.2 moves it under evaluation/gold/ at freeze time. Look in both so the
-# suite survives the move, and skip (never silently pass) if it is absent.
+# The gold sets live under evaluation/gold/. Skip (never silently pass) if
+# the file is absent.
 _GOLD_CANDIDATES = (
     REPO_ROOT / "evaluation" / "gold" / "gold_circular_v1.json",
-    REPO_ROOT / "gold.json",
+    REPO_ROOT / "evaluation" / "gold" / "gold.json",
 )
 
 

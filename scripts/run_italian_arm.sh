@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 
 OUT_ROOT="${OUT_ROOT:-/srv/projects/graphllm/experiments/exp_results_crosslingual}"
 MODEL="${MODEL:-Qwen/Qwen2.5-32B-Instruct-AWQ}"
-GOLD_IT="${GOLD_IT:-gold_v3_it.json}"
+GOLD_IT="${GOLD_IT:-evaluation/gold/gold_v3_it.json}"
 BASE_URL="${BASE_URL:-http://localhost:8000/v1}"
 STRATEGIES="default,hybrid,text_only,no_retrieval,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path"
 

@@ -16,7 +16,7 @@ and a compact Markdown table.
 Usage:
     python evaluation/scripts/score_gold_run.py \
         --run-dir artifacts/experiments/<run>/ \
-        --gold gold.json \
+        --gold evaluation/gold/gold.json \
         --out-prefix artifacts/evaluation/<name>
 """
 
@@ -145,7 +145,7 @@ def _markdown(report: dict[str, Any]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    parser.add_argument("--gold", type=Path, default=REPO_ROOT / "gold.json")
+    parser.add_argument("--gold", type=Path, default=REPO_ROOT / "evaluation" / "gold" / "gold.json")
     parser.add_argument(
         "--out-prefix",
         type=Path,

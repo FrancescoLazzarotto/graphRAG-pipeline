@@ -27,7 +27,7 @@ page numbers that belong to the citation measurement, not to the answer.
 
 Usage:
     python evaluation/scripts/answer_text_metrics.py \
-        --runs <RUN_1> ... <RUN_6> --gold gold_v3.json \
+        --runs <RUN_1> ... <RUN_6> --gold evaluation/gold/gold_v3.json \
         --out-prefix artifacts/evaluation/answer_text
 """
 

@@ -28,11 +28,10 @@ from evalkit.normalisation import match_key
 
 RESOLVER_SRC = Path(__file__).resolve().parents[1] / "evalkit" / "metrics" / "resolver.py"
 
-# Candidate gold locations: the repo root today, `evaluation/gold/` after the
-# freeze move planned in docs/gold_eval_implementation_plan.md §1.2.
+# Gold locations, all under `evaluation/gold/`.
 _GOLD_CANDIDATES = (
     EVAL_DIR / "gold" / "gold_circular_v1.json",
-    PROJECT_ROOT / "gold.json",
+    EVAL_DIR / "gold" / "gold.json",
 )
 
 AGROVOC = "http://aims.fao.org/aos/agrovoc/c_"

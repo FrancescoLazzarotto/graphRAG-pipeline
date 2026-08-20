@@ -12,7 +12,7 @@ from evalkit.metrics.entities import concept_level, retrieved_labels
 from evalkit.metrics.mentions import Gazetteer, answer_channel_row
 from evalkit.models import GoldEntity
 
-GOLD_PATH = Path(__file__).resolve().parents[2] / "gold.json"
+GOLD_PATH = Path(__file__).resolve().parents[2] / "evaluation" / "gold" / "gold.json"
 
 
 def _entity(label: str, alts: tuple[str, ...] = ()) -> GoldEntity:

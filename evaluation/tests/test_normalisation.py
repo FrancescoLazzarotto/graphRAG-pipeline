@@ -146,7 +146,7 @@ def test_cross_lingual_forms_match_via_alt_labels(gold_form: str, pipeline_form:
     """
     from evalkit.io.gold_loader import load_gold_json
 
-    gold_path = Path(__file__).resolve().parents[2] / "gold.json"
+    gold_path = Path(__file__).resolve().parents[2] / "evaluation" / "gold" / "gold.json"
     entities = [
         entity
         for query in load_gold_json(gold_path).values()

@@ -20,7 +20,7 @@ cd "$(dirname "$0")/.."
 VARIANT="${VARIANT:?set VARIANT, e.g. v2_baseline}"
 OUT_ROOT="${OUT_ROOT:-/srv/projects/graphllm/experiments/exp_results_kg_v2}"
 MODEL="${MODEL:-Qwen/Qwen2.5-32B-Instruct-AWQ}"
-GOLD="${GOLD:-gold_v3.json}"
+GOLD="${GOLD:-evaluation/gold/gold_v3.json}"
 BASE_URL="${BASE_URL:-http://localhost:8000/v1}"
 STRATEGIES="${STRATEGIES:-default,hybrid,text_only,no_retrieval,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path}"
 # Extra CLI flags for variants that change the retrieval budget rather than the

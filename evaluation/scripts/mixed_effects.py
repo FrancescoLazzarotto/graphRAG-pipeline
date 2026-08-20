@@ -25,7 +25,7 @@ cross-check when statsmodels is installed.
 
 Usage:
     python evaluation/scripts/mixed_effects.py \
-        --runs <RUN_1> ... <RUN_6> --gold gold_v3.json \
+        --runs <RUN_1> ... <RUN_6> --gold evaluation/gold/gold_v3.json \
         --reference text_only --out-prefix artifacts/evaluation/mixed_effects
 """
 

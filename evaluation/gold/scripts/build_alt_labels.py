@@ -24,7 +24,7 @@ import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
-GOLD = Path("/srv/projects/graphllm/experiments/graphRAGPipelineExp1/gold.json")
+GOLD = Path(__file__).resolve().parents[1] / "gold.json"
 VOCAB = Path(__file__).with_name("vocab_labels.json")
 
 # Curated IT/EN surface forms, keyed by normalised_label.
