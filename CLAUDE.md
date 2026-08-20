@@ -85,7 +85,7 @@ conda run -n graphllm python -m kg_pipeline.main \
 
 # Experiment batch via the CLI (the only runner that exposes the full AgentConfig)
 conda run -n graphllm python -m graphrag.cli --experiment \
-  --questions-file gold.json \
+  --questions-file evaluation/gold/gold.json \
   --strategies "default,hybrid,text_only,no_retrieval" \
   --llm --vllm --model-id Qwen/Qwen2.5-32B-Instruct \
   --output-dir exp_results/<tag>
@@ -101,7 +101,7 @@ python scripts/analyze_experiments.py --results-dir artifacts/experiments --outp
 
 # Score a run against the frozen gold (two channels, two levels)
 python evaluation/scripts/score_gold_run.py \
-  --run-dir exp_results/<tag>/ --gold gold.json \
+  --run-dir exp_results/<tag>/ --gold evaluation/gold/gold.json \
   --out-prefix artifacts/evaluation/<name>
 
 # Interactive demos

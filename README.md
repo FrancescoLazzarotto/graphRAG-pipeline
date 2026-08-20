@@ -492,8 +492,8 @@ Two frozen sets ship with the repository, 30 questions each, same annotation:
 
 | File | Language | Notes |
 |---|---|---|
-| [`gold_v3.json`](gold_v3.json) | English | The reference set every thesis number is measured on |
-| [`gold_v3_it.json`](gold_v3_it.json) | Italian | Same expected entities, relations, reference answer and scoring block; only `query` changes, and `query_en` carries the original. Built by `scripts/build_gold_it.py` |
+| [`gold_v3.json`](evaluation/gold/gold_v3.json) | English | The reference set every thesis number is measured on |
+| [`gold_v3_it.json`](evaluation/gold/gold_v3_it.json) | Italian | Same expected entities, relations, reference answer and scoring block; only `query` changes, and `query_en` carries the original. Built by `scripts/build_gold_it.py` |
 
 Each entry carries `query_id`, `query_type`, `query`, `expected_answer`,
 `expected_entities`, `expected_relations`, `source_verified` and `scoring`.
@@ -517,7 +517,7 @@ for Standard-RAG comparisons and sizing studies.
 
 ```bash
 conda run -n graphllm python -m graphrag.cli --experiment \
-  --questions-file gold_v3.json \
+  --questions-file evaluation/gold/gold_v3.json \
   --strategies "default,hybrid,text_only,no_retrieval,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
   --llm --vllm --vllm-base-url http://localhost:8000/v1 \
   --model-id Qwen/Qwen2.5-32B-Instruct \
@@ -622,7 +622,7 @@ comparisons through the `evalkit` toolkit.
 # 1. join run output with the gold set
 PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
   --input exp_results/<run_dir> \
-  --gold-file gold_v3.json \
+  --gold-file evaluation/gold/gold_v3.json \
   --output artifacts/evaluation/eval_dataset.csv
 
 # 2. retrieval metrics
@@ -648,7 +648,7 @@ scored zero" when it means "never measured".
 ```bash
 python evaluation/scripts/score_gold_run.py \
   --run-dir exp_results/<run_dir>/ \
-  --gold gold_v3.json \
+  --gold evaluation/gold/gold_v3.json \
   --out-prefix artifacts/evaluation/<name>
 ```
 
@@ -771,6 +771,8 @@ Full deployment guide: [docs/cluster.md](docs/cluster.md).
 ├── evaluation/              # evaluation workspace
 │   ├── evalkit/             #   metrics, LLM judge, reports (CLI: python -m evalkit.cli)
 │   ├── gold/                #   gold QA datasets, templates, schema
+│   │   ├── gold_v3.json     #     frozen reference set, English
+│   │   └── gold_v3_it.json  #     frozen reference set, Italian
 │   ├── scripts/             #   score_gold_run.py, build_results_tables.py, hard_subset.py
 │   ├── fixtures/            #   question sets for matrix runs
 │   ├── baselines/           #   regression baselines
@@ -780,8 +782,6 @@ Full deployment guide: [docs/cluster.md](docs/cluster.md).
 │   └── chat_templates/      #   per-model chat templates
 ├── tests/                   # core unit tests, incl. test_audit_fixes.py
 ├── docs/                    # cluster guide, audits, worklogs, plans
-├── gold_v3.json             # frozen reference set, English
-├── gold_v3_it.json          # frozen reference set, Italian
 ├── COMMANDS.md              # full command reference
 ├── CITATION.cff
 ├── pyproject.toml
