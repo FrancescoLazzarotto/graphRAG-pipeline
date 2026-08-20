@@ -1,0 +1,193 @@
+{
+ "http://aims.fao.org/aos/agrovoc/c_24892": {
+  "gold_label": "Rice husks",
+  "source": "AGROVOC",
+  "pref": [
+   "rice husks",
+   "Pula di riso"
+  ],
+  "alt": [
+   "Lolla di riso",
+   "rice hulls"
+  ]
+ },
+ "http://aims.fao.org/aos/agrovoc/c_28445": {
+  "gold_label": "Wine lees",
+  "source": "AGROVOC",
+  "pref": [
+   "lees",
+   "Feccia"
+  ],
+  "alt": []
+ },
+ "http://aims.fao.org/aos/agrovoc/c_6599": {
+  "gold_label": "Rice",
+  "source": "AGROVOC",
+  "pref": [
+   "rice",
+   "Riso"
+  ],
+  "alt": [
+   "Risone",
+   "paddy"
+  ]
+ },
+ "http://aims.fao.org/aos/agrovoc/c_77d35680": {
+  "gold_label": "Rice bran",
+  "source": "AGROVOC",
+  "pref": [
+   "rice bran",
+   "Crusca di riso"
+  ],
+  "alt": []
+ },
+ "http://aims.fao.org/aos/agrovoc/c_8376": {
+  "gold_label": "Whey",
+  "source": "AGROVOC",
+  "pref": [
+   "whey",
+   "Siero di latte"
+  ],
+  "alt": [
+   "Siero di latte in pasta",
+   "whey paste"
+  ]
+ },
+ "http://aims.fao.org/aos/agrovoc/c_8405": {
+  "gold_label": "Winemaking",
+  "source": "AGROVOC",
+  "pref": [
+   "winemaking",
+   "Vinificazione"
+  ],
+  "alt": [
+   "Tecniche di vinificazione",
+   "vinification techniques"
+  ]
+ },
+ "http://aims.fao.org/aos/agrovoc/c_909cff15": {
+  "gold_label": "Grape pomace",
+  "source": "AGROVOC",
+  "pref": [
+   "Vinacce",
+   "grape pomace"
+  ],
+  "alt": [
+   "Vinacce d'uva"
+  ]
+ },
+ "http://aims.fao.org/aos/agrovoc/c_9262": {
+  "gold_label": "Biogas",
+  "source": "AGROVOC",
+  "pref": [
+   "biogas",
+   "Biogas"
+  ],
+  "alt": []
+ },
+ "http://aims.fao.org/aos/agrovoc/c_9513": {
+  "gold_label": "Buttermilk",
+  "source": "AGROVOC",
+  "pref": [
+   "buttermilk",
+   "Latticello"
+  ],
+  "alt": []
+ },
+ "http://aims.fao.org/aos/agrovoc/c_b88af936": {
+  "gold_label": "Anaerobic digester",
+  "source": "AGROVOC",
+  "pref": [
+   "anaerobic digesters",
+   "Digestori anaerobici"
+  ],
+  "alt": []
+ },
+ "http://purl.obolibrary.org/obo/CHEBI_15889": {
+  "gold_label": "Sterol",
+  "source": "ChEBI",
+  "pref": [
+   "sterol"
+  ],
+  "alt": [
+   "3-hydroxysteroids",
+   "Sterol",
+   "a sterol",
+   "sterols",
+   "sterols"
+  ]
+ },
+ "http://purl.obolibrary.org/obo/CHEBI_16113": {
+  "gold_label": "Cholesterol",
+  "source": "ChEBI",
+  "pref": [
+   "cholesterol"
+  ],
+  "alt": [
+   "(3beta,14beta,17alpha)-cholest-5-en-3-ol",
+   "CHOLESTEROL",
+   "Cholest-5-en-3beta-ol",
+   "Cholest-5-en-3beta-ol",
+   "Cholesterin",
+   "Cholesterol",
+   "cholest-5-en-3beta-ol",
+   "cholest-5-en-3beta-ol",
+   "cholesterol"
+  ]
+ },
+ "http://purl.obolibrary.org/obo/CHEBI_26195": {
+  "gold_label": "Polyphenol",
+  "source": "ChEBI",
+  "pref": [
+   "polyphenol"
+  ],
+  "alt": [
+   "polyphenols"
+  ]
+ },
+ "http://purl.obolibrary.org/obo/CHEBI_32034": {
+  "gold_label": "Potassium bitartrate (cream of tartar)",
+  "source": "ChEBI",
+  "pref": [
+   "potassium bitartrate"
+  ],
+  "alt": [
+   "Faccla",
+   "Faccula",
+   "Faecla",
+   "Faecula",
+   "acid potassium tartrate",
+   "cream of tartar",
+   "monopotassium tartrate",
+   "potassium (2R,3R)-3-carboxy-2,3-dihydroxypropanoate",
+   "potassium (2R,3R)-3-carboxy-2,3-dihydroxypropanoate",
+   "potassium L-bitartrate",
+   "potassium L-tartrate",
+   "potassium acid tartrate",
+   "potassium bitartrate",
+   "potassium hydrogen tartrate",
+   "tartar cream",
+   "tartar",
+   "tartaric acid monopotassium salt"
+  ]
+ },
+ "http://purl.obolibrary.org/obo/CHEBI_47916": {
+  "gold_label": "Flavonoid",
+  "source": "ChEBI",
+  "pref": [
+   "flavonoid"
+  ],
+  "alt": [
+   "2-aryl-1-benzopyran",
+   "2-aryl-1-benzopyrans",
+   "Flavonoid",
+   "flavonoids"
+  ]
+ },
+ "http://w3id.org/CEON/ontology/cvn/Collaboration": {
+  "gold_label": "Collaboration",
+  "source": "OTHER",
+  "pref": [],
+  "alt": []
+ }
+}
