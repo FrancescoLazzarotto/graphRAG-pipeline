@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "graphRAG-pipeline: an experiment-oriented GraphRAG pipeline with ontology-grounded evaluation"
+type: software
+authors:
+  - family-names: "Lazzarotto"
+    given-names: "Francesco"
+  - family-names: "Coucourde"
+    given-names: "Giulia"
+repository-code: "https://github.com/FrancescoLazzarotto/graphRAG-pipeline"
+license: MIT
+keywords:
+  - GraphRAG
+  - knowledge graph
+  - retrieval-augmented generation
+  - circular economy
+  - food systems
+  - LLM evaluation
+abstract: >-
+  End-to-end GraphRAG codebase: knowledge-graph construction from PDF corpora
+  into Neo4j (GLiNER NER, LLM triple extraction, cross-lingual entity
+  resolution), multi-strategy graph+text retrieval with LLM generation, and a
+  full evaluation toolkit (retrieval metrics, text metrics, RAGAS,
+  LLM-as-a-judge with bootstrap confidence intervals). Applied to a bilingual
+  Italian/English corpus on the circular economy of food.
