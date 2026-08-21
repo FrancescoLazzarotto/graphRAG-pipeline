@@ -56,6 +56,9 @@ class _FakeLLM:
     def load_llm(self) -> Any:
         return self._model
 
+    def _invoke_with_retry(self, model: Any, payload: Any) -> Any:
+        return model.invoke(payload)
+
 
 class _RecordingAgent(KGRAGAgent):
     """Agent whose graph records the initial state instead of running."""
@@ -233,6 +236,22 @@ def test_absorption_needs_whole_words_not_a_substring():
     )
 
     assert memory.seed_entities() == ["Risorsa", "Riso"]
+
+
+def test_a_broader_name_absorbs_two_narrower_ones_at_once():
+    """One new name can subsume more than one already-selected slot."""
+    memory = ConversationMemory()
+    memory.observe(
+        question="q",
+        answer="parla di Politica Agricola, Agricola Comune e Politica Agricola Comune",
+        nodes=[
+            {"text": "Politica Agricola"},
+            {"text": "Agricola Comune"},
+            {"text": "Politica Agricola Comune"},
+        ],
+    )
+
+    assert memory.seed_entities() == ["Politica Agricola Comune"]
 
 
 def test_entities_decay_out_of_the_window():

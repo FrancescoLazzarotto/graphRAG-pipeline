@@ -1485,6 +1485,10 @@ class KGRAGAgent:
 
         entities = memory.seed_entities()
         if not entities:
+            logger.debug(
+                "Follow-up detected but no seed entities available; "
+                "keeping the question as typed."
+            )
             return question
 
         prompt = PromptLibrary.followup_rewrite_prompt(self.config)
@@ -1497,7 +1501,7 @@ class KGRAGAgent:
         )
         try:
             model = self.llm.load_llm()
-            output = model.invoke(rendered)
+            output = self.llm._invoke_with_retry(model, rendered)
         except Exception as exc:  # noqa: BLE001 - a failed rewrite must not lose the turn
             logger.warning("Follow-up rewrite failed (%s); keeping the question.", exc)
             return question

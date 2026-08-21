@@ -254,21 +254,28 @@ class ConversationMemory:
             words = _words(item.name)
             if not words:
                 continue
+            if any(_contains_span(chosen, words) for chosen in selected_words):
+                continue
             # "Regione" next to "Regione Piemonte" wastes one of the few slots
             # and makes the rewrite vaguer, not richer. Either order can occur —
             # ranking decides which of the two is seen first — so the specific
             # name wins whether it arrives before or after the broader one.
-            broader = next(
-                (pos for pos, chosen in enumerate(selected_words)
-                 if _contains_span(words, chosen)),
-                None,
-            )
-            if any(_contains_span(chosen, words) for chosen in selected_words):
-                continue
-            if broader is not None:
+            # One new entity can subsume more than one already-selected one
+            # (e.g. "Politica Agricola Comune" absorbs both "Politica Agricola"
+            # and "Agricola Comune"), so every absorbed slot is dropped, not
+            # just the first found.
+            absorbed = [
+                pos for pos, chosen in enumerate(selected_words)
+                if _contains_span(words, chosen)
+            ]
+            if absorbed:
+                keep_at = absorbed[0]
+                for pos in reversed(absorbed[1:]):
+                    del selected[pos]
+                    del selected_words[pos]
                 # Replace in place: the slot keeps the rank it earned.
-                selected[broader] = item.name
-                selected_words[broader] = words
+                selected[keep_at] = item.name
+                selected_words[keep_at] = words
                 continue
             selected.append(item.name)
             selected_words.append(words)
