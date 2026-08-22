@@ -584,6 +584,12 @@ def _compact_relation_types_deterministic(
     return report
 
 
+# Pairs per round-trip when bridging duplicate-name groups. Big enough that
+# a graph of ~12k nodes costs a handful of queries, small enough that one
+# failure does not lose the pass.
+_BRIDGE_BATCH_SIZE = 1000
+
+
 def _bridge_duplicate_name_groups(
     session,
     dry_run: bool,
@@ -600,71 +606,112 @@ def _bridge_duplicate_name_groups(
         "errors": [],
     }
 
+    # Every (anchor, other) pair the groups propose, in the order the original
+    # per-pair loop would have visited them.
+    pairs: list[tuple[int, int, dict[str, Any], dict[str, Any]]] = []
     for group in groups:
         nodes = sorted(
             group["nodes"], key=lambda row: (-int(row.get("degree", 0)), int(row["id"]))
         )
         if len(nodes) < 2:
             continue
-
         anchor = nodes[0]
         anchor_id = int(anchor["id"])
-        local_edges = 0
         for node in nodes[1:]:
-            if max_edges_per_group > 0 and local_edges >= max_edges_per_group:
-                report["skipped_group_limit"] += 1
-                continue
-
             other_id = int(node["id"])
             if other_id == anchor_id:
                 continue
+            pairs.append((anchor_id, other_id, group, node))
 
+    # One query per pair meant a sequential round-trip per duplicate name: on a
+    # graph of this size that is thousands of them, and CLAUDE.md's own rule
+    # says not to query Neo4j inside a loop. Chunked rather than one query so a
+    # failure costs one chunk instead of the whole pass, and so the parameter
+    # list stays a size the driver is happy to send.
+    connected: set[tuple[int, int]] = set()
+    for offset in range(0, len(pairs), _BRIDGE_BATCH_SIZE):
+        chunk = pairs[offset : offset + _BRIDGE_BATCH_SIZE]
+        payload = [{"a": a, "b": b} for a, b, _, _ in chunk]
+        try:
+            for row in session.run(
+                "UNWIND $pairs AS pair "
+                "MATCH (a)-[r]-(b) "
+                "WHERE id(a) = pair.a AND id(b) = pair.b "
+                "RETURN pair.a AS a, pair.b AS b, count(r) AS c",
+                pairs=payload,
+            ):
+                if int(row["c"]) > 0:
+                    connected.add((int(row["a"]), int(row["b"])))
+        except Exception as exc:
+            report["errors"].append(
+                f"bridge existence check failed for {len(chunk)} pairs "
+                f"at offset {offset}: {exc}"
+            )
+            # Unknown is not "unconnected": creating an edge that already exists
+            # is the one outcome this pass must not produce.
+            connected.update((a, b) for a, b, _, _ in chunk)
+
+    # The per-group cap counts created edges only, so it has to be applied after
+    # the existence answers are in — same order, same result as the old loop.
+    to_create: list[tuple[int, int, dict[str, Any], dict[str, Any]]] = []
+    # Keyed by group identity, not by the normalized name: the cap is per
+    # group, and nothing here guarantees the two are the same thing.
+    local_edges: dict[int, int] = {}
+    for anchor_id, other_id, group, node in pairs:
+        key = id(group)
+        if max_edges_per_group > 0 and local_edges.get(key, 0) >= max_edges_per_group:
+            report["skipped_group_limit"] += 1
+            continue
+        if (anchor_id, other_id) in connected:
+            report["skipped_already_connected"] += 1
+            continue
+        report["candidate_pairs"] += 1
+        to_create.append((anchor_id, other_id, group, node))
+        local_edges[key] = local_edges.get(key, 0) + 1
+
+    created: set[tuple[int, int]] = set()
+    if dry_run:
+        created = {(a, b) for a, b, _, _ in to_create}
+    else:
+        for offset in range(0, len(to_create), _BRIDGE_BATCH_SIZE):
+            chunk = to_create[offset : offset + _BRIDGE_BATCH_SIZE]
+            payload = [{"a": a, "b": b} for a, b, _, _ in chunk]
             try:
-                existing = int(
-                    session.run(
-                        "MATCH (a)-[r]-(b) "
-                        "WHERE id(a) = $a AND id(b) = $b "
-                        "RETURN count(r) AS c",
-                        a=anchor_id,
-                        b=other_id,
-                    ).single()["c"]
-                )
+                session.run(
+                    "UNWIND $pairs AS pair "
+                    "MATCH (a), (b) "
+                    "WHERE id(a) = pair.a AND id(b) = pair.b "
+                    "MERGE (a)-[:RELATED_TO]->(b)",
+                    pairs=payload,
+                ).consume()
             except Exception as exc:
                 report["errors"].append(
-                    f"bridge existence check failed for {anchor_id}-{other_id}: {exc}"
+                    f"bridge create failed for {len(chunk)} pairs "
+                    f"at offset {offset}: {exc}"
                 )
                 continue
+            created.update((a, b) for a, b, _, _ in chunk)
 
-            if existing > 0:
-                report["skipped_already_connected"] += 1
-                continue
-
-            report["candidate_pairs"] += 1
-            if not dry_run:
-                try:
-                    session.run(
-                        "MATCH (a), (b) "
-                        "WHERE id(a) = $a AND id(b) = $b "
-                        "MERGE (a)-[:RELATED_TO]->(b)",
-                        a=anchor_id,
-                        b=other_id,
-                    ).consume()
-                except Exception as exc:
-                    report["errors"].append(
-                        f"bridge create failed for {anchor_id}-{other_id}: {exc}"
-                    )
-                    continue
-
-            report["edges_created"] += 1
-            local_edges += 1
-            if len(report["samples"]) < 100:
-                report["samples"].append(
-                    {
-                        "normalized": group["normalized"],
-                        "from": str(anchor.get("name") or ""),
-                        "to": str(node.get("name") or ""),
-                    }
-                )
+    for anchor_id, other_id, group, node in to_create:
+        if (anchor_id, other_id) not in created:
+            continue
+        report["edges_created"] += 1
+        if len(report["samples"]) < 100:
+            anchor_name = next(
+                (
+                    str(row.get("name") or "")
+                    for row in group["nodes"]
+                    if int(row["id"]) == anchor_id
+                ),
+                "",
+            )
+            report["samples"].append(
+                {
+                    "normalized": group["normalized"],
+                    "from": anchor_name,
+                    "to": str(node.get("name") or ""),
+                }
+            )
 
     return report
 
@@ -1253,27 +1300,40 @@ def _cleanup_isolated_nodes(
         "MATCH (n) WHERE NOT (n)--() RETURN id(n) AS id, n.name AS name"
     ).data()
     report["candidates"] = len(rows)
+    if not rows:
+        return report
 
+    # The old code ran one lookup query per isolated node — hundreds to
+    # thousands of sequential round-trips, each one a full scan for a name.
+    # Every candidate target is a node with at least one relationship, so one
+    # query brings back all of them and the pick happens in memory. Same
+    # ordering rule as before: highest degree first, lowest id to break ties.
+    best_by_name: dict[str, dict[str, Any]] = {}
+    for row in session.run(
+        "MATCH (m)-[r]-() "
+        "WHERE m.name IS NOT NULL AND trim(m.name) <> '' "
+        "WITH m, count(r) AS degree "
+        "RETURN id(m) AS id, m.name AS name, degree"
+    ):
+        normalized = str(row["name"]).strip().lower()
+        current = best_by_name.get(normalized)
+        candidate = {
+            "id": int(row["id"]),
+            "name": row["name"],
+            "degree": int(row["degree"]),
+        }
+        if current is None or (candidate["degree"], -candidate["id"]) > (
+            current["degree"],
+            -current["id"],
+        ):
+            best_by_name[normalized] = candidate
+
+    to_delete: list[int] = []
     for row in rows:
         node_id = int(row["id"])
         name = str(row.get("name") or "")
         normalized = name.strip().lower()
-
-        match_row = None
-        if normalized:
-            match_row = session.run(
-                "MATCH (m) "
-                "WHERE id(m) <> $id "
-                "  AND m.name IS NOT NULL AND trim(m.name) <> '' "
-                "  AND toLower(trim(m.name)) = $norm "
-                "MATCH (m)-[r]-() "
-                "WITH m, count(r) AS degree "
-                "ORDER BY degree DESC, id(m) "
-                "LIMIT 1 "
-                "RETURN id(m) AS id, m.name AS name, degree",
-                id=node_id,
-                norm=normalized,
-            ).single()
+        match_row = best_by_name.get(normalized) if normalized else None
 
         if match_row:
             report["matched"] += 1
@@ -1287,6 +1347,12 @@ def _cleanup_isolated_nodes(
                 report["skipped"] += 1
                 report["errors"].append("APOC unavailable, cannot merge isolated nodes")
                 continue
+            # Left one query per merge on purpose: apoc.refactor.mergeNodes
+            # rewrites relationships and invalidates ids, so batching several
+            # merges in one statement risks a later row operating on a node the
+            # earlier row already dissolved. Merges are the minority case —
+            # most isolated nodes have no namesake and are deleted below, in
+            # one query.
             try:
                 session.run(
                     "MATCH (n) WHERE id(n) IN $ids "
@@ -1308,12 +1374,19 @@ def _cleanup_isolated_nodes(
             report["samples"].append({"from": name, "to": None})
         if dry_run:
             continue
+        to_delete.append(node_id)
+
+    for offset in range(0, len(to_delete), _BRIDGE_BATCH_SIZE):
+        chunk = to_delete[offset : offset + _BRIDGE_BATCH_SIZE]
         try:
             session.run(
-                "MATCH (n) WHERE id(n) = $id DETACH DELETE n", id=node_id
+                "MATCH (n) WHERE id(n) IN $ids DETACH DELETE n", ids=chunk
             ).consume()
         except Exception as exc:
-            report["errors"].append(f"isolated node delete failed for {node_id}: {exc}")
+            report["errors"].append(
+                f"isolated node delete failed for {len(chunk)} nodes "
+                f"at offset {offset}: {exc}"
+            )
 
     return report
 
