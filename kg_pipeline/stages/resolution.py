@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import logging
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from openai import OpenAI
+from openai import AsyncOpenAI
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
@@ -205,6 +206,122 @@ def _embedding_candidates(
     return candidates
 
 
+_CONFIRM_BATCH_SIZE = 40
+_DEFAULT_CONCURRENT_REQUESTS = 8
+
+
+def _confirm_prompt(doc: str, pairs: list[dict[str, Any]]) -> str:
+    """The merge-confirmation prompt for one document's batch of pairs."""
+    return f"""
+You are resolving cross-document entities for a knowledge graph about circular economy
+and food systems. The corpus is bilingual: the same real-world entity may appear with an
+ENGLISH name in one document and an ITALIAN name in another (e.g. "circular economy" and
+"economia circolare", "food waste" and "spreco alimentare"). Such cross-language pairs
+SHOULD be merged when they denote the same entity or concept.
+
+Document scope: {doc}
+
+For each pair, decide if they refer to the same real-world entity.
+Be conservative: if uncertain, return merge=false. Translation equivalence alone is
+sufficient only when the meaning is clearly the same.
+When left_label and right_label differ, merge only if the two names clearly denote the
+same thing despite the typing difference; a concept and a publication named after it
+(e.g. "sustainability" vs the journal "Sustainability") are NOT the same entity.
+Do NOT merge a thing with an action or goal about that thing: "food waste" vs
+"food waste reduction", "circular economy" vs "promoting the circular economy",
+"CO2 emissions" vs "reducing CO2 emissions" are DIFFERENT entities.
+Return only JSON array with objects:
+{{"left_group": int, "right_group": int, "merge": true or false}}
+
+Pairs:
+{json.dumps(pairs, ensure_ascii=False, indent=2)}
+""".strip()
+
+
+def _approved_from_response(content: str, group_count: int) -> set[tuple[int, int]]:
+    """Read the model's verdicts, dropping anything outside the group range."""
+    approved: set[tuple[int, int]] = set()
+    for item in _parse_llm_json_array(content):
+        if not isinstance(item, dict) or not bool(item.get("merge", False)):
+            continue
+        left_group = int(item["left_group"])
+        right_group = int(item["right_group"])
+        if not (0 <= left_group < group_count and 0 <= right_group < group_count):
+            LOGGER.warning(
+                "LLM merge pair (%d, %d) outside valid group range [0, %d) — skipped",
+                left_group,
+                right_group,
+                group_count,
+            )
+            continue
+        approved.add(tuple(sorted((left_group, right_group))))
+    return approved
+
+
+async def _confirm_batch_async(
+    client: AsyncOpenAI,
+    semaphore: asyncio.Semaphore,
+    doc: str,
+    pairs: list[dict[str, Any]],
+    model_name: str,
+    group_count: int,
+) -> set[tuple[int, int]]:
+    async with semaphore:
+        try:
+            response = await client.chat.completions.create(
+                model=model_name,
+                temperature=0.0,
+                messages=[{"role": "user", "content": _confirm_prompt(doc, pairs)}],
+            )
+            return _approved_from_response(
+                response.choices[0].message.content or "[]", group_count
+            )
+        except Exception as exc:  # noqa: BLE001 - one bad batch must not lose the stage
+            LOGGER.warning(
+                "LLM merge confirmation failed for doc=%s (%d pairs skipped): %s",
+                doc,
+                len(pairs),
+                exc,
+            )
+            return set()
+
+
+async def _confirm_batches_async(
+    doc_batches: list[tuple[str, list[dict[str, Any]]]],
+    base_url: str,
+    api_key: str,
+    http_timeout: float,
+    concurrent_requests: int,
+    model_name: str,
+    group_count: int,
+) -> list[set[tuple[int, int]]]:
+    async with AsyncOpenAI(
+        base_url=base_url.rstrip("/"),
+        api_key=api_key or "EMPTY",
+        timeout=http_timeout,
+    ) as client:
+        semaphore = asyncio.Semaphore(concurrent_requests)
+        coros = [
+            _confirm_batch_async(
+                client=client,
+                semaphore=semaphore,
+                doc=doc,
+                pairs=pairs,
+                model_name=model_name,
+                group_count=group_count,
+            )
+            for doc, pairs in doc_batches
+        ]
+        results: list[set[tuple[int, int]]] = []
+        with tqdm(
+            total=len(coros), desc="Stage 4 LLM Merge Confirm", unit="batch"
+        ) as progress:
+            for coro in asyncio.as_completed(coros):
+                results.append(await coro)
+                progress.update(1)
+        return results
+
+
 def _confirm_candidates_with_llm(
     base_url: str,
     api_key: str,
@@ -216,7 +333,6 @@ def _confirm_candidates_with_llm(
     if not candidates:
         return set()
 
-    client = OpenAI(base_url=base_url.rstrip("/"), api_key=api_key or "EMPTY")
     approved: set[tuple[int, int]] = set()
 
     by_doc: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -259,76 +375,37 @@ def _confirm_candidates_with_llm(
         # pairs. See docs/code_audit_2026-08-15.md §3.6.
         by_doc[docs[0]].append(pair_payload)
 
-    _CONFIRM_BATCH_SIZE = 40
-
     doc_batches: list[tuple[str, list[dict[str, Any]]]] = []
     for doc, pairs in by_doc.items():
         for start in range(0, len(pairs), _CONFIRM_BATCH_SIZE):
             doc_batches.append((doc, pairs[start : start + _CONFIRM_BATCH_SIZE]))
 
-    for doc, pairs in tqdm(
-        doc_batches, desc="Stage 4 LLM Merge Confirm", unit="batch"
+    # Stage 3 has run its extraction calls concurrently since it was written;
+    # this stage sent one HTTP request at a time and waited, so on ~12k groups
+    # it spent most of its wall clock idle on the network. Same pattern, same
+    # knob (GRAPHRAG_LLM_CONCURRENT_REQUESTS). The result is order-independent
+    # — approvals land in a set — so concurrency cannot change what is merged.
+    try:
+        concurrent_requests = int(
+            os.getenv("GRAPHRAG_LLM_CONCURRENT_REQUESTS", str(_DEFAULT_CONCURRENT_REQUESTS))
+        )
+    except ValueError:
+        concurrent_requests = _DEFAULT_CONCURRENT_REQUESTS
+    concurrent_requests = max(1, concurrent_requests)
+    http_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
+
+    for batch_approved in asyncio.run(
+        _confirm_batches_async(
+            doc_batches=doc_batches,
+            base_url=base_url,
+            api_key=api_key,
+            http_timeout=http_timeout,
+            concurrent_requests=concurrent_requests,
+            model_name=model_name,
+            group_count=len(groups),
+        )
     ):
-        prompt = f"""
-You are resolving cross-document entities for a knowledge graph about circular economy
-and food systems. The corpus is bilingual: the same real-world entity may appear with an
-ENGLISH name in one document and an ITALIAN name in another (e.g. "circular economy" and
-"economia circolare", "food waste" and "spreco alimentare"). Such cross-language pairs
-SHOULD be merged when they denote the same entity or concept.
-
-Document scope: {doc}
-
-For each pair, decide if they refer to the same real-world entity.
-Be conservative: if uncertain, return merge=false. Translation equivalence alone is
-sufficient only when the meaning is clearly the same.
-When left_label and right_label differ, merge only if the two names clearly denote the
-same thing despite the typing difference; a concept and a publication named after it
-(e.g. "sustainability" vs the journal "Sustainability") are NOT the same entity.
-Do NOT merge a thing with an action or goal about that thing: "food waste" vs
-"food waste reduction", "circular economy" vs "promoting the circular economy",
-"CO2 emissions" vs "reducing CO2 emissions" are DIFFERENT entities.
-Return only JSON array with objects:
-{{"left_group": int, "right_group": int, "merge": true or false}}
-
-Pairs:
-{json.dumps(pairs, ensure_ascii=False, indent=2)}
-""".strip()
-
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                temperature=0.0,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            content = response.choices[0].message.content or "[]"
-            parsed = _parse_llm_json_array(content)
-            for item in parsed:
-                if not isinstance(item, dict):
-                    continue
-                if bool(item.get("merge", False)):
-                    left_group = int(item["left_group"])
-                    right_group = int(item["right_group"])
-                    if not (
-                        0 <= left_group < len(groups)
-                        and 0 <= right_group < len(groups)
-                    ):
-                        LOGGER.warning(
-                            "LLM merge pair (%d, %d) outside valid group range "
-                            "[0, %d) — skipped",
-                            left_group,
-                            right_group,
-                            len(groups),
-                        )
-                        continue
-                    approved.add(tuple(sorted((left_group, right_group))))
-        except Exception as exc:
-            LOGGER.warning(
-                "LLM merge confirmation failed for doc=%s (%d pairs skipped): %s",
-                doc,
-                len(pairs),
-                exc,
-            )
-            continue
+        approved.update(batch_approved)
 
     return approved
 
