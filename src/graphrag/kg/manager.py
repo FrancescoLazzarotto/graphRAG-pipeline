@@ -80,6 +80,10 @@ class KnowledgeGraphManager:
         ).strip()
         # None = not probed yet; False = index missing, use the CONTAINS scan.
         self._fulltext_available: bool | None = None
+        # A disabled index is disabled until this monotonic deadline, not for
+        # the life of the process: see _fulltext_retry_delay_sec.
+        self._fulltext_retry_at: float = 0.0
+        self._fulltext_failures: int = 0
         self._token_df: dict[str, int] | None = None
         self._token_df_total: int = 0
 
@@ -587,18 +591,49 @@ class KnowledgeGraphManager:
             return True
         return False
 
+    # Backoff schedule for a disabled index, in seconds. One transient failure
+    # used to cost every later question in the process — and, in the Streamlit
+    # demo, every question of every connected user — a permanent downgrade to
+    # the CONTAINS scan, which is both slower and worse. Retrying on a fixed
+    # short interval is the opposite mistake: when the index is genuinely
+    # missing, each probe pays a full failed query. So: retry soon at first,
+    # then back off to once a quarter of an hour.
+    _FULLTEXT_RETRY_BACKOFF_SEC = (30.0, 120.0, 300.0, 900.0)
+
+    def _fulltext_retry_delay_sec(self) -> float:
+        index = min(self._fulltext_failures, len(self._FULLTEXT_RETRY_BACKOFF_SEC)) - 1
+        return self._FULLTEXT_RETRY_BACKOFF_SEC[max(index, 0)]
+
+    def _fulltext_ready(self) -> bool:
+        """Whether to use the index, re-enabling it once its backoff expired."""
+        if self._fulltext_available is not False:
+            return True
+        if time.monotonic() < self._fulltext_retry_at:
+            return False
+        logger.info(
+            "Re-probing full-text index %r after %.0f s disabled.",
+            self.fulltext_index,
+            self._fulltext_retry_delay_sec(),
+        )
+        self._fulltext_available = None
+        return True
+
     def _handle_fulltext_error(self, exc: Exception) -> bool:
         """Return True (and disable full-text) when the index is unavailable."""
         text = f"{type(exc).__name__}: {exc}".lower()
         if any(marker in text for marker in self._FULLTEXT_MISSING_MARKERS):
+            self._fulltext_failures += 1
+            delay_sec = self._fulltext_retry_delay_sec()
             logger.warning(
                 "Full-text index %r unavailable (%s) — falling back to the "
-                "CONTAINS scan for this session. Run scripts/kg_search_index.py "
-                "to create the index.",
+                "CONTAINS scan, retrying in %.0f s. Run "
+                "scripts/kg_search_index.py to create the index.",
                 self.fulltext_index,
                 exc,
+                delay_sec,
             )
             self._fulltext_available = False
+            self._fulltext_retry_at = time.monotonic() + delay_sec
             return True
         return False
 
@@ -621,7 +656,7 @@ class KnowledgeGraphManager:
             Nodes ordered by Lucene score, or ``None`` when the full-text index
             is unavailable and the caller must fall back to the CONTAINS scan.
         """
-        if self._fulltext_available is False:
+        if not self._fulltext_ready():
             return None
         lucene = self._lucene_query(terms, boosts)
         if not lucene:
@@ -653,6 +688,7 @@ class KnowledgeGraphManager:
                 return None
             raise
         self._fulltext_available = True
+        self._fulltext_failures = 0
         return [self._row_to_node(row) for row in rows]
 
     def fulltext_search_triples(
@@ -676,7 +712,7 @@ class KnowledgeGraphManager:
             Triples ordered by the matched endpoint's Lucene score, or ``None``
             when the full-text index is unavailable.
         """
-        if self._fulltext_available is False:
+        if not self._fulltext_ready():
             return None
         lucene = self._lucene_query(terms, boosts)
         if not lucene:
@@ -725,6 +761,7 @@ class KnowledgeGraphManager:
                 return None
             raise
         self._fulltext_available = True
+        self._fulltext_failures = 0
         return [self._row_to_triple(row) for row in rows]
 
     def extract_subgraph(

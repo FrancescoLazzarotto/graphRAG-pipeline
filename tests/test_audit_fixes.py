@@ -179,7 +179,16 @@ def _manager_without_db() -> KnowledgeGraphManager:
     manager = object.__new__(KnowledgeGraphManager)
     manager.fulltext_index = "node_search"
     manager._fulltext_available = None
+    manager._fulltext_retry_at = 0.0
+    manager._fulltext_failures = 0
     return manager
+
+
+_MISSING_INDEX_ERROR = Exception(
+    "Failed to invoke procedure `db.index.fulltext.queryNodes`: Caused by: "
+    "java.lang.IllegalArgumentException: There is no such fulltext schema "
+    "index: node_search"
+)
 
 
 def test_lucene_parse_error_leaves_fulltext_enabled():
@@ -202,6 +211,33 @@ def test_missing_index_disables_fulltext():
     )
     assert manager._handle_fulltext_error(exc) is True
     assert manager._fulltext_available is False
+
+
+def test_disabled_fulltext_is_retried_once_its_backoff_expires(monkeypatch):
+    """A transient failure must not downgrade retrieval for the whole process."""
+    manager = _manager_without_db()
+    now = 1_000.0
+    monkeypatch.setattr(
+        "graphrag.kg.manager.time.monotonic", lambda: now, raising=False
+    )
+    assert manager._handle_fulltext_error(_MISSING_INDEX_ERROR) is True
+    assert manager._fulltext_ready() is False
+
+    now += manager._FULLTEXT_RETRY_BACKOFF_SEC[0] + 1
+    assert manager._fulltext_ready() is True
+    assert manager._fulltext_available is None
+
+
+def test_repeated_failures_back_off_instead_of_probing_at_a_fixed_rate():
+    """A genuinely missing index must not cost a failed query every 30 s."""
+    manager = _manager_without_db()
+    delays = []
+    for _ in range(len(manager._FULLTEXT_RETRY_BACKOFF_SEC) + 2):
+        manager._handle_fulltext_error(_MISSING_INDEX_ERROR)
+        delays.append(manager._fulltext_retry_delay_sec())
+    assert delays == sorted(delays)
+    assert delays[0] == manager._FULLTEXT_RETRY_BACKOFF_SEC[0]
+    assert delays[-1] == manager._FULLTEXT_RETRY_BACKOFF_SEC[-1]
 
 
 # --- §5.7 / §5.9 the lexical text channel ---------------------------------
