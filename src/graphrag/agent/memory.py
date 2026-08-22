@@ -1,6 +1,4 @@
-"""Intra-session conversational memory (WP7).
-
-See `docs/demo_quality_plan_2026-07.md` §9. The demo expert reads an answer and
+"""demo expert reads an answer and
 asks a follow-up — "mi indichi le strategie nel settore vino" — where the topic
 comes from the previous answer, not from the question. Retrieval receives that
 question in isolation and searches for the wrong thing.
