@@ -11,6 +11,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. Experiment/evaluation workflows comparing strategies, models, and resource use (`scripts/`, `evaluation/`)
 4. Two interactive demos for domain-expert sessions (`scripts/demo_app.py` Streamlit, `scripts/expert_demo.py` console)
 
+Both demos build their agent through `src/graphrag/demo_config.py` — one place for
+the answer-quality settings, the graph connection (with fallback) and the model
+probe. Change a demo setting there, never in `config.py`/`strategies.py`: those
+are what the campaigns were measured with, and editing them makes future runs
+incomparable with the ones already reported.
+
 Many commands write artifacts that are later analyzed or included in paper-style reports.
 
 ## Environment
@@ -64,14 +70,25 @@ Optional runtime knobs, all read from the environment:
 | `GRAPHRAG_TEXT_STAGE0_RUNS` | — | Default for `--text-stage0-runs` |
 | `KG_EXTRACTION_MAX_TOKENS` | `4096` | Output cap per extraction call |
 | `VLLM_HTTP_TIMEOUT` | `900` | OpenAI-client timeout in the KG pipeline |
+| `GRAPHRAG_LLM_HTTP_TIMEOUT_SEC` | `300` | Client timeout on the interactive path (someone is waiting) |
+| `KG_NER_BATCH_SIZE` | `16` | Chunks per GLiNER forward pass (`gliner.batch_size` in config.yaml wins) |
+| `DEMO_*` | see `src/graphrag/demo_config.py` | Every demo setting, shared by both demos |
+| `DEMO_NEO4J_FALLBACK_URL` etc. | — | Graph used when the primary one is unreachable |
 
-> `scripts/smoke_check.py` reads exported env vars — it does **not** auto-load `.env`.
+> `scripts/smoke_check.py` fills in missing variables from `kg_pipeline/.env` (`--env-file` to point elsewhere); anything already exported still wins.
 
 ## Common commands
 
 ```bash
-# Health check (Neo4j + LLM)
+# Preflight: imports, graph (nodes + both indexes ONLINE), generator, encoder.
+# Every check runs by default and a failure is a non-zero exit; waive one with
+# --skip-neo4j / --skip-llm / --skip-encoder.
 python scripts/smoke_check.py
+
+# Bring the whole demo up (encoder, generator(s), Streamlit) and preflight it
+bash scripts/start_demo.sh --list          # what can be served
+bash scripts/start_demo.sh qwen25-32b      # one or more model keys
+bash scripts/stop_demo.sh                  # everything back down
 
 # Single question
 conda run -n graphllm python -m graphrag.cli --question "What is X?" --entity "Y"
@@ -117,7 +134,7 @@ python scripts/run_pipeline_smoke_full.py
 ## Running tests
 
 ```bash
-pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 448 tests
+pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 508 tests
 
 # Single file / single test
 pytest evaluation/tests/test_metrics.py -v
@@ -347,7 +364,7 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
 | Entity resolution too aggressive | Increase `resolution.similarity_threshold` in `kg_pipeline/config.yaml` |
 | KG pipeline hangs on notebook disconnect | Use `sbatch scripts/run_kg_pipeline.sbatch` for detached execution |
 | `EmbeddingUnavailable` raised mid-run | The encoder is down: `scripts/start_vllm_encoder.sh`. It no longer degrades silently (audit §1.1 follow-up) |
-| Retrieval suddenly slow mid-run | Was the full-text index disabled by one bad query? The markers are exact since 2026-08-17, so this should no longer happen (audit §2.1) |
+| Retrieval suddenly slow mid-run | Was the full-text index disabled by one bad query? The markers are exact since 2026-08-17, and since 2026-08-22 a disabled index is re-probed on a 30 s → 15 min backoff instead of staying off for the life of the process |
 
 ## Open defects
 
