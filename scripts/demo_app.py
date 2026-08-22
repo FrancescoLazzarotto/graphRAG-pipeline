@@ -25,182 +25,47 @@ import traceback
 import uuid
 from pathlib import Path
 
-import urllib.error
-import urllib.parse
-import urllib.request
-
 import streamlit as st
-from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from graphrag import cli as graphrag_cli  # noqa: E402
 from graphrag.agent.core import KGRAGAgent  # noqa: E402
 from graphrag.agent.memory import ConversationMemory  # noqa: E402
-from graphrag.config import (  # noqa: E402
-    AgentConfig,
-    OUTPUT_COMPLEXITY,
-    build_kg_config_from_env,
+
+# Answer-quality settings and the agent itself come from the module shared with
+# the console demo: the two surfaces are documented as the same product and
+# must not drift apart again.
+from graphrag.demo_config import (  # noqa: E402
+    LOG_DIR,
+    MEMORY,
+    SHOW_FULL_ANSWER,
+    STRATEGY,
+    VLLM_ENDPOINTS,
+    build_demo_agent,
+    probe_vllm_endpoints,
 )
-from graphrag.kg.manager import KnowledgeGraphManager  # noqa: E402
-from graphrag.kg.retriever import KGRetriever  # noqa: E402
-from graphrag.llm.manager import LLMManager  # noqa: E402
-from graphrag.strategies import STRATEGY_PRESETS, apply_strategy  # noqa: E402
 
 logger = logging.getLogger("expert_demo")
-
-STRATEGY = os.environ.get("DEMO_STRATEGY", "hybrid")
-MAX_CONTEXT_TOKENS = int(os.environ.get("DEMO_MAX_CONTEXT_TOKENS", "6000"))
-# WP2: 512 tokens fit a summary, not a detailed answer with citations; the
-# expert's recurring complaint was genericity, and the previous cap left no room
-# for figures, names and per-claim references.
-MAX_NEW_TOKENS = int(os.environ.get("DEMO_MAX_NEW_TOKENS", "2048"))
-# WP2: HIGH drops the "1-2 short paragraphs" instruction and adds the
-# specificity rule. WP5: the answer language is pinned to the question language.
-COMPLEXITY = OUTPUT_COMPLEXITY(os.environ.get("DEMO_COMPLEXITY", "high"))
-ENFORCE_LANGUAGE = os.environ.get("DEMO_ENFORCE_LANGUAGE", "1") == "1"
-# Show the full model answer (including 'Verifica nel grafo'); ask the prompt
-# for a 'Limits and confidence' section on every answer, not only sparse ones.
-SHOW_FULL_ANSWER = os.environ.get("DEMO_SHOW_FULL_ANSWER", "1") == "1"
-ALWAYS_LIMITS = os.environ.get("DEMO_ALWAYS_LIMITS", "1") == "1"
-# WP1: numbered evidence in the context, [S1]/[T1] tags on specific claims, and a
-# source list built from what the model actually cited. Replaces the old
-# 'Verifica nel grafo' block, which listed the top-4 triples regardless of use.
-CITE_EVIDENCE = os.environ.get("DEMO_CITE_EVIDENCE", "1") == "1"
-CITATION_POLICY = os.environ.get("DEMO_CITATION_POLICY", "mark")
-# "label" shows "[SEeD for Change, p. 3]" instead of "[S1]": the reader asked
-# what S and T meant, which is the answer to whether the ids belong on screen.
-CITATION_DISPLAY = os.environ.get("DEMO_CITATION_DISPLAY", "label")
-# WP7: intra-session conversational memory. The expert reads an answer and asks
-# a follow-up ("mi indichi le strategie nel settore vino") whose subject came
-# from that answer; without memory the question reaches retrieval isolated.
-# Steers retrieval only — never a source of facts. Demo-only: every other entry
-# point passes no memory and behaves exactly as before.
-MEMORY = os.environ.get("DEMO_MEMORY", "1") == "1"
-# WP3: on a definitional question the chunk carrying the verbatim definition is
-# ranked first and the answer opens with it between guillemets. The expert's
-# question on SEeD was answered entirely out of triples, which described what
-# SEeD does and never said what it is.
-VERBATIM_DEFINITIONS = os.environ.get("DEMO_VERBATIM_DEFINITIONS", "1") == "1"
-# WP4: MMR plus a per-document cap, so one PDF stops filling the whole context.
-# top_k 5 -> 8 pays for the cap: without it, diversification buys breadth by
-# giving up depth on the document that actually answers.
-TEXT_TOP_K = int(os.environ.get("DEMO_TEXT_TOP_K", "8"))
-TEXT_MMR = os.environ.get("DEMO_TEXT_MMR", "1") == "1"
-TEXT_MMR_LAMBDA = float(os.environ.get("DEMO_TEXT_MMR_LAMBDA", "0.7"))
-TEXT_MAX_PER_DOC = int(os.environ.get("DEMO_TEXT_MAX_PER_DOC", "2"))
 # Separates the prose body from the raw evidence block in stored messages;
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
 EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
-TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
-# Two layers over the same failure, because it has two causes that look alike.
-# An out-of-domain question is refused outright by the gate (~0.11 s, no
-# retrieval, no answer). An in-domain question whose retrieval came back weak —
-# which the recall numbers say is common — is answered, with everything the
-# evidence does not support marked '(not in the retrieved evidence)'. A single
-# hard gate for both would stonewall legitimate questions, which is the
-# expensive error for a demo whose complaint was already genericity.
-DOMAIN_GATE = os.environ.get("DEMO_DOMAIN_GATE", "1") == "1"
-PARAMETRIC_FALLBACK = os.environ.get("DEMO_PARAMETRIC_FALLBACK", "1") == "1"
-# Stage0 runs feeding the text index, most authoritative first. Explicit on
-# purpose: auto-discovery picked the newest run, which is the 2-document repair
-# run, so the text channel saw 2 of the 22 circular-food documents. Older runs
-# in the same artifacts folder hold the previous food-security corpus and must
-# stay out.
-TEXT_STAGE0_RUNS = os.environ.get(
-    "DEMO_TEXT_STAGE0_RUNS",
-    "run_fix2docs_20260710,run_full_circular_20260707",
-)
-ENV_FILE = os.environ.get("DEMO_ENV_FILE", str(ROOT / "kg_pipeline" / ".env"))
-LOG_DIR = Path(os.environ.get("DEMO_LOG_DIR", str(ROOT / "artifacts" / "demo_sessions")))
-# Comma-separated vLLM endpoints offered in the model selector; each is probed
-# at startup and skipped when unreachable, so a stopped server just disappears
-# from the list instead of breaking the demo.
-VLLM_ENDPOINTS = os.environ.get(
-    "DEMO_VLLM_ENDPOINTS",
-    "http://localhost:8000/v1,http://localhost:8001/v1",
-)
-
-
-def _build_text_pipeline(backend: str) -> object | None:
-    import argparse
-
-    ns = argparse.Namespace(
-        text_retriever_backend=backend,
-        dense_embedding_model="intfloat/multilingual-e5-base",
-        vector_index_dir=str(ROOT / "artifacts" / "vector_index"),
-        text_docs_dir="",
-        text_stage0_runs=TEXT_STAGE0_RUNS,
-    )
-    return graphrag_cli._build_text_pipeline(ns)
 
 
 @st.cache_resource(show_spinner=False)
 def _available_models() -> dict[str, tuple[str, str]]:
-    """Probe the configured vLLM endpoints and map label -> (base_url, model_id).
-
-    Falls back to VLLM_BASE_URL/VLLM_MODEL_NAME when no endpoint answers, so the
-    demo keeps working in single-server setups without the selector env var.
-    """
-    load_dotenv(ENV_FILE, override=False)
-    options: dict[str, tuple[str, str]] = {}
-    for base_url in (u.strip().rstrip("/") for u in VLLM_ENDPOINTS.split(",") if u.strip()):
-        try:
-            with urllib.request.urlopen(f"{base_url}/models", timeout=3) as resp:
-                model_id = json.load(resp)["data"][0]["id"]
-        except (urllib.error.URLError, OSError, KeyError, IndexError, json.JSONDecodeError):
-            continue
-        port = urllib.parse.urlparse(base_url).port or "?"
-        options[f"{model_id.split('/')[-1]} (:{port})"] = (base_url, model_id)
-    if not options:
-        model_id = os.environ.get("VLLM_MODEL_NAME", "")
-        base_url = os.environ.get("VLLM_BASE_URL", "")
-        if model_id and base_url:
-            options[model_id.split("/")[-1]] = (base_url, model_id)
-    return options
+    """Probe the configured vLLM endpoints once per process."""
+    return probe_vllm_endpoints()
 
 
 @st.cache_resource(show_spinner="Avvio in corso (connessione al grafo e indice testi)...")
-def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str]:
+def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str, str]:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("graphrag").setLevel(logging.ERROR)
-    load_dotenv(ENV_FILE, override=False)
     os.chdir(ROOT)
-
-    kg_manager = KnowledgeGraphManager(build_kg_config_from_env())
-    base = AgentConfig(
-        max_content_tokens=MAX_CONTEXT_TOKENS,
-        always_include_limits=ALWAYS_LIMITS,
-        cite_evidence=CITE_EVIDENCE,
-        citation_policy=CITATION_POLICY,
-        citation_display=CITATION_DISPLAY,
-        complexity=COMPLEXITY,
-        enforce_language=ENFORCE_LANGUAGE,
-        prefer_verbatim_definitions=VERBATIM_DEFINITIONS,
-        text_retriever_top_k=TEXT_TOP_K,
-        text_retriever_mmr=TEXT_MMR,
-        text_retriever_mmr_lambda=TEXT_MMR_LAMBDA,
-        text_retriever_max_per_doc=TEXT_MAX_PER_DOC,
-        enable_domain_gate=DOMAIN_GATE,
-        allow_parametric_fallback=PARAMETRIC_FALLBACK,
-    )
-    config = apply_strategy(base, STRATEGY)
-
-    text_pipeline = (
-        _build_text_pipeline(TEXT_RETRIEVER_BACKEND) if config.use_text_retriever else None
-    )
-    retriever = KGRetriever(kg_store=kg_manager, config=config, text_pipeline=text_pipeline)
-    llm = LLMManager(
-        model_id=model_id,
-        warmup=False,
-        max_new_tokens=MAX_NEW_TOKENS,
-        use_vllm=True,
-        vllm_base_url=base_url,
-    )
-    agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm)
-    return agent, model_id
+    agent, graph_label = build_demo_agent(base_url, model_id)
+    return agent, model_id, graph_label
 
 
 def _session_log_path() -> Path:
@@ -382,8 +247,12 @@ with st.sidebar:
 
 base_url, model_id = models[choice]
 
-agent, model_id = _load_agent(base_url, model_id)
-st.caption(f"strategia: {STRATEGY} | modello: {model_id}")
+try:
+    agent, model_id, graph_label = _load_agent(base_url, model_id)
+except RuntimeError as exc:
+    st.error(str(exc))
+    st.stop()
+st.caption(f"strategia: {STRATEGY} | modello: {model_id} | grafo: {graph_label}")
 
 def _render(content: str) -> None:
     body, sep, evidence = content.partition(EVIDENCE_MARKER)

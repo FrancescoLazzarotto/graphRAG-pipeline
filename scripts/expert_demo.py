@@ -3,17 +3,21 @@
 
 A minimal REPL over the GraphRAG agent, designed so a non-technical expert can
 query the knowledge graph directly: type a question, read the answer with its
-graph evidence. Strategy, model and limits are pre-wired; every exchange is
-appended to a JSONL session log (questions collected this way seed the gold
-set for the new domain).
+graph evidence. Every exchange is appended to a JSONL session log (questions
+collected this way seed the gold set for the new domain).
+
+Answer quality is configured in ``graphrag.demo_config``, shared with the
+Streamlit demo: citations, language pin, verbatim definitions, MMR, domain gate,
+the cross-lingual vector channel. This console used to set one of those fields
+and silently answered worse than the other demo.
 
 Usage:
     conda run -n graphllm python scripts/expert_demo.py
-    # options: --strategy hybrid --max-context-tokens 6000 --language it
+    # options: --strategy hybrid --max-context-tokens 6000 --model-id ...
 
-Exit with 'esci', 'exit', 'quit' or Ctrl-D. Errors never kill the session:
-they are logged with the stack trace and the expert sees a polite retry
-message.
+Exit with 'esci', 'exit', 'quit' or Ctrl-D. 'nuova' starts a fresh thread
+(clears the follow-up memory). Errors never kill the session: they are logged
+with the stack trace and the expert sees a polite retry message.
 """
 
 from __future__ import annotations
@@ -22,108 +26,144 @@ import argparse
 import datetime as dt
 import json
 import logging
+import os
 import readline  # noqa: F401 - enables line editing/history in input()
 import sys
 import time
 import traceback
 from pathlib import Path
 
-from dotenv import load_dotenv
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from graphrag import cli as graphrag_cli  # noqa: E402
-from graphrag.agent.core import KGRAGAgent  # noqa: E402
-from graphrag.config import build_kg_config_from_env  # noqa: E402
-from graphrag.config import AgentConfig  # noqa: E402
-from graphrag.kg.manager import KnowledgeGraphManager  # noqa: E402
-from graphrag.kg.retriever import KGRetriever  # noqa: E402
-from graphrag.llm.manager import LLMManager  # noqa: E402
-from graphrag.strategies import STRATEGY_PRESETS, apply_strategy  # noqa: E402
+from graphrag.strategies import STRATEGY_PRESETS  # noqa: E402
 
 logger = logging.getLogger("expert_demo")
 
 BANNER = """
 ============================================================
   Demo GraphRAG — Economia Circolare del Cibo
-  Scrivi una domanda e premi Invio. Comandi: 'esci' per uscire.
+  Scrivi una domanda e premi Invio.
+  Comandi: 'nuova' per ripartire da zero, 'esci' per uscire.
   Le risposte citano le fonti (documento | pagine) quando disponibili.
 ============================================================
 """
 
+# CLI flag -> environment variable read by graphrag.demo_config. Passing a flag
+# sets the variable before that module is imported, so the console and the
+# Streamlit demo are configured through exactly one code path.
+ENV_OVERRIDES = {
+    "strategy": "DEMO_STRATEGY",
+    "env_file": "DEMO_ENV_FILE",
+    "max_context_tokens": "DEMO_MAX_CONTEXT_TOKENS",
+    "max_new_tokens": "DEMO_MAX_NEW_TOKENS",
+    "text_retriever_backend": "DEMO_TEXT_RETRIEVER_BACKEND",
+    "log_dir": "DEMO_LOG_DIR",
+    "complexity": "DEMO_COMPLEXITY",
+    "vllm_endpoints": "DEMO_VLLM_ENDPOINTS",
+}
 
-def _build_text_pipeline(backend: str) -> object | None:
-    """Index the corpus reusing the CLI's stage0 auto-discovery logic."""
-    ns = argparse.Namespace(
-        text_retriever_backend=backend,
-        dense_embedding_model="intfloat/multilingual-e5-base",
-        vector_index_dir=str(ROOT / "artifacts" / "vector_index"),
-        text_docs_dir="",
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    # Every default is None on purpose: an unset flag must leave the shared
+    # default in place rather than overwrite it with a copy that can drift.
+    parser.add_argument("--strategy", default=None, choices=sorted(STRATEGY_PRESETS))
+    parser.add_argument("--model-id", default=None, help="Skips the model chooser")
+    parser.add_argument("--vllm-base-url", default=None, help="Required with --model-id")
+    parser.add_argument("--vllm-endpoints", default=None, help="Comma-separated, probed at startup")
+    parser.add_argument("--env-file", default=None)
+    parser.add_argument("--max-context-tokens", default=None)
+    parser.add_argument("--max-new-tokens", default=None)
+    parser.add_argument("--complexity", default=None, choices=("low", "medium", "high"))
+    parser.add_argument("--text-retriever-backend", default=None, choices=("tfidf", "dense"))
+    parser.add_argument("--log-dir", default=None)
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable the intra-session follow-up memory",
     )
-    return graphrag_cli._build_text_pipeline(ns)
+    return parser.parse_args()
+
+
+def _choose_model(options: dict[str, tuple[str, str]]) -> tuple[str, str]:
+    """Ask which served model to use, when more than one endpoint answers.
+
+    The best generator for this domain has not been settled by measurement yet,
+    so the demo offers whatever is currently served instead of pinning one.
+    """
+    labels = sorted(options)
+    if len(labels) == 1:
+        return options[labels[0]]
+    print("\nModelli disponibili:")
+    for index, label in enumerate(labels, start=1):
+        print(f"  {index}. {label}")
+    while True:
+        try:
+            raw = input(f"Scegli [1-{len(labels)}, invio = 1]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
+        if not raw:
+            return options[labels[0]]
+        if raw.isdigit() and 1 <= int(raw) <= len(labels):
+            return options[labels[int(raw) - 1]]
+        print("Scelta non valida.")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--strategy", default="hybrid", choices=STRATEGY_PRESETS)
-    parser.add_argument("--model-id", default=None, help="Defaults to $VLLM_MODEL_NAME")
-    parser.add_argument("--vllm-base-url", default=None, help="Defaults to $VLLM_BASE_URL")
-    parser.add_argument("--env-file", default=str(ROOT / "kg_pipeline" / ".env"))
-    parser.add_argument("--max-context-tokens", type=int, default=6000)
-    parser.add_argument("--max-new-tokens", type=int, default=512)
-    parser.add_argument("--text-retriever-backend", default="dense", choices=("tfidf", "dense"))
-    parser.add_argument("--log-dir", default=str(ROOT / "artifacts" / "demo_sessions"))
-    args = parser.parse_args()
+    args = _parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     # Compression/retrieval warnings are routine noise between questions and
     # would interleave with the expert's prompt; failures still surface.
     logging.getLogger("graphrag").setLevel(logging.ERROR)
-    load_dotenv(args.env_file, override=False)
 
-    import os
+    for attr, env_name in ENV_OVERRIDES.items():
+        value = getattr(args, attr, None)
+        if value is not None:
+            os.environ[env_name] = str(value)
+    if args.no_memory:
+        os.environ["DEMO_MEMORY"] = "0"
+
+    # Imported here, not at module scope: the overrides above must land in the
+    # environment before demo_config reads it.
+    from graphrag.agent.memory import ConversationMemory
+    from graphrag import demo_config
 
     # The CLI's stage0 auto-discovery resolves kg_pipeline/artifacts relative
     # to the working directory.
     os.chdir(ROOT)
 
-    model_id = args.model_id or os.environ.get("VLLM_MODEL_NAME", "")
-    base_url = args.vllm_base_url or os.environ.get("VLLM_BASE_URL", "")
-    if not model_id or not base_url:
-        sys.exit("VLLM_MODEL_NAME/VLLM_BASE_URL mancanti (env o flag).")
+    if args.model_id or args.vllm_base_url:
+        if not (args.model_id and args.vllm_base_url):
+            sys.exit("--model-id e --vllm-base-url vanno passati insieme.")
+        base_url, model_id = args.vllm_base_url, args.model_id
+    else:
+        options = demo_config.probe_vllm_endpoints()
+        if not options:
+            sys.exit(
+                "Nessun modello raggiungibile su "
+                f"{demo_config.VLLM_ENDPOINTS}. Avvia un server "
+                "(scripts/start_demo.sh) oppure passa --model-id/--vllm-base-url."
+            )
+        base_url, model_id = _choose_model(options)
 
-    log_dir = Path(args.log_dir)
+    log_dir = demo_config.LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     session_log = log_dir / f"session_{dt.datetime.now():%Y%m%d_%H%M%S}.jsonl"
 
-    print("Avvio in corso (connessione al grafo e indice testi)...")
-    kg_manager = KnowledgeGraphManager(build_kg_config_from_env())
+    print("\nAvvio in corso (connessione al grafo e indice testi)...")
+    try:
+        agent, graph_label = demo_config.build_demo_agent(base_url, model_id)
+    except RuntimeError as exc:
+        sys.exit(f"\n{exc}")
 
-    base = AgentConfig(
-        max_content_tokens=args.max_context_tokens,
-    )
-    config = apply_strategy(base, args.strategy)
-
-    text_pipeline = (
-        _build_text_pipeline(args.text_retriever_backend)
-        if config.use_text_retriever
-        else None
-    )
-    retriever = KGRetriever(
-        kg_store=kg_manager, config=config, text_pipeline=text_pipeline
-    )
-    llm = LLMManager(
-        model_id=model_id,
-        warmup=False,
-        max_new_tokens=args.max_new_tokens,
-        use_vllm=True,
-        vllm_base_url=base_url,
-    )
-    agent = KGRAGAgent(config=config, kg_retriever=retriever, llm=llm)
+    memory = ConversationMemory() if demo_config.MEMORY else None
 
     print(BANNER)
-    print(f"[strategia: {args.strategy} | modello: {model_id}]")
+    print(f"[strategia: {demo_config.STRATEGY} | modello: {model_id}]")
+    print(f"[grafo: {graph_label}]")
     print(f"[log sessione: {session_log}]\n")
 
     n_questions = 0
@@ -137,21 +177,28 @@ def main() -> None:
             continue
         if question.lower() in {"esci", "exit", "quit"}:
             break
+        if question.lower() in {"nuova", "new", "reset"}:
+            if memory is not None:
+                memory.reset()
+            print("[nuova conversazione: il contesto precedente è stato azzerato]\n")
+            continue
 
         started = time.perf_counter()
         record: dict[str, object] = {
             "ts": dt.datetime.now().isoformat(timespec="seconds"),
             "question": question,
-            "strategy": args.strategy,
+            "strategy": demo_config.STRATEGY,
             "model_id": model_id,
         }
         try:
             print("... sto consultando il grafo e i documenti (10-30 secondi) ...")
-            result = agent.invoke(question)
+            result = agent.invoke(question, memory=memory)
             answer = str(result.get("answer", "")).strip()
             elapsed = time.perf_counter() - started
             record["answer"] = answer
             record["latency_s"] = round(elapsed, 2)
+            if result.get("rewritten_question"):
+                record["rewritten_question"] = result["rewritten_question"]
             # The trailing "Verifica nel grafo:" block carries internal node
             # ids for debugging: keep it in the JSONL log, hide it on screen.
             shown = answer.split("\nVerifica nel grafo:")[0].strip()
