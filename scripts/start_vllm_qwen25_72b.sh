@@ -12,6 +12,9 @@
 MODEL="${VLLM_QWEN25_72B_MODEL:-Qwen/Qwen2.5-72B-Instruct-AWQ}"
 PORT="${VLLM_QWEN25_72B_PORT:-8000}"
 GPUS="${VLLM_QWEN25_72B_GPUS:-0,1}"
+# Lower it when the encoder is already holding a slice of GPU 1, or the
+# allocation fails outright instead of starting smaller.
+UTIL="${VLLM_QWEN25_72B_UTIL:-0.90}"
 
 # Venv di serving dedicato: l'env conda `graphllm` ha torch che rompe
 # l'import di vLLM. Questo venv tiene vLLM col suo torch pinnato.
@@ -22,7 +25,7 @@ export HF_HOME="${HF_HOME:-/mnt/storage/hf-cache}"
 exec env CUDA_VISIBLE_DEVICES="$GPUS" "$VLLM_BIN" serve "$MODEL" \
   --tensor-parallel-size 2 \
   --quantization awq_marlin \
-  --gpu-memory-utilization 0.90 \
+  --gpu-memory-utilization "$UTIL" \
   --enable-prefix-caching \
   --enable-chunked-prefill \
   --max-model-len 32768 \

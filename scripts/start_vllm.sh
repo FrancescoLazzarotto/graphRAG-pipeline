@@ -14,8 +14,15 @@
 
 MODEL="${VLLM_MODEL_NAME:-Qwen/Qwen2.5-32B-Instruct-AWQ}"
 PORT="${VLLM_PORT:-8000}"
+GPU="${VLLM_GPU:-0}"
 
-exec vllm serve "$MODEL" \
+# Bare `vllm` resolves to the conda env, where `import vllm` is broken: this
+# script died on "vllm: not found" while every other start_vllm*.sh had already
+# been pointed at the serving virtualenv. Same treatment here.
+VLLM_BIN="${VLLM_BIN:-/mnt/storage/flazzarotto/venvs/vllm-serve/bin/vllm}"
+export HF_HOME="${HF_HOME:-/mnt/storage/hf-cache}"
+
+exec env CUDA_VISIBLE_DEVICES="$GPU" "$VLLM_BIN" serve "$MODEL" \
   --tensor-parallel-size 1 \
   --gpu-memory-utilization 0.87 \
   --enable-prefix-caching \
