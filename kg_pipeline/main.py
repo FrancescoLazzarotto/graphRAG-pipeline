@@ -217,6 +217,8 @@ def _load_or_run_ner(
         model_name=config["gliner"]["model_name"],
         labels=config["ontology"]["labels"],
         threshold=float(config["gliner"]["threshold"]),
+        # Optional: falls back to KG_NER_BATCH_SIZE, then to the stage default.
+        batch_size=config["gliner"].get("batch_size"),
     )
     ner.save_ner(paths["ner"], ner_map)
     return ner_map

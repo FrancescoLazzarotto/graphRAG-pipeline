@@ -40,6 +40,10 @@ chunking:
 gliner:
   model_name: urchade/gliner_multi-v2.1
   threshold: 0.45
+  # Chunks per forward pass. Measured on 48 chunks / A40: 16 is 6.2x faster
+  # than 1 with identical spans (confidence differs by <1e-4, and nothing sits
+  # that close to the threshold). Set to 1 to restore chunk-at-a-time.
+  batch_size: 16
 
 llm:
   max_retries_per_chunk: 3

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -10,50 +11,120 @@ from tqdm import tqdm
 
 from kg_pipeline.models.types import ChunkRecord, NEREntityCandidate
 
+LOGGER = logging.getLogger("kg_pipeline")
+
+# Chunks per forward pass. 16 keeps peak activation memory well inside an A40
+# while cutting the number of passes by the same factor; KG_NER_BATCH_SIZE
+# overrides it, and 1 restores the old chunk-at-a-time behaviour exactly.
+_DEFAULT_NER_BATCH_SIZE = 16
+
 
 def run_ner(
     chunks: list[ChunkRecord],
     model_name: str,
     labels: list[str],
     threshold: float,
+    batch_size: int | None = None,
 ) -> dict[str, list[NEREntityCandidate]]:
     model = GLiNER.from_pretrained(model_name)
     device = os.environ.get("KG_NER_DEVICE", "").strip()
     if device:
         model = model.to(device)
 
+    if batch_size is None:
+        try:
+            batch_size = int(os.environ.get("KG_NER_BATCH_SIZE", str(_DEFAULT_NER_BATCH_SIZE)))
+        except ValueError:
+            batch_size = _DEFAULT_NER_BATCH_SIZE
+    batch_size = max(1, batch_size)
+
     label_map = {label.lower(): label for label in labels}
     model_labels = list(label_map.keys())
 
     output: dict[str, list[NEREntityCandidate]] = {}
 
-    for chunk in tqdm(chunks, desc="Stage 2 GLiNER", unit="chunk"):
-        raw_entities = model.predict_entities(
-            chunk.text, model_labels, threshold=threshold
+    for batch in tqdm(
+        _batched(chunks, batch_size),
+        total=(len(chunks) + batch_size - 1) // batch_size,
+        desc="Stage 2 GLiNER",
+        unit="batch",
+    ):
+        per_chunk = _predict_batch(
+            model, [chunk.text for chunk in batch], model_labels, threshold
         )
-        entities: list[NEREntityCandidate] = []
-
-        for item in raw_entities:
-            raw_label = str(item.get("label", "")).strip().lower()
-            mapped_label = label_map.get(raw_label, item.get("label", "Concept"))
-
-            start_char = int(item.get("start", item.get("start_char", 0)))
-            end_char = int(item.get("end", item.get("end_char", 0)))
-            score = float(item.get("score", item.get("confidence", 0.0)))
-
-            entities.append(
-                NEREntityCandidate(
-                    text_span=str(item.get("text", item.get("span", ""))).strip(),
-                    entity_label=str(mapped_label),
-                    start_char=max(0, start_char),
-                    end_char=max(0, end_char),
-                    confidence_score=max(0.0, min(1.0, score)),
-                )
-            )
-
-        output[chunk.chunk_id] = entities
+        for chunk, raw_entities in zip(batch, per_chunk):
+            output[chunk.chunk_id] = [
+                _to_candidate(item, label_map) for item in raw_entities
+            ]
 
     return output
+
+
+def _to_candidate(
+    item: dict, label_map: dict[str, str]
+) -> NEREntityCandidate:
+    """One GLiNER span, normalized into the pipeline's own record."""
+    raw_label = str(item.get("label", "")).strip().lower()
+    mapped_label = label_map.get(raw_label, item.get("label", "Concept"))
+
+    start_char = int(item.get("start", item.get("start_char", 0)))
+    end_char = int(item.get("end", item.get("end_char", 0)))
+    score = float(item.get("score", item.get("confidence", 0.0)))
+
+    return NEREntityCandidate(
+        text_span=str(item.get("text", item.get("span", ""))).strip(),
+        entity_label=str(mapped_label),
+        start_char=max(0, start_char),
+        end_char=max(0, end_char),
+        confidence_score=max(0.0, min(1.0, score)),
+    )
+
+
+def _batched(items: list, size: int):
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+def _predict_batch(
+    model: GLiNER,
+    texts: list[str],
+    model_labels: list[str],
+    threshold: float,
+) -> list[list[dict]]:
+    """Run one forward pass over several chunks instead of one each.
+
+    ``predict_entities`` is ``inference([text], ...)[0]``: called in a Python
+    loop it pays tokenisation and a forward pass per chunk and leaves the GPU
+    mostly idle, which on a corpus of thousands of chunks was this stage's
+    single largest cost. The defaults here are ``predict_entities``' own
+    (``flat_ner=True``, ``multi_label=False``) so the spans do not change.
+
+    Older gliner releases expose only ``predict_entities``; there, and whenever
+    a batch fails, it falls back to the per-chunk call rather than losing the
+    chunks.
+    """
+    inference = getattr(model, "inference", None)
+    if callable(inference) and len(texts) > 1:
+        try:
+            return inference(
+                texts,
+                model_labels,
+                flat_ner=True,
+                threshold=threshold,
+                multi_label=False,
+                batch_size=len(texts),
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back rather than lose the batch
+            LOGGER.warning(
+                "GLiNER batch inference failed (%s); falling back to one chunk "
+                "at a time for these %d chunks.",
+                exc,
+                len(texts),
+            )
+    return [
+        model.predict_entities(text, model_labels, threshold=threshold)
+        for text in texts
+    ]
 
 
 def save_ner(path: Path, ner_map: dict[str, list[NEREntityCandidate]]) -> None:
