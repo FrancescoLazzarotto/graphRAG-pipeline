@@ -55,3 +55,20 @@ documents/
 # Gold protocol / raw hand-off (kept local)
 gold_entity_eval_protocol.md
 gold_original_from_collega_20260716.json
+
+# Internal development docs (plans, audits, worklogs, probes): working notes,
+# not part of the shipped codebase. Kept local on purpose.
+docs/*_plan*.md
+docs/*audit*.md
+docs/*worklog*.md
+docs/*probe*.md
+docs/iswc_paper_gap_analysis.md
+
+# Paper/thesis LaTeX sources live outside the code repository.
+docs/report_latex/
+
+# Agent/editor scaffolding
+.github/prompts/
+
+# Scratch scripts: leading underscore marks a throwaway with hardcoded paths.
+scripts/_*.py
