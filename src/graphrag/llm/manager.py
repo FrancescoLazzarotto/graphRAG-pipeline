@@ -449,12 +449,27 @@ class LLMManager:
             self.vllm_base_url,
             model_id,
         )
+        # Without an explicit timeout the OpenAI SDK waits 600 s and retries
+        # twice on its own, under this class's own retry loop: a vLLM server
+        # that is wedged rather than down left an interactive session hanging
+        # on a spinner for the better part of an hour. Generous on purpose —
+        # 2 048 tokens out of a 32B model on one A40 is a couple of minutes,
+        # and a cap that fires on a slow-but-working answer is worse than the
+        # hang it prevents. The worst case is this value times
+        # GRAPHRAG_LLM_GENERATE_RETRIES, since a timeout counts as transient.
+        # The KG pipeline has its own, much longer budget (VLLM_HTTP_TIMEOUT):
+        # nobody is watching a batch run.
+        timeout_sec = float(os.getenv("GRAPHRAG_LLM_HTTP_TIMEOUT_SEC", "300"))
         return ChatOpenAI(
             model=model_id,
             base_url=self.vllm_base_url,
             api_key=self.vllm_api_key,
             temperature=0,
             max_tokens=self.max_new_tokens,
+            timeout=timeout_sec,
+            # This class already retries transient failures with backoff;
+            # the SDK's own retries only multiply the wait.
+            max_retries=0,
         )
 
     @staticmethod
