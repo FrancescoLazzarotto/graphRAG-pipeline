@@ -161,7 +161,9 @@ if [[ $WITH_UI -eq 1 ]]; then
   else
     ( cd "$ROOT" && setsid --fork bash -c \
         'echo $$ > "$1"; shift; exec "$@"' _ "$LOG_DIR/streamlit.pid" \
-        conda run -n "$CONDA_ENV" streamlit run product/app.py \
+        # --no-capture-output: plain `conda run` buffers the child's stdio,
+        # so the log file stayed empty and the UI could only be debugged blind.
+        conda run --no-capture-output -n "$CONDA_ENV" streamlit run product/app.py \
         --server.address "$UI_ADDRESS" --server.port "$UI_PORT" >"$log" 2>&1 < /dev/null & )
     echo "  avviata su :$UI_PORT (log: $log)"
   fi

@@ -64,6 +64,35 @@ for label in "${targets[@]}"; do
   rm -f "$pid_file"
 done
 
+# A pid file is not proof. It goes stale whenever a server outlives the shell
+# that recorded it, and then this script reports "already stopped" while the old
+# process keeps the port — so the next start silently keeps serving the previous
+# configuration, and every fix appears not to work.
+declare -A LABEL_PORTS=( [encoder]=8002 [streamlit]=8501 [qwen25-32b]=8000
+                         [qwen3-32b]=8000 [qwen25-72b]=8000 [qwen25-7b]=8001
+                         [qwen3-30b-a3b]=8001 )
+for label in "${targets[@]}"; do
+  port="${LABEL_PORTS[$label]:-}"
+  [[ -z "$port" ]] && continue
+  holder="$(ss -tlnp 2>/dev/null | grep -oP ":$port\s.*pid=\K[0-9]+" | head -1)"
+  [[ -z "$holder" ]] && continue
+  echo "  $label: :$port è ancora occupata dal pid $holder (non era nel pid file)"
+  pgid="$(ps -o pgid= -p "$holder" 2>/dev/null | tr -d ' ')"
+  if [[ -n "$pgid" ]]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || kill -TERM "$holder" 2>/dev/null || true
+  fi
+  for _ in $(seq 1 "$GRACE_SEC"); do
+    kill -0 "$holder" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$holder" 2>/dev/null; then
+    kill -KILL -- "-$pgid" 2>/dev/null || kill -KILL "$holder" 2>/dev/null || true
+    echo "  $label: SIGKILL sul pid $holder"
+  else
+    echo "  $label: :$port liberata"
+  fi
+done
+
 if command -v nvidia-smi >/dev/null 2>&1; then
   echo
   echo "GPU dopo lo stop:"
