@@ -59,7 +59,7 @@ The repository covers the full path from a folder of PDFs to a scored table:
 | `python scripts/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
 | `python -m evalkit.cli` — with `PYTHONPATH=evaluation` | Evaluation toolkit |
 | `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
-| `streamlit run scripts/demo_app.py` | Expert demo console |
+| `streamlit run product/app.py` | Expert demo console |
 
 A complete command reference lives in **[COMMANDS.md](COMMANDS.md)**.
 
@@ -671,10 +671,10 @@ gap between them is itself a result.
 
 ```bash
 # Streamlit console: multi-chat, per-chat memory, citations, domain gate
-conda run -n graphllm streamlit run scripts/demo_app.py
+conda run -n graphllm streamlit run product/app.py
 
 # same stack, terminal only
-conda run -n graphllm python scripts/expert_demo.py --strategy hybrid --max-context-tokens 6000
+conda run -n graphllm python product/console.py --strategy hybrid --max-context-tokens 6000
 ```
 
 The demos build their own `AgentConfig` inline — citations on, verbatim

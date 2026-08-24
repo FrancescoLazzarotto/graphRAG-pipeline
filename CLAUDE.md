@@ -9,13 +9,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. Knowledge graph construction from documents into Neo4j (`kg_pipeline/`)
 2. Retrieval + answer generation via the `graphrag-demo` CLI (`src/graphrag/`)
 3. Experiment/evaluation workflows comparing strategies, models, and resource use (`scripts/`, `evaluation/`)
-4. Two interactive demos for domain-expert sessions (`scripts/demo_app.py` Streamlit, `scripts/expert_demo.py` console)
+4. Two interactive demos for domain-expert sessions (`product/app.py` Streamlit, `product/console.py` console)
 
-Both demos build their agent through `src/graphrag/demo_config.py` — one place for
-the answer-quality settings, the graph connection (with fallback) and the model
-probe. Change a demo setting there, never in `config.py`/`strategies.py`: those
-are what the campaigns were measured with, and editing them makes future runs
-incomparable with the ones already reported.
+Both live in `product/`, and both build their agent through `product/config.py` —
+one place for the answer-quality settings, the graph connection (with fallback)
+and the model probe. `src/graphrag/` is the engine the thesis measured;
+`product/` is how it is presented. Change a demo setting in `product/config.py`,
+never in `graphrag.config`/`graphrag.strategies`: those are what the campaigns
+were measured with, and editing them makes future runs incomparable with the
+ones already reported.
 
 Many commands write artifacts that are later analyzed or included in paper-style reports.
 
@@ -72,7 +74,7 @@ Optional runtime knobs, all read from the environment:
 | `VLLM_HTTP_TIMEOUT` | `900` | OpenAI-client timeout in the KG pipeline |
 | `GRAPHRAG_LLM_HTTP_TIMEOUT_SEC` | `300` | Client timeout on the interactive path (someone is waiting) |
 | `KG_NER_BATCH_SIZE` | `16` | Chunks per GLiNER forward pass (`gliner.batch_size` in config.yaml wins) |
-| `DEMO_*` | see `src/graphrag/demo_config.py` | Every demo setting, shared by both demos |
+| `DEMO_*` | see `product/config.py` | Every demo setting, shared by both demos |
 | `DEMO_NEO4J_FALLBACK_URL` etc. | — | Graph used when the primary one is unreachable |
 
 > `scripts/smoke_check.py` fills in missing variables from `kg_pipeline/.env` (`--env-file` to point elsewhere); anything already exported still wins.
@@ -122,8 +124,8 @@ python evaluation/scripts/score_gold_run.py \
   --out-prefix artifacts/evaluation/<name>
 
 # Interactive demos
-conda run -n graphllm streamlit run scripts/demo_app.py
-conda run -n graphllm python scripts/expert_demo.py --strategy hybrid
+conda run -n graphllm streamlit run product/app.py
+conda run -n graphllm python product/console.py --strategy hybrid
 
 # Smoke tests
 python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4

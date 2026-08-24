@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Streamlit front-end for domain-expert demo sessions.
 
-Browser UI over the same GraphRAG agent used by expert_demo.py — text box,
+Browser UI over the same GraphRAG agent used by product/console.py — text box,
 Invio/Invia submits, spinner while the agent works, answer with sources.
 Every exchange is logged to the same JSONL format under artifacts/demo_sessions/.
 
 Usage (on the server):
-    conda run -n graphllm streamlit run scripts/demo_app.py --server.address 0.0.0.0 --server.port 8501
+    conda run -n graphllm streamlit run product/app.py --server.address 0.0.0.0 --server.port 8501
 
 Then from your machine, open an SSH tunnel and browse to localhost:8501:
     ssh -L 8501:localhost:8501 <user>@<server>
@@ -29,6 +29,9 @@ import streamlit as st
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+# Streamlit and `python product/console.py` both put this file's own directory
+# on the path, not the repository root, so `product.config` needs it added.
+sys.path.insert(0, str(ROOT))
 
 from graphrag.agent.core import KGRAGAgent  # noqa: E402
 from graphrag.agent.memory import ConversationMemory  # noqa: E402
@@ -36,7 +39,7 @@ from graphrag.agent.memory import ConversationMemory  # noqa: E402
 # Answer-quality settings and the agent itself come from the module shared with
 # the console demo: the two surfaces are documented as the same product and
 # must not drift apart again.
-from graphrag.demo_config import (  # noqa: E402
+from product.config import (  # noqa: E402
     LOG_DIR,
     MEMORY,
     SHOW_FULL_ANSWER,

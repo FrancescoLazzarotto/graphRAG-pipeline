@@ -94,12 +94,12 @@ tail -f artifacts/experiments/run_my_run.log
 
 ---
 
-## 1b. Streamlit Demo — `scripts/demo_app.py`
+## 1b. Streamlit Demo — `product/app.py`
 
 Browser UI over the GraphRAG agent (text box, spinner, answer + sources). Logs every exchange to `artifacts/demo_sessions/`.
 
 ```bash
-conda run -n graphllm streamlit run scripts/demo_app.py --server.address 0.0.0.0 --server.port 8500
+conda run -n graphllm streamlit run product/app.py --server.address 0.0.0.0 --server.port 8500
 ```
 
 From your local machine, tunnel then browse `http://localhost:8501`:

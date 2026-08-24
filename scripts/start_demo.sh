@@ -157,7 +157,7 @@ if [[ $WITH_UI -eq 1 ]]; then
   else
     ( cd "$ROOT" && setsid --fork bash -c \
         'echo $$ > "$1"; shift; exec "$@"' _ "$LOG_DIR/streamlit.pid" \
-        conda run -n "$CONDA_ENV" streamlit run scripts/demo_app.py \
+        conda run -n "$CONDA_ENV" streamlit run product/app.py \
         --server.address "$UI_ADDRESS" --server.port "$UI_PORT" >"$log" 2>&1 < /dev/null & )
     echo "  avviata su :$UI_PORT (log: $log)"
   fi

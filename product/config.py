@@ -1,6 +1,6 @@
 """Shared configuration for the two interactive demos.
 
-``scripts/demo_app.py`` (Streamlit) and ``scripts/expert_demo.py`` (console) are
+``product/app.py`` (Streamlit) and ``product/console.py`` (console) are
 documented as the same product, but each used to build its own ``AgentConfig``:
 the Streamlit one set fourteen fields, the console one set a single field. The
 console therefore answered the same question shorter, without citations, with no
@@ -13,8 +13,10 @@ already shipped as its default, so the observable behaviour of that demo does
 not change; the console demo inherits it.
 
 Nothing here is imported by the CLI, the experiment runners or the evaluation
-scripts: campaign configuration stays in ``config.py`` and ``strategies.py``, and
-runs stay comparable with the ones already measured.
+scripts: campaign configuration stays in ``graphrag.config`` and
+``graphrag.strategies``, and runs stay comparable with the ones already
+measured. That is the whole point of the split — ``src/graphrag`` is the engine
+the thesis measured, ``product/`` is how it is presented.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ from graphrag.strategies import apply_strategy
 
 logger = logging.getLogger("graphrag")
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _flag(name: str, default: str = "1") -> bool:

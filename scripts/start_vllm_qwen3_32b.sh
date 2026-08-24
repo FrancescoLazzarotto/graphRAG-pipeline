@@ -2,7 +2,7 @@
 # Avvio vLLM per Qwen3-32B-AWQ (dense, non-MoE) su 1x NVIDIA A40 46GB — GPU 0.
 #
 # Modello di riferimento per la demo: prende il posto di Qwen2.5-32B-AWQ sulla
-# porta 8000, quindi demo_app.py lo trova senza cambiare DEMO_VLLM_ENDPOINTS.
+# porta 8000, quindi product/app.py lo trova senza cambiare DEMO_VLLM_ENDPOINTS.
 # Checkpoint AWQ 4-bit (~19GB pesi), kernel Marlin su Ampere (sm86).
 #
 # Thinking disattivato via chat template (scripts/chat_templates/qwen3_nothink.jinja):

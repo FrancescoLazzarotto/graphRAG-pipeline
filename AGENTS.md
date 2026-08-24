@@ -130,9 +130,9 @@ merged into one number — that separation is the finding, not an implementation
 
 ### 5) Demos
 
-- `streamlit run scripts/demo_app.py` — multi-chat expert console with intra-session memory,
+- `streamlit run product/app.py` — multi-chat expert console with intra-session memory,
   citations, verbatim definitions and the domain gate.
-- `python scripts/expert_demo.py --strategy hybrid` — the same stack, console-only.
+- `python product/console.py --strategy hybrid` — the same stack, console-only.
 
 Both build their own `AgentConfig` inline; they do not read the CLI flags.
 

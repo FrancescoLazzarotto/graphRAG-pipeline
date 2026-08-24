@@ -6,13 +6,13 @@ query the knowledge graph directly: type a question, read the answer with its
 graph evidence. Every exchange is appended to a JSONL session log (questions
 collected this way seed the gold set for the new domain).
 
-Answer quality is configured in ``graphrag.demo_config``, shared with the
+Answer quality is configured in ``product.config``, shared with the
 Streamlit demo: citations, language pin, verbatim definitions, MMR, domain gate,
 the cross-lingual vector channel. This console used to set one of those fields
 and silently answered worse than the other demo.
 
 Usage:
-    conda run -n graphllm python scripts/expert_demo.py
+    conda run -n graphllm python product/console.py
     # options: --strategy hybrid --max-context-tokens 6000 --model-id ...
 
 Exit with 'esci', 'exit', 'quit' or Ctrl-D. 'nuova' starts a fresh thread
@@ -35,6 +35,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+# Streamlit and `python product/console.py` both put this file's own directory
+# on the path, not the repository root, so `product.config` needs it added.
+sys.path.insert(0, str(ROOT))
 
 from graphrag.strategies import STRATEGY_PRESETS  # noqa: E402
 
@@ -49,7 +52,7 @@ BANNER = """
 ============================================================
 """
 
-# CLI flag -> environment variable read by graphrag.demo_config. Passing a flag
+# CLI flag -> environment variable read by product.config. Passing a flag
 # sets the variable before that module is imported, so the console and the
 # Streamlit demo are configured through exactly one code path.
 ENV_OVERRIDES = {
@@ -127,9 +130,9 @@ def main() -> None:
         os.environ["DEMO_MEMORY"] = "0"
 
     # Imported here, not at module scope: the overrides above must land in the
-    # environment before demo_config reads it.
+    # environment before product.config reads it.
     from graphrag.agent.memory import ConversationMemory
-    from graphrag import demo_config
+    from product import config as settings
 
     # The CLI's stage0 auto-discovery resolves kg_pipeline/artifacts relative
     # to the working directory.
@@ -140,29 +143,29 @@ def main() -> None:
             sys.exit("--model-id e --vllm-base-url vanno passati insieme.")
         base_url, model_id = args.vllm_base_url, args.model_id
     else:
-        options = demo_config.probe_vllm_endpoints()
+        options = settings.probe_vllm_endpoints()
         if not options:
             sys.exit(
                 "Nessun modello raggiungibile su "
-                f"{demo_config.VLLM_ENDPOINTS}. Avvia un server "
+                f"{settings.VLLM_ENDPOINTS}. Avvia un server "
                 "(scripts/start_demo.sh) oppure passa --model-id/--vllm-base-url."
             )
         base_url, model_id = _choose_model(options)
 
-    log_dir = demo_config.LOG_DIR
+    log_dir = settings.LOG_DIR
     log_dir.mkdir(parents=True, exist_ok=True)
     session_log = log_dir / f"session_{dt.datetime.now():%Y%m%d_%H%M%S}.jsonl"
 
     print("\nAvvio in corso (connessione al grafo e indice testi)...")
     try:
-        agent, graph_label = demo_config.build_demo_agent(base_url, model_id)
+        agent, graph_label = settings.build_demo_agent(base_url, model_id)
     except RuntimeError as exc:
         sys.exit(f"\n{exc}")
 
-    memory = ConversationMemory() if demo_config.MEMORY else None
+    memory = ConversationMemory() if settings.MEMORY else None
 
     print(BANNER)
-    print(f"[strategia: {demo_config.STRATEGY} | modello: {model_id}]")
+    print(f"[strategia: {settings.STRATEGY} | modello: {model_id}]")
     print(f"[grafo: {graph_label}]")
     print(f"[log sessione: {session_log}]\n")
 
@@ -187,7 +190,7 @@ def main() -> None:
         record: dict[str, object] = {
             "ts": dt.datetime.now().isoformat(timespec="seconds"),
             "question": question,
-            "strategy": demo_config.STRATEGY,
+            "strategy": settings.STRATEGY,
             "model_id": model_id,
         }
         try:

@@ -43,7 +43,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from graphrag import cli as graphrag_cli  # noqa: E402
 
-# Mirrors demo_app.py: the text channel must be the one the demo actually uses,
+# Mirrors product/app.py: the text channel must be the one the demo actually uses,
 # otherwise the threshold is calibrated against a different index.
 TEXT_STAGE0_RUNS = "run_fix2docs_20260710,run_full_circular_20260707"
 

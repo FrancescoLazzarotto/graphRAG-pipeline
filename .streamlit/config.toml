@@ -1,0 +1,31 @@
+# Base palette for the browser demo. Deliberately restrained: this is the
+# starting point for the visual work, not the finished identity.
+#
+# Streamlit reads this from the working directory, which is why it sits at the
+# repository root rather than next to product/app.py — scripts/start_demo.sh
+# cd's here before launching.
+#
+# The default theme puts Streamlit's own red on every button and accent, which
+# says "prototype in someone's notebook". The accent below is a muted slate
+# teal: it reads as considered without claiming a brand, and it stays legible
+# against both grounds. Neutrals carry a slight warm bias so the page does not
+# look like unstyled HTML.
+
+[theme]
+base = "light"
+primaryColor = "#2F6D68"
+backgroundColor = "#FCFBF9"
+secondaryBackgroundColor = "#F2EFEA"
+textColor = "#1F2321"
+linkColor = "#2F6D68"
+borderColor = "#E0DAD1"
+font = "sans-serif"
+codeFont = "monospace"
+baseRadius = "small"
+
+[server]
+# The demo is reached through an SSH tunnel; nothing here is a public origin.
+headless = true
+
+[browser]
+gatherUsageStats = false
