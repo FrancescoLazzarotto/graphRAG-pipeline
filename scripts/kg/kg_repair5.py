@@ -28,6 +28,8 @@ from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import require_confirmation  # noqa: E402
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -174,6 +176,12 @@ def consolidate_micro_types(session) -> int:
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    require_confirmation(
+        title="KG Repair 5",
+        what_it_does="""final cleanup pass over relationship types and node labels""",
+        uri=NEO4J_URI,
+        database=NEO4J_DATABASE,
+    )
     if not NEO4J_URI or not NEO4J_PASSWORD:
         logger.error("NEO4J credentials missing. Check kg_pipeline/.env")
         sys.exit(1)

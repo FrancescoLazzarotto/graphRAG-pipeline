@@ -27,6 +27,8 @@ from openai import OpenAI
 from rich.console import Console
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import require_confirmation  # noqa: E402
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -516,6 +518,14 @@ def step_4_enrich_properties(session, client: OpenAI) -> dict[str, Any]:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    require_confirmation(
+        title="KG Repair 1",
+        what_it_does="""delete junk nodes and orphan entities
+        normalise entity names and labels
+        merge duplicates found by exact name""",
+        uri=NEO4J_URI,
+        database=NEO4J_DATABASE,
+    )
     console.rule("[bold]KG Repair — Neo4j Aura[/bold]")
 
     if not NEO4J_URI or not NEO4J_PASSWORD:

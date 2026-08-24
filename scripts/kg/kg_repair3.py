@@ -29,6 +29,8 @@ from openai import OpenAI
 from rich.console import Console
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import require_confirmation  # noqa: E402
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -608,6 +610,14 @@ def step_5_residual_normalization(session, client: OpenAI) -> dict[str, Any]:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    require_confirmation(
+        title="KG Repair 3",
+        what_it_does="""reverse relationships stored the wrong way round
+        reclassify generic relationships into specific types
+        delete relationships that survive neither check""",
+        uri=NEO4J_URI,
+        database=NEO4J_DATABASE,
+    )
     console.rule("[bold]KG Repair 3 — Neo4j Aura[/bold]")
 
     if not NEO4J_URI or not NEO4J_PASSWORD:
