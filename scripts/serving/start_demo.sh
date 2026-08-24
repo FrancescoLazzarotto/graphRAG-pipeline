@@ -22,6 +22,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The per-model start scripts sit beside this one. Resolved once, absolute:
+# the launcher cd's to ROOT before spawning, so a relative path would not
+# survive being invoked from another directory.
+SERVING_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="${DEMO_LOG_DIR_RUNTIME:-$ROOT/artifacts/demo_logs}"
 UI_PORT="${DEMO_UI_PORT:-8501}"
 UI_ADDRESS="${DEMO_UI_ADDRESS:-0.0.0.0}"
@@ -114,7 +118,7 @@ start_server() {  # label, port, script, env assignments...
   # setsid's own pid is not the server's — setsid exits as soon as it has forked.
   ( cd "$ROOT" && setsid --fork bash -c \
       'echo $$ > "$1"; shift; exec "$@"' _ "$LOG_DIR/$label.pid" \
-      env "$@" "$ROOT/scripts/$script" >"$log" 2>&1 < /dev/null & )
+      env "$@" "$SERVING_DIR/$script" >"$log" 2>&1 < /dev/null & )
   # The pid file is written by the child; wait for it before polling it.
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ -s "$LOG_DIR/$label.pid" ]] && break

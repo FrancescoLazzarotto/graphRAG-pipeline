@@ -265,7 +265,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python scripts/build_gold.py",
+        prog="python evaluation/gold/build_gold.py",
         description="Gold standard generation pipeline for graphRAGPipelineExp1",
     )
     sub = parser.add_subparsers(dest="command", required=True)

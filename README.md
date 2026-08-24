@@ -172,7 +172,7 @@ cp .env.example .env
 | `NEO4J_USERNAME` | ✅ | Database user |
 | `NEO4J_PASSWORD` | ✅ | Database password |
 | `NEO4J_DATABASE` | — | Target database name |
-| `NEO4J_URI` | — | Same value as `NEO4J_URL`; read by the `scripts/kg/kg_repair3/4/5.py` post-processing passes |
+| `NEO4J_URI` | — | Same value as `NEO4J_URL`; read by the `scripts/kg/kg_repair3.py`, `kg_repair4.py` and `kg_repair5.py` post-processing passes |
 
 > [!IMPORTANT]
 > The instance must have **APOC** available. Every node and triple projection

@@ -412,14 +412,14 @@ Requires `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` to be set.
 
 ## 11. Evaluation — `evaluation/`
 
-### Build evaluation dataset
+### Build evaluation dataset — `evalkit.cli build-dataset`
 
 Joins experiment results with gold-standard labels.
 
 ```bash
-python evaluation/build_eval_dataset.py \
+PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
   --input artifacts/experiments \
-  --gold-file evaluation/gold_questions_template.csv \
+  --gold-file evaluation/gold/gold_questions_template.csv \
   --output artifacts/evaluation/eval_dataset.csv
 ```
 
@@ -431,10 +431,10 @@ python evaluation/build_eval_dataset.py \
 | `--output` | Output CSV path |
 | `--smoke` | Smoke mode on local fixtures |
 
-### Retrieval metrics
+### Retrieval metrics — `evalkit.cli retrieval`
 
 ```bash
-python evaluation/retrieval_metrics.py \
+PYTHONPATH=evaluation python -m evalkit.cli retrieval \
   --input artifacts/evaluation/eval_dataset.csv \
   --k 5 \
   --save-csv artifacts/evaluation/metrics.csv \
@@ -443,17 +443,17 @@ python evaluation/retrieval_metrics.py \
 
 | Flag | Effect |
 |------|--------|
-| `--input` | CSV produced by `build_eval_dataset.py` |
+| `--input` | CSV produced by `evalkit.cli build-dataset` |
 | `--k` | Top-k for precision/recall/hit/NDCG |
 | `--n-bootstrap` | Bootstrap resamples (default: 1000) |
 | `--ci` | Confidence interval level (default: 0.95) |
 | `--save-csv` / `--save-json` | Aggregate metrics output path |
 | `--save-row-csv` | Per-row metrics output path |
 
-### RAGAS evaluation (optional)
+### RAGAS evaluation (optional) — `evalkit.cli ragas`
 
 ```bash
-python evaluation/run_ragas_eval.py \
+PYTHONPATH=evaluation python -m evalkit.cli ragas \
   --input artifacts/evaluation/eval_dataset.csv \
   --save-summary-json artifacts/evaluation/ragas_summary.json \
   --save-row-csv artifacts/evaluation/ragas_rows.csv
@@ -532,7 +532,7 @@ conda run -n graphllm python -m evalkit.cli judge-compare \
 
 | Flag | Effect |
 |------|--------|
-| `--input` | Eval dataset CSV (from `build_eval_dataset.py`) |
+| `--input` | Eval dataset CSV (from `evalkit.cli build-dataset`) |
 | `--backend` | `vllm` / `local_hf` / `api` / `claude_code` (default `vllm`) |
 | `--model` | Judge model. `claude_code`: `haiku` / `sonnet`. `api`: full id, e.g. `claude-sonnet-4-6` |
 | `--provider` | `anthropic` / `openai` (only for `--backend api`) |

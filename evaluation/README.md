@@ -12,10 +12,11 @@ The pipeline is organized in three layers:
 
 ## Files
 
-- `gold_questions_template.csv`: template for a gold QA set
-- `build_eval_dataset.py`: join run outputs (`results.csv`) with gold answers
-- `retrieval_metrics.py`: compute retrieval-oriented metrics from joined data
-- `run_ragas_eval.py`: run RAGAS metrics on joined data (optional local judge)
+- `gold/gold_questions_template.csv`: template for a gold QA set
+- `evalkit/`: the toolkit; every step below is one of its subcommands
+  (`build-dataset` joins run outputs with gold answers, `retrieval` computes
+  retrieval metrics, `ragas` runs RAGAS on the joined data). They replaced the
+  standalone scripts this file used to list.
 - `requirements.txt`: optional dependencies for this folder
 
 ## 1) Prepare gold dataset
@@ -35,9 +36,9 @@ Optional but recommended columns:
 ## 2) Build joined evaluation dataset
 
 ```bash
-conda run -n graphllm python evaluation/build_eval_dataset.py \
+PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli build-dataset \
   --input artifacts/experiments/20260418_133106_retrieval_matrix_full_llm_qwen25_7b \
-  --gold-file evaluation/gold_questions_template.csv \
+  --gold-file evaluation/gold/gold_questions_template.csv \
   --output artifacts/evaluation/qwen25_7b_eval_dataset.csv
 ```
 
@@ -46,7 +47,7 @@ This creates a row-level dataset ready for retrieval metrics and RAGAS.
 ## 3) Retrieval metrics
 
 ```bash
-conda run -n graphllm python evaluation/retrieval_metrics.py \
+PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli retrieval \
   --input artifacts/evaluation/qwen25_7b_eval_dataset.csv \
   --save-csv artifacts/evaluation/qwen25_7b_retrieval_summary.csv \
   --save-json artifacts/evaluation/qwen25_7b_retrieval_summary.json
@@ -122,7 +123,7 @@ conda run -n graphllm python -m pip install -r evaluation/requirements.txt
 Run RAGAS with local judge model:
 
 ```bash
-conda run -n graphllm python evaluation/run_ragas_eval.py \
+PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli ragas \
   --input artifacts/evaluation/qwen25_7b_eval_dataset.csv \
   --metrics faithfulness,answer_relevancy,answer_correctness,context_precision,context_recall \
   --judge-model Qwen/Qwen2.5-14B-Instruct \
