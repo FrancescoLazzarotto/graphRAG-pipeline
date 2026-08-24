@@ -16,6 +16,3 @@ matters for relative `--output` paths.
 | `analysis/` | Post-run analysis: result aggregation, answer diffs, provenance precision, KG variant comparison and significance, slot ceiling, visualisation. |
 | `serving/` | vLLM, Neo4j staging and demo start/stop wrappers, plus the per-model `chat_templates/`. vLLM wrappers use the `vllm-serve` virtualenv, never `graphllm`. |
 | `cluster/` | SLURM job templates and submission helpers. |
-
-Scripts whose name starts with `_` are throwaways with hardcoded paths and are
-not tracked by git.
