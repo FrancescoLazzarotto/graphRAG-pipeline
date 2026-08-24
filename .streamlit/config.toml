@@ -24,8 +24,22 @@ codeFont = "monospace"
 baseRadius = "small"
 
 [server]
-# The demo is reached through an SSH tunnel; nothing here is a public origin.
+# The demo is reached through an SSH tunnel or VS Code's port forwarding;
+# nothing here is a public origin.
 headless = true
+
+# Streamlit validates the websocket's Origin header against browser.serverAddress
+# and rejects a mismatch with 403. Through a plain `ssh -L` tunnel the origin is
+# localhost and it matches; through VS Code's forwarding the page is served from
+# a *.devtunnels.ms domain, so the HTML loads, the websocket is refused, and the
+# page spins forever with no error anywhere — measured: origin localhost -> 101,
+# origin devtunnels -> 403.
+#
+# The protection this drops guards Streamlit's file-upload endpoint against a
+# malicious page driving it cross-origin. This app has no upload, and the port is
+# reachable only from this machine's network.
+enableCORS = false
+enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
