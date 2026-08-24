@@ -182,12 +182,12 @@ and reproducible.
 
 ---
 
-## 3. Experiment Matrix — `scripts/run_retrieval_matrix.py`
+## 3. Experiment Matrix — `scripts/runners/run_retrieval_matrix.py`
 
 Compares retrieval strategies and LLM configurations across a question set. Results are written to `artifacts/experiments/<timestamp>_<tag>/`.
 
 ```bash
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --questions-file questions.txt \
   --models "7b,32b" \
   --strategies "default,text_plus_triples" \
@@ -197,7 +197,7 @@ python scripts/run_retrieval_matrix.py \
 ### With vLLM and tag
 
 ```bash
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --questions-file questions.txt \
   --strategies "default,text_plus_triples,subgraph_2hop" \
   --llm \
@@ -221,7 +221,7 @@ conda run -n graphllm python -m graphrag.cli \
 ### Graph-only (skip standard RAG)
 
 ```bash
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --questions-file questions.txt \
   --skip-standard \
   --strategies "neighbors_focus,subgraph_2hop,shortest_path"
@@ -271,12 +271,12 @@ artifacts/experiments/<timestamp>_<tag>/
 
 ---
 
-## 4. A/B Fast Profile — `scripts/run_ab_fast_profile.py`
+## 4. A/B Fast Profile — `scripts/runners/run_ab_fast_profile.py`
 
 Compares `default` vs `production_fast` profile for the 32B model and reports latency and quality delta.
 
 ```bash
-python scripts/run_ab_fast_profile.py \
+python scripts/runners/run_ab_fast_profile.py \
   --model-id Qwen/Qwen2.5-32B-Instruct \
   --questions-file questions_matrix_long.txt \
   --questions-count 10 \
@@ -288,40 +288,40 @@ python scripts/run_ab_fast_profile.py \
 
 ---
 
-## 5. Results Analysis — `scripts/analyze_experiments.py`
+## 5. Results Analysis — `scripts/analysis/analyze_experiments.py`
 
 Analyses run artifacts and produces a ranked metric report.
 
 ```bash
-python scripts/analyze_experiments.py \
+python scripts/analysis/analyze_experiments.py \
   --results-dir artifacts/experiments \
   --output-csv results_ranked.csv
 ```
 
 ```bash
-python scripts/analyze_experiments.py artifacts/experiments/20240601_120000_my_run
+python scripts/analysis/analyze_experiments.py artifacts/experiments/20240601_120000_my_run
 ```
 
 ---
 
-## 6. Resource Usage Analysis — `scripts/analyze_resource_usage.py`
+## 6. Resource Usage Analysis — `scripts/analysis/analyze_resource_usage.py`
 
 Aggregates GPU/CPU telemetry from multiple runs.
 
 ```bash
-python scripts/analyze_resource_usage.py artifacts/experiments \
+python scripts/analysis/analyze_resource_usage.py artifacts/experiments \
   --tag-contains confronto \
   --output-csv resource_report.csv
 ```
 
 ---
 
-## 7. Matrix Analysis — `scripts/analyze_matrix.py`
+## 7. Matrix Analysis — `scripts/analysis/analyze_matrix.py`
 
 Aggregated comparative analysis across multiple experiment runs/folders.
 
 ```bash
-python scripts/analyze_matrix.py \
+python scripts/analysis/analyze_matrix.py \
   --root artifacts/experiments \
   --tag-contains strategy_comparison \
   --output-csv matrix_summary.csv
@@ -329,13 +329,13 @@ python scripts/analyze_matrix.py \
 
 ---
 
-## 8. Entity Re-merge — `scripts/remerge_entities.py`
+## 8. Entity Re-merge — `scripts/kg/remerge_entities.py`
 
 Re-runs entity resolution and linking on existing stage 3 output without redoing NER or LLM extraction.  
 Useful for tuning similarity thresholds without re-running the full pipeline.
 
 ```bash
-python scripts/remerge_entities.py \
+python scripts/kg/remerge_entities.py \
   --run-dir kg_pipeline/artifacts/run_20240601_120000 \
   --similarity-threshold 0.90 \
   --context-jaccard-floor 0.15
@@ -353,14 +353,14 @@ python scripts/remerge_entities.py \
 
 ---
 
-## 9. Question Generation — `scripts/generate_questions.py`
+## 9. Question Generation — `scripts/gold/generate_questions.py`
 
 Automatically generates a test question suite from pipeline chunks/documents.
 
 ### Generate suite from an existing run
 
 ```bash
-python scripts/generate_questions.py generate \
+python scripts/gold/generate_questions.py generate \
   --run-dir kg_pipeline/artifacts/run_20240601_120000 \
   --output artifacts/tmp/graphrag_test_suite.json
 ```
@@ -382,7 +382,7 @@ print(f"{len(questions)} questions written")
 ### For a specific document
 
 ```bash
-python scripts/generate_questions.py generate \
+python scripts/gold/generate_questions.py generate \
   --run-dir kg_pipeline/artifacts/run_20240601_120000 \
   --doc my_document.pdf \
   --output artifacts/tmp/suite_doc.json
@@ -391,18 +391,18 @@ python scripts/generate_questions.py generate \
 ### Statistics on an existing suite
 
 ```bash
-python scripts/generate_questions.py stats \
+python scripts/gold/generate_questions.py stats \
   --input artifacts/tmp/graphrag_test_suite.json
 ```
 
 ---
 
-## 10. KG Visualisation — `scripts/visualize_kg.py`
+## 10. KG Visualisation — `scripts/analysis/visualize_kg.py`
 
 Generates an interactive HTML view of the knowledge graph from Neo4j.
 
 ```bash
-python scripts/visualize_kg.py \
+python scripts/analysis/visualize_kg.py \
   --output artifacts/tmp/kg_viz.html
 ```
 
@@ -547,7 +547,7 @@ conda run -n graphllm python -m evalkit.cli judge-compare \
 
 ---
 
-## 11b. KG Post-processing — `scripts/kg_postprocess.py`
+## 11b. KG Post-processing — `scripts/kg/kg_postprocess.py`
 
 Unified entrypoint for the four Neo4j repair passes (hub cleanup, relation
 consolidation, RELATED_TO reclassification via LLM, property enrichment, ...).
@@ -555,13 +555,13 @@ The passes are distinct post-processing rounds implemented in
 `kg_repair.py`..`kg_repair4.py`; run them through this script, not directly.
 
 ```bash
-conda run -n graphllm python scripts/kg_postprocess.py            # all passes
-conda run -n graphllm python scripts/kg_postprocess.py --passes 3,4
+conda run -n graphllm python scripts/kg/kg_postprocess.py            # all passes
+conda run -n graphllm python scripts/kg/kg_postprocess.py --passes 3,4
 ```
 
 Requires `NEO4J_*` and `VLLM_*` env vars (each pass loads `kg_pipeline/.env`).
 
-Related: `scripts/kg_evaluator.py` queries the live Neo4j graph and writes a
+Related: `scripts/analysis/kg_evaluator.py` queries the live Neo4j graph and writes a
 structural quality report to `artifacts/kg_reports/` (used for manual/LLM
 review of graph quality after ingestion or repair).
 
@@ -571,11 +571,11 @@ review of graph quality after ingestion or repair).
 
 | Command | What it checks |
 |---------|----------------|
-| `python scripts/smoke_check.py` | Neo4j + LLM connectivity (reads exported env vars, does not auto-load `.env`) |
-| `python scripts/smoke_text_rag.py docs/ --query "..." --top-k 4` | BM25 text retrieval on a document directory |
-| `python scripts/smoke_kg_retriever.py` | KG retrieval against Neo4j |
-| `python scripts/smoke_test_pipeline.py` | Quick smoke run of the KG pipeline |
-| `python scripts/run_pipeline_smoke_full.py` | Full end-to-end pipeline smoke |
+| `python scripts/smoke/smoke_check.py` | Neo4j + LLM connectivity (reads exported env vars, does not auto-load `.env`) |
+| `python scripts/smoke/smoke_text_rag.py docs/ --query "..." --top-k 4` | BM25 text retrieval on a document directory |
+| `python scripts/smoke/smoke_kg_retriever.py` | KG retrieval against Neo4j |
+| `python scripts/smoke/smoke_test_pipeline.py` | Quick smoke run of the KG pipeline |
+| `python scripts/smoke/run_pipeline_smoke_full.py` | Full end-to-end pipeline smoke |
 | `pytest kg_pipeline/tests/test_pipeline.py -v` | KG pipeline unit/integration tests |
 | `pytest evaluation/tests/test_metrics.py -v` | Evaluation metric tests |
 
@@ -585,11 +585,11 @@ review of graph quality after ingestion or repair).
 
 | Script | What it launches |
 |--------|-----------------|
-| `sbatch scripts/run_kg_pipeline.sbatch` | KG pipeline in background (avoids hang on notebook disconnect) |
-| `sbatch scripts/run_graphrag.sbatch` | GraphRAG demo on GPU cluster |
-| `sbatch scripts/run_graphrag_cpu.sbatch` | GraphRAG demo on CPU cluster |
-| `sbatch scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix on GPU cluster |
-| `bash scripts/submit_matrix_from_env.sh` | Submit matrix reading parameters from env vars |
+| `sbatch scripts/cluster/run_kg_pipeline.sbatch` | KG pipeline in background (avoids hang on notebook disconnect) |
+| `sbatch scripts/cluster/run_graphrag.sbatch` | GraphRAG demo on GPU cluster |
+| `sbatch scripts/cluster/run_graphrag_cpu.sbatch` | GraphRAG demo on CPU cluster |
+| `sbatch scripts/cluster/run_experiment_matrix_gpu.sbatch` | Experiment matrix on GPU cluster |
+| `bash scripts/cluster/submit_matrix_from_env.sh` | Submit matrix reading parameters from env vars |
 
 ---
 
@@ -624,7 +624,7 @@ VLLM_MODEL_NAME="Qwen/Qwen2.5-32B-Instruct-AWQ"
 VLLM_API_KEY="..."            # or OPENAI_API_KEY
 ```
 
-> `scripts/smoke_check.py` reads exported shell env vars — it does **not** auto-load `.env`.  
+> `scripts/smoke/smoke_check.py` reads exported shell env vars — it does **not** auto-load `.env`.  
 > Always pass `--env-file kg_pipeline/.env` when running the KG pipeline.
 
 ---
@@ -638,7 +638,7 @@ conda run -n graphllm python -m kg_pipeline.main \
   --env-file kg_pipeline/.env
 
 # 2. Generate test questions from the KG artifacts
-python scripts/generate_questions.py generate \
+python scripts/gold/generate_questions.py generate \
   --run-dir kg_pipeline/artifacts/run_<timestamp> \
   --output artifacts/tmp/graphrag_test_suite.json
 

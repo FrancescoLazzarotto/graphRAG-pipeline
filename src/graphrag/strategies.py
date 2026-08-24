@@ -5,7 +5,7 @@ import copy
 from graphrag.config import AgentConfig
 
 # Canonical retrieval-strategy presets shared by the CLI (`graphrag.cli`) and the
-# experiment matrix driver (`scripts/run_retrieval_matrix.py`). This module is the
+# experiment matrix driver (`scripts/runners/run_retrieval_matrix.py`). This module is the
 # single source of truth: keep STRATEGY_PRESETS and apply_strategy() in sync.
 #
 # Presets only toggle the retrieval channels (include_* flags, hops). Cardinality

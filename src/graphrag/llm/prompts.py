@@ -429,8 +429,8 @@ class PromptLibrary:
             "Respond with ONLY one word: TEXT, KG, HYBRID, or MULTIHOP."
         )
 
-    # Frozen wording, validated by scripts/eval_domain_gate_llm.py (50/50 on the
-    # tuning set) and scripts/eval_domain_gate_heldout.py (0/12 false refusals).
+    # Frozen wording, validated by scripts/domain_gate/eval_domain_gate_llm.py (50/50 on the
+    # tuning set) and scripts/domain_gate/eval_domain_gate_heldout.py (0/12 false refusals).
     # Two clauses exist because of measured failures, not style: the by-product
     # composition clause recovered the rice-bran and mineral-water questions, the
     # framework-vocabulary clause recovered the metabolisation and Capital ones,

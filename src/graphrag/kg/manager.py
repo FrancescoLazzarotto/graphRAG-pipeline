@@ -31,7 +31,7 @@ from graphrag.types import KGNode, KGTriple
 
 logger = logging.getLogger("graphrag")
 
-# Property holding the multilingual node embedding (scripts/kg_vector_index.py).
+# Property holding the multilingual node embedding (scripts/kg/kg_vector_index.py).
 VECTOR_PROPERTY = os.getenv("GRAPHRAG_VECTOR_PROPERTY", "embedding")
 
 
@@ -450,7 +450,7 @@ class KnowledgeGraphManager:
 
         This is the cross-lingual half of retrieval: the full-text index only
         matches surface forms, so an English question never reaches a node named
-        ``polifenoli`` or ``Ciclicità``. Requires ``scripts/kg_vector_index.py``
+        ``polifenoli`` or ``Ciclicità``. Requires ``scripts/kg/kg_vector_index.py``
         to have been run.
 
         Args:
@@ -584,7 +584,7 @@ class KnowledgeGraphManager:
         if any(marker in text for marker in self._VECTOR_MISSING_MARKERS):
             logger.warning(
                 "Vector index %r unavailable (%s) — the cross-lingual channel is "
-                "skipped for this query. Run scripts/kg_vector_index.py to build it.",
+                "skipped for this query. Run scripts/kg/kg_vector_index.py to build it.",
                 index,
                 exc,
             )
@@ -627,7 +627,7 @@ class KnowledgeGraphManager:
             logger.warning(
                 "Full-text index %r unavailable (%s) — falling back to the "
                 "CONTAINS scan, retrying in %.0f s. Run "
-                "scripts/kg_search_index.py to create the index.",
+                "scripts/kg/kg_search_index.py to create the index.",
                 self.fulltext_index,
                 exc,
                 delay_sec,

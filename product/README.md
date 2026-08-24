@@ -11,9 +11,9 @@ The thing a person actually uses. Two surfaces over one engine.
 ## Running it
 
 ```bash
-bash scripts/start_demo.sh              # encoder + generator + UI, with a preflight
-bash scripts/start_demo.sh --list       # which models can be served
-bash scripts/stop_demo.sh               # everything down
+bash scripts/serving/start_demo.sh              # encoder + generator + UI, with a preflight
+bash scripts/serving/start_demo.sh --list       # which models can be served
+bash scripts/serving/stop_demo.sh               # everything down
 ```
 
 Or one surface at a time, against servers that are already up:

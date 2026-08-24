@@ -12,7 +12,7 @@ the gate reads the typed question rather than the memory-rewritten one, and a
 gate failure fails open.
 
 The scope wording itself is measured, not asserted here — see
-`scripts/eval_domain_gate_llm.py` and `scripts/eval_domain_gate_heldout.py`.
+`scripts/domain_gate/eval_domain_gate_llm.py` and `scripts/domain_gate/eval_domain_gate_heldout.py`.
 """
 
 from __future__ import annotations

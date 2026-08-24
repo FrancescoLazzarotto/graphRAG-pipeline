@@ -1,7 +1,7 @@
 """Standard (text-only) RAG baseline presets shared by experiment drivers.
 
 Single source of truth for the baseline retrieval configurations used by
-``scripts/run_retrieval_matrix.py``; keep preset names stable because they end
+``scripts/runners/run_retrieval_matrix.py``; keep preset names stable because they end
 up in experiment artifacts (results.jsonl ``strategy`` field).
 """
 

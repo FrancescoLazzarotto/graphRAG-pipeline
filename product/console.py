@@ -148,7 +148,7 @@ def main() -> None:
             sys.exit(
                 "Nessun modello raggiungibile su "
                 f"{settings.VLLM_ENDPOINTS}. Avvia un server "
-                "(scripts/start_demo.sh) oppure passa --model-id/--vllm-base-url."
+                "(scripts/serving/start_demo.sh) oppure passa --model-id/--vllm-base-url."
             )
         base_url, model_id = _choose_model(options)
 

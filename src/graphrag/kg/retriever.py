@@ -886,7 +886,7 @@ class KGRetriever:
             ):
                 raise embeddings.EmbeddingUnavailable(
                     f"vector channel is enabled but the encoder failed: {exc}. "
-                    "Start the encoder (scripts/start_vllm_encoder.sh) or set "
+                    "Start the encoder (scripts/serving/start_vllm_encoder.sh) or set "
                     "GRAPHRAG_VECTOR_ALLOW_DEGRADED=1 to accept lexical-only "
                     "retrieval."
                 ) from exc

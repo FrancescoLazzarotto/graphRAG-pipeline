@@ -176,7 +176,7 @@ class AgentConfig:
     # "3 C dell'Economia Circolare per l'Alimentazione". The vector channel is
     # added to the lexical one, never replaces it — exact surface matches are
     # still the most precise signal available.
-    # Requires scripts/kg_vector_index.py and a running embedding endpoint; off
+    # Requires scripts/kg/kg_vector_index.py and a running embedding endpoint; off
     # by default, and degrades to lexical-only if either is missing.
     vector_retrieval: bool = False
     vector_index: str = "node_embedding"
@@ -212,7 +212,7 @@ class AgentConfig:
     # Keras function.
     #
     # The gate is an LLM call, not a similarity threshold, because the threshold
-    # does not exist: scripts/calibrate_domain_gate.py measured a top-1 cosine of
+    # does not exist: scripts/domain_gate/calibrate_domain_gate.py measured a top-1 cosine of
     # 0.7996 for the lowest gold question against 0.8314 for an out-of-domain SQL
     # question — the ranges overlap, and e5 compresses everything into a narrow
     # band. The classification costs ~0.11 s at 4 max_tokens.

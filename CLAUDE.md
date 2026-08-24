@@ -42,7 +42,7 @@ Always prefer the `graphllm` Conda environment. Use `conda run -n graphllm ...` 
 > them; a clean install does not. See `docs/code_audit_2026-08-15.md` §5.2.
 
 > `import vllm` is broken inside `graphllm`. Every (re)start of a served model must go
-> through the `vllm-serve` virtualenv — see the `scripts/start_vllm*.sh` wrappers.
+> through the `vllm-serve` virtualenv — see the `scripts/serving/start_vllm*.sh` wrappers.
 
 Required env vars (`.env` or exported):
 ```bash
@@ -50,7 +50,7 @@ NEO4J_URL="bolt://localhost:7687"
 NEO4J_USERNAME="neo4j"
 NEO4J_PASSWORD="..."
 NEO4J_DATABASE="..."         # optional
-NEO4J_URI="..."              # same value as NEO4J_URL; read by scripts/kg_repair3/4/5.py
+NEO4J_URI="..."              # same value as NEO4J_URL; read by scripts/kg/kg_repair3/4/5.py
 HF_TOKEN="..."               # for gated HuggingFace models
 VLLM_BASE_URL="http://localhost:8000/v1"
 VLLM_MODEL_NAME="Qwen/Qwen2.5-32B-Instruct"
@@ -77,7 +77,7 @@ Optional runtime knobs, all read from the environment:
 | `DEMO_*` | see `product/config.py` | Every demo setting, shared by both demos |
 | `DEMO_NEO4J_FALLBACK_URL` etc. | — | Graph used when the primary one is unreachable |
 
-> `scripts/smoke_check.py` fills in missing variables from `kg_pipeline/.env` (`--env-file` to point elsewhere); anything already exported still wins.
+> `scripts/smoke/smoke_check.py` fills in missing variables from `kg_pipeline/.env` (`--env-file` to point elsewhere); anything already exported still wins.
 
 ## Common commands
 
@@ -85,12 +85,12 @@ Optional runtime knobs, all read from the environment:
 # Preflight: imports, graph (nodes + both indexes ONLINE), generator, encoder.
 # Every check runs by default and a failure is a non-zero exit; waive one with
 # --skip-neo4j / --skip-llm / --skip-encoder.
-python scripts/smoke_check.py
+python scripts/smoke/smoke_check.py
 
 # Bring the whole demo up (encoder, generator(s), Streamlit) and preflight it
-bash scripts/start_demo.sh --list          # what can be served
-bash scripts/start_demo.sh qwen25-32b      # one or more model keys
-bash scripts/stop_demo.sh                  # everything back down
+bash scripts/serving/start_demo.sh --list          # what can be served
+bash scripts/serving/start_demo.sh qwen25-32b      # one or more model keys
+bash scripts/serving/stop_demo.sh                  # everything back down
 
 # Single question
 conda run -n graphllm python -m graphrag.cli --question "What is X?" --entity "Y"
@@ -110,13 +110,13 @@ conda run -n graphllm python -m graphrag.cli --experiment \
   --output-dir exp_results/<tag>
 
 # Experiment matrix (Standard RAG vs GraphRAG, resource telemetry)
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --questions-file evaluation/fixtures/questions.txt \
   --graph-strategies "default,text_plus_triples" \
   --output-dir artifacts/experiments
 
 # Analyze a run
-python scripts/analyze_experiments.py --results-dir artifacts/experiments --output-csv results_ranked.csv
+python scripts/analysis/analyze_experiments.py --results-dir artifacts/experiments --output-csv results_ranked.csv
 
 # Score a run against the frozen gold (two channels, two levels)
 python evaluation/scripts/score_gold_run.py \
@@ -128,9 +128,9 @@ conda run -n graphllm streamlit run product/app.py
 conda run -n graphllm python product/console.py --strategy hybrid
 
 # Smoke tests
-python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
-python scripts/smoke_kg_retriever.py
-python scripts/run_pipeline_smoke_full.py
+python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
+python scripts/smoke/smoke_kg_retriever.py
+python scripts/smoke/run_pipeline_smoke_full.py
 ```
 
 ## Running tests
@@ -185,13 +185,13 @@ Stage 3 checkpoints every `llm.checkpoint_every` chunks (atomic writes) — re-r
 clearing this file resumes from the last saved chunk; triples past the last completed checkpoint
 are dropped on resume to prevent duplicates.
 
-After Stage 6, Neo4j post-processing passes are run via `scripts/kg_postprocess.py`
+After Stage 6, Neo4j post-processing passes are run via `scripts/kg/kg_postprocess.py`
 (`--passes 1,2,3,4,5`), which wraps `kg_repair.py`..`kg_repair5.py` — distinct repair rounds,
 not script versions. Then the search and vector indexes:
 
 ```bash
-python scripts/kg_search_index.py    # full-text index (node_search)
-python scripts/kg_vector_index.py    # :NodeVec carriers + node_embedding vector index
+python scripts/kg/kg_search_index.py    # full-text index (node_search)
+python scripts/kg/kg_vector_index.py    # :NodeVec carriers + node_embedding vector index
 ```
 
 ### GraphRAG agent (`src/graphrag/agent/core.py`)
@@ -229,8 +229,8 @@ weighting) → **lexical** full-text lookup (Lucene OR-query with boosts) **plus
 shortest path → triple ranking → optional text channel (TF-IDF or dense FAISS).
 
 The vector channel is the cross-lingual half: the graph is largely Italian and the gold
-questions are English. It requires `scripts/kg_vector_index.py` and a running embedding
-endpoint (`scripts/start_vllm_encoder.sh`). If the encoder fails after its retries the
+questions are English. It requires `scripts/kg/kg_vector_index.py` and a running embedding
+endpoint (`scripts/serving/start_vllm_encoder.sh`). If the encoder fails after its retries the
 retrieval **raises** rather than degrading, because a silent fallback to lexical-only
 produced a model-asymmetric campaign; set `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` for
 interactive use, where a lexical-only answer beats no answer.
@@ -262,7 +262,7 @@ The lexical text channel ranks with Okapi BM25 and honours `--text-retriever-mmr
 | `--enable-decomposition-step` / `--enable-adaptive-routing-step` | Extra LLM calls before retrieval |
 | `--max-new-tokens` / `--max-context-tokens` / `--recursion-limit` | Budgets (context default **6000**) |
 
-`scripts/run_retrieval_matrix.py` exposes `--performance-profile`
+`scripts/runners/run_retrieval_matrix.py` exposes `--performance-profile`
 (`auto` / `default` / `production_fast`) and resource telemetry, but **not** the
 retrieval/answer flags above — see the warning below.
 
@@ -343,7 +343,7 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
   (`src/graphrag/llm/refusal.py`) — they are substring-matched over the whole answer
 - Returning a new key from an agent node without declaring it in `RAGState`
 - Changing `PromptLibrary.DEFAULT_DOMAIN_SCOPE` or the domain-gate wording without rerunning
-  `scripts/eval_domain_gate_llm.py` and `scripts/eval_domain_gate_heldout.py`
+  `scripts/domain_gate/eval_domain_gate_llm.py` and `scripts/domain_gate/eval_domain_gate_heldout.py`
 
 ## Validation after edits
 
@@ -358,14 +358,14 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
 | Issue | Workaround |
 |-------|-----------|
 | Exit code 126 on `graphrag-demo` | Use `conda run -n graphllm python -m graphrag.cli` |
-| `import vllm` fails inside `graphllm` | Serve models from the `vllm-serve` virtualenv (`scripts/start_vllm*.sh`) |
+| `import vllm` fails inside `graphllm` | Serve models from the `vllm-serve` virtualenv (`scripts/serving/start_vllm*.sh`) |
 | torch/torchvision version mismatch | Pin `torch==2.5.1+cu124` + `torchvision==0.20.1+cu124` |
 | Neo4j UnknownPropertyKey warnings | Use `properties(node)['key']` accessor in Cypher |
 | Retrieval requires APOC (`apoc.map.removeKey`) | No fallback is implemented; the instance must have APOC |
 | KG stage 3 crash on malformed LLM output | Expected — caught and logged to `failed_chunks.jsonl`; pipeline continues |
 | Entity resolution too aggressive | Increase `resolution.similarity_threshold` in `kg_pipeline/config.yaml` |
-| KG pipeline hangs on notebook disconnect | Use `sbatch scripts/run_kg_pipeline.sbatch` for detached execution |
-| `EmbeddingUnavailable` raised mid-run | The encoder is down: `scripts/start_vllm_encoder.sh`. It no longer degrades silently (audit §1.1 follow-up) |
+| KG pipeline hangs on notebook disconnect | Use `sbatch scripts/cluster/run_kg_pipeline.sbatch` for detached execution |
+| `EmbeddingUnavailable` raised mid-run | The encoder is down: `scripts/serving/start_vllm_encoder.sh`. It no longer degrades silently (audit §1.1 follow-up) |
 | Retrieval suddenly slow mid-run | Was the full-text index disabled by one bad query? The markers are exact since 2026-08-17, and since 2026-08-22 a disabled index is re-probed on a 30 s → 15 min backoff instead of staying off for the life of the process |
 
 ## Open defects

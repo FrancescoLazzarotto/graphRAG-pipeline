@@ -2,7 +2,7 @@
 # starting point for the visual work, not the finished identity.
 #
 # Streamlit reads this from the working directory, which is why it sits at the
-# repository root rather than next to product/app.py — scripts/start_demo.sh
+# repository root rather than next to product/app.py — scripts/serving/start_demo.sh
 # cd's here before launching.
 #
 # The default theme puts Streamlit's own red on every button and accent, which

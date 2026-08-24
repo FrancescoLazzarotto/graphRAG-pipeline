@@ -107,7 +107,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Add the multilingual vector channel beside the lexical one, so an "
             "English question can reach an Italian node name. Needs "
-            "scripts/kg_vector_index.py and a running embedding endpoint"
+            "scripts/kg/kg_vector_index.py and a running embedding endpoint"
         ),
     )
     parser.add_argument(

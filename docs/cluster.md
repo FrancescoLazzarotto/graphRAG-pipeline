@@ -23,19 +23,19 @@ export NEO4J_DATABASE="<your-database>"
 GPU run:
 
 ```bash
-sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
+sbatch -p <gpu_partition> scripts/cluster/run_graphrag.sbatch
 ```
 
 CPU run:
 
 ```bash
-sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
+sbatch -p <cpu_partition> scripts/cluster/run_graphrag_cpu.sbatch
 ```
 
 KG pipeline run that survives laptop disconnects:
 
 ```bash
-sbatch -p <partition> scripts/run_kg_pipeline.sbatch
+sbatch -p <partition> scripts/cluster/run_kg_pipeline.sbatch
 ```
 
 Before submission, export required Neo4j variables in your shell or directly in the script.
@@ -45,13 +45,13 @@ Before submission, export required Neo4j variables in your shell or directly in 
 If you do not have cluster access yet, run the local preflight helper from Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1
+powershell -ExecutionPolicy Bypass -File scripts/cluster/preflight.ps1
 ```
 
 Optional Neo4j connectivity validation:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1 -CheckNeo4j
+powershell -ExecutionPolicy Bypass -File scripts/cluster/preflight.ps1 -CheckNeo4j
 ```
 
 ## 3. Environment Variables
@@ -72,7 +72,7 @@ Optional:
 - VLLM_HOST / VLLM_PORT (defaults: 127.0.0.1 / 8000)
 - VLLM_GPU_MEMORY_UTILIZATION (default: 0.90)
 - VLLM_STARTUP_TIMEOUT_SEC (default: 180)
-- CONDA_ENV (default: graphllm) for `scripts/run_kg_pipeline.sbatch`
+- CONDA_ENV (default: graphllm) for `scripts/cluster/run_kg_pipeline.sbatch`
 - KG_CONFIG / KG_ENV_FILE / KG_RUN_DIR / KG_STAGE / KG_LOG_LEVEL for the KG pipeline launcher
 
 ## 4. Manual Install (Optional)
@@ -100,13 +100,13 @@ pip install -e . --no-deps
 ## 5. Smoke Check
 
 ```bash
-python scripts/smoke_check.py
+python scripts/smoke/smoke_check.py
 ```
 
 With Neo4j connectivity preflight:
 
 ```bash
-python scripts/smoke_check.py --check-neo4j
+python scripts/smoke/smoke_check.py --check-neo4j
 ```
 
 ## 6. Job Script Behavior
@@ -121,7 +121,7 @@ Both scripts support these runtime overrides:
 - RUN_LLM_ON_CPU=1: enable local LLM on CPU script (default is 0)
 - USE_VLLM=1: in GPU script, start a local vLLM server and run `graphrag-demo --vllm`
 
-When `USE_VLLM=1` in `scripts/run_graphrag.sbatch`, the script:
+When `USE_VLLM=1` in `scripts/cluster/run_graphrag.sbatch`, the script:
 
 - starts `vllm.entrypoints.openai.api_server` in background
 - waits for endpoint readiness on `/models`
@@ -131,13 +131,13 @@ When `USE_VLLM=1` in `scripts/run_graphrag.sbatch`, the script:
 Example:
 
 ```bash
-INSTALL_DEPS=0 QUESTION="Who directed The Matrix?" sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
+INSTALL_DEPS=0 QUESTION="Who directed The Matrix?" sbatch -p <gpu_partition> scripts/cluster/run_graphrag.sbatch
 ```
 
 ## 7. Submit Job (SLURM)
 
 ```bash
-sbatch scripts/run_graphrag.sbatch
+sbatch scripts/cluster/run_graphrag.sbatch
 ```
 
 To inspect live logs:
@@ -152,7 +152,7 @@ tail -f logs/graphrag-gpu-<job_id>.err
 
 For long-running comparisons across retrieval strategies and LLMs, use:
 
-- `scripts/run_experiment_matrix_gpu.sbatch`
+- `scripts/cluster/run_experiment_matrix_gpu.sbatch`
 
 Recommended submission pattern for two GPUs:
 
@@ -161,7 +161,7 @@ MODELS_CSV="Qwen/Qwen2.5-3B-Instruct,Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3
 STRATEGIES="default,text_only,text_plus_triples,neighbors_focus,subgraph_2hop,shortest_path" \
 RUNS_PER_STRATEGY=3 \
 CONDA_ENV=graphllm \
-sbatch -p <gpu_partition> --array=0-2%2 scripts/run_experiment_matrix_gpu.sbatch
+sbatch -p <gpu_partition> --array=0-2%2 scripts/cluster/run_experiment_matrix_gpu.sbatch
 ```
 
 Notes:
@@ -173,7 +173,7 @@ Notes:
 Aggregate all produced run folders with:
 
 ```bash
-python scripts/analyze_matrix.py artifacts/experiments --tag-contains matrix_long
+python scripts/analysis/analyze_matrix.py artifacts/experiments --tag-contains matrix_long
 ```
 
 ## 8. Troubleshooting

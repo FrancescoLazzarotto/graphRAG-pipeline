@@ -38,9 +38,9 @@ Start from the owning file for the behavior you want to change:
 - [src/graphrag/experiments/](src/graphrag/experiments/): experiment runner and resource monitoring
 - [kg_pipeline/main.py](kg_pipeline/main.py): KG pipeline entry point with staged checkpointing
 - [kg_pipeline/config.yaml](kg_pipeline/config.yaml): pipeline defaults, stage settings, paths
-- [scripts/run_retrieval_matrix.py](scripts/run_retrieval_matrix.py): Standard-RAG vs GraphRAG matrix with telemetry
-- [scripts/analyze_experiments.py](scripts/analyze_experiments.py): per-run analysis
-- [scripts/analyze_resource_usage.py](scripts/analyze_resource_usage.py): telemetry aggregation across runs
+- [scripts/runners/run_retrieval_matrix.py](scripts/runners/run_retrieval_matrix.py): Standard-RAG vs GraphRAG matrix with telemetry
+- [scripts/analysis/analyze_experiments.py](scripts/analysis/analyze_experiments.py): per-run analysis
+- [scripts/analysis/analyze_resource_usage.py](scripts/analysis/analyze_resource_usage.py): telemetry aggregation across runs
 - [evaluation/README.md](evaluation/README.md): gold dataset building, retrieval metrics, judge, optional RAGAS
 - [evaluation/scripts/score_gold_run.py](evaluation/scripts/score_gold_run.py): the paper scorer (two channels, two levels)
 
@@ -97,15 +97,15 @@ Stage outputs inside the run directory:
 - `failed_chunks.jsonl`, `new_labels.log`, `pipeline.log`
 - `run_metadata.json` plus snapshots of `config.yaml` and the relation vocab
 
-Post-ingestion, in order: `scripts/kg_postprocess.py --passes 1,2,3,4,5`, then
-`scripts/kg_search_index.py` (full-text), then `scripts/kg_vector_index.py` (vector carriers).
+Post-ingestion, in order: `scripts/kg/kg_postprocess.py --passes 1,2,3,4,5`, then
+`scripts/kg/kg_search_index.py` (full-text), then `scripts/kg/kg_vector_index.py` (vector carriers).
 Retrieval quality depends on the last two having been run against the live graph.
 
 ### 3) Experiments and analysis
 
 Two runners write the same artifact shape but do **not** offer the same configuration surface:
 
-| | `python -m graphrag.cli --experiment` | `scripts/run_retrieval_matrix.py` |
+| | `python -m graphrag.cli --experiment` | `scripts/runners/run_retrieval_matrix.py` |
 |---|---|---|
 | GraphRAG strategies | yes | yes |
 | Standard-RAG baselines | no | yes |
@@ -151,7 +151,7 @@ Both build their own `AgentConfig` inline; they do not read the CLI flags.
 
 ## Known repository details
 
-- `scripts/smoke_check.py` reads exported environment variables; it does not auto-load `.env`.
+- `scripts/smoke/smoke_check.py` reads exported environment variables; it does not auto-load `.env`.
 - `graphrag-demo` may point to a stale interpreter if a user-local shim is on PATH; if that
   happens, use `conda run -n graphllm python -m graphrag.cli`.
 - `import vllm` is broken inside `graphllm`; serve models from the `vllm-serve` virtualenv.
@@ -176,9 +176,9 @@ After an edit, use the smallest check that can falsify the change:
 
 ```bash
 pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q
-python scripts/smoke_check.py
-python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
-python scripts/smoke_kg_retriever.py
+python scripts/smoke/smoke_check.py
+python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
+python scripts/smoke/smoke_kg_retriever.py
 conda run -n graphllm python -m graphrag.cli --help
 conda run -n graphllm python -m kg_pipeline.main --config kg_pipeline/config.yaml --env-file kg_pipeline/.env --log-level INFO
 ```
@@ -190,7 +190,7 @@ names still match the analysis scripts.
 
 - Retrieval and experiment code is performance-sensitive; avoid adding extra LLM calls or broad
   abstractions unless required.
-- In `scripts/run_retrieval_matrix.py`, the runner may checkpoint or finalize outputs during long
+- In `scripts/runners/run_retrieval_matrix.py`, the runner may checkpoint or finalize outputs during long
   runs. Do not assume the output directory is empty until the process finishes. Note also that it
   cannot express the newer `AgentConfig` options.
 - In `src/graphrag/agent/core.py`, do not reintroduce decomposition or routing steps unless the

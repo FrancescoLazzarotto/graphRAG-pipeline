@@ -56,7 +56,7 @@ The repository covers the full path from a folder of PDFs to a scored table:
 |---|---|
 | `graphrag-demo` — or `python -m graphrag.cli` | Single-question retrieval/generation and batch experiments; the full option surface |
 | `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
-| `python scripts/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
+| `python scripts/runners/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
 | `python -m evalkit.cli` — with `PYTHONPATH=evaluation` | Evaluation toolkit |
 | `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
 | `streamlit run product/app.py` | Expert demo console |
@@ -78,7 +78,7 @@ pip install -r requirements.txt && pip install -e .
 cp .env.example .env && $EDITOR .env
 
 # 3. health check — Neo4j and LLM connectivity
-python scripts/smoke_check.py
+python scripts/smoke/smoke_check.py
 
 # 4. one grounded, cited answer
 graphrag-demo --llm --vllm --strategies hybrid \
@@ -86,7 +86,7 @@ graphrag-demo --llm --vllm --strategies hybrid \
   --cite-evidence --citation-display label --enforce-language
 
 # 5. the full reference campaign, 30 questions x 8 strategies
-bash scripts/run_abstention_arms.sh
+bash scripts/runners/run_abstention_arms.sh
 ```
 
 Starting from an empty graph instead? Go to
@@ -172,7 +172,7 @@ cp .env.example .env
 | `NEO4J_USERNAME` | ✅ | Database user |
 | `NEO4J_PASSWORD` | ✅ | Database password |
 | `NEO4J_DATABASE` | — | Target database name |
-| `NEO4J_URI` | — | Same value as `NEO4J_URL`; read by the `scripts/kg_repair3/4/5.py` post-processing passes |
+| `NEO4J_URI` | — | Same value as `NEO4J_URL`; read by the `scripts/kg/kg_repair3/4/5.py` post-processing passes |
 
 > [!IMPORTANT]
 > The instance must have **APOC** available. Every node and triple projection
@@ -196,13 +196,13 @@ cp .env.example .env
 | `GRAPHRAG_EMBED_MODEL` | `intfloat/multilingual-e5-base` | Encoder id; **must match the one the index was built with** |
 
 ```bash
-bash scripts/start_vllm_encoder.sh        # GPU 1, port 8002, pooling runner
+bash scripts/serving/start_vllm_encoder.sh        # GPU 1, port 8002, pooling runner
 ```
 
 The script exists because the command used to live only inside an abort message,
 and a mistyped restart cost a campaign its vector channel on three of six models.
 Changing `GRAPHRAG_EMBED_MODEL` means rebuilding the index with
-`scripts/kg_vector_index.py`.
+`scripts/kg/kg_vector_index.py`.
 
 <details>
 <summary><b>Optional runtime knobs</b></summary>
@@ -232,7 +232,7 @@ Changing `GRAPHRAG_EMBED_MODEL` means rebuilding the index with
 </details>
 
 > [!WARNING]
-> `scripts/smoke_check.py` reads **exported** environment variables only — it
+> `scripts/smoke/smoke_check.py` reads **exported** environment variables only — it
 > does not auto-load `.env`.
 
 ---
@@ -287,7 +287,7 @@ The graph is largely Italian; English questions cannot reach Italian node names
 lexically. The vector channel is **added** to the lexical one, never replacing it.
 
 ```bash
-python scripts/kg_vector_index.py    # once, after the KG is built
+python scripts/kg/kg_vector_index.py    # once, after the KG is built
 
 graphrag-demo --llm --vllm \
   --vector-retrieval --vector-nodes-limit 10 --vector-triples-limit 10 \
@@ -349,9 +349,9 @@ evidence and every question reaches `generate`.
 ### Test-suite generation
 
 ```bash
-conda run -n graphllm python scripts/generate_questions.py generate
-conda run -n graphllm python scripts/generate_questions.py generate --question-language en
-conda run -n graphllm python scripts/generate_questions.py stats --input artifacts/tmp/graphrag_test_suite.json
+conda run -n graphllm python scripts/gold/generate_questions.py generate
+conda run -n graphllm python scripts/gold/generate_questions.py generate --question-language en
+conda run -n graphllm python scripts/gold/generate_questions.py stats --input artifacts/tmp/graphrag_test_suite.json
 ```
 
 Defaults to the most recent `kg_pipeline/artifacts/run_*` directory and writes to
@@ -428,9 +428,9 @@ kg_pipeline/artifacts/run_<tag>/
 After Neo4j ingestion, **in this order**:
 
 ```bash
-python scripts/kg_postprocess.py --passes 1,2,3,4,5   # repair passes kg_repair.py .. kg_repair5.py
-python scripts/kg_search_index.py                     # full-text index — lexical retrieval
-python scripts/kg_vector_index.py                     # :NodeVec carriers + vector index — cross-lingual
+python scripts/kg/kg_postprocess.py --passes 1,2,3,4,5   # repair passes kg_repair.py .. kg_repair5.py
+python scripts/kg/kg_search_index.py                     # full-text index — lexical retrieval
+python scripts/kg/kg_vector_index.py                     # :NodeVec carriers + vector index — cross-lingual
 ```
 
 The passes are distinct ordered repair rounds, not versions of one script.
@@ -440,7 +440,7 @@ live graph.
 Other graph utilities: `kg_backup.py` / `kg_restore.py`, `kg_densify.py`,
 `kg_ontology_align.py`, `kg_translate_names.py`, `kg_apply_translations.py`,
 `kg_collapse_aliases.py`, `kg_slot_ceiling.py`, `kg_evaluator.py`,
-`compare_kg_variants.py`, `kg_wipe.py`, and the passes under `scripts/kg_quality/`.
+`compare_kg_variants.py`, `kg_wipe.py`, and the passes under `scripts/kg/quality/`.
 
 ---
 
@@ -493,7 +493,7 @@ Two frozen sets ship with the repository, 30 questions each, same annotation:
 | File | Language | Notes |
 |---|---|---|
 | [`gold_v3.json`](evaluation/gold/gold_v3.json) | English | The reference set every thesis number is measured on |
-| [`gold_v3_it.json`](evaluation/gold/gold_v3_it.json) | Italian | Same expected entities, relations, reference answer and scoring block; only `query` changes, and `query_en` carries the original. Built by `scripts/build_gold_it.py` |
+| [`gold_v3_it.json`](evaluation/gold/gold_v3_it.json) | Italian | Same expected entities, relations, reference answer and scoring block; only `query` changes, and `query_en` carries the original. Built by `scripts/gold/build_gold_it.py` |
 
 Each entry carries `query_id`, `query_type`, `query`, `expected_answer`,
 `expected_entities`, `expected_relations`, `source_verified` and `scoring`.
@@ -502,7 +502,7 @@ so the evaluator joins by id rather than by question text.
 
 ### Which runner to use
 
-| | `python -m graphrag.cli --experiment` | `scripts/run_retrieval_matrix.py` |
+| | `python -m graphrag.cli --experiment` | `scripts/runners/run_retrieval_matrix.py` |
 |---|:---:|:---:|
 | GraphRAG strategies | ✅ | ✅ |
 | Standard-RAG baselines — tfidf / dense presets | ❌ | ✅ |
@@ -535,14 +535,14 @@ vector index still *resolves*.
 
 | Script | What it measures |
 |---|---|
-| [`scripts/run_abstention_arms.sh`](scripts/run_abstention_arms.sh) | Three arms isolating the abstention path: `a0` pre-repair prompt wording, `a1` repaired wording, `a2` repaired wording plus domain gate |
-| [`scripts/run_italian_arm.sh`](scripts/run_italian_arm.sh) | The same 30 questions asked in Italian. Its control is the `a1` arm above; 44% of expected concept slots exist in the graph only under an Italian name, against 22% reachable under an English one |
-| [`scripts/run_gold_variant.sh`](scripts/run_gold_variant.sh) | One gold campaign per KG variant against the local staging graph — comparable to each other, not to the Aura runs |
+| [`scripts/runners/run_abstention_arms.sh`](scripts/runners/run_abstention_arms.sh) | Three arms isolating the abstention path: `a0` pre-repair prompt wording, `a1` repaired wording, `a2` repaired wording plus domain gate |
+| [`scripts/runners/run_italian_arm.sh`](scripts/runners/run_italian_arm.sh) | The same 30 questions asked in Italian. Its control is the `a1` arm above; 44% of expected concept slots exist in the graph only under an Italian name, against 22% reachable under an English one |
+| [`scripts/runners/run_gold_variant.sh`](scripts/runners/run_gold_variant.sh) | One gold campaign per KG variant against the local staging graph — comparable to each other, not to the Aura runs |
 
 ```bash
-bash scripts/run_abstention_arms.sh
-bash scripts/run_italian_arm.sh
-VARIANT=v2_baseline bash scripts/run_gold_variant.sh
+bash scripts/runners/run_abstention_arms.sh
+bash scripts/runners/run_italian_arm.sh
+VARIANT=v2_baseline bash scripts/runners/run_gold_variant.sh
 ```
 
 > [!WARNING]
@@ -550,14 +550,14 @@ VARIANT=v2_baseline bash scripts/run_gold_variant.sh
 > stale under a store reload — the count passes, the channel silently degrades to
 > lexical, and the campaign looks complete. Measured once, that cost 0.03–0.06
 > concept F1 on every graph strategy. Guard with
-> `python scripts/check_vector_index.py --min-resolving 1000`, which counts
+> `python scripts/kg/check_vector_index.py --min-resolving 1000`, which counts
 > carriers that still resolve to a node.
 
 ### Retrieval matrices
 
 ```bash
 # smoke matrix — always run this before a long job
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --smoke \
   --questions-file artifacts/experiments/questions_smoke.txt \
   --documents docs/ README.md \
@@ -566,7 +566,7 @@ python scripts/run_retrieval_matrix.py \
   --experiment-tag retrieval_matrix_smoke
 
 # full vLLM-backed matrix
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --llm --vllm \
   --vllm-base-url http://localhost:8000/v1 \
   --model-id Qwen/Qwen2.5-32B-Instruct \
@@ -576,7 +576,7 @@ python scripts/run_retrieval_matrix.py \
 ```
 
 `--questions-file` accepts plain text (one question per line) and JSON suites
-from `scripts/generate_questions.py`. Verify that `summary.json` and
+from `scripts/gold/generate_questions.py`. Verify that `summary.json` and
 `results.jsonl` appear in the output directory before committing to a long run.
 
 ---
@@ -602,12 +602,12 @@ alone.
 
 | Script | Purpose |
 |---|---|
-| `scripts/analyze_experiments.py` | Analyze a single run directory |
-| `scripts/analyze_matrix.py` | Aggregate multiple runs into CSV/JSON summaries |
-| `scripts/analyze_resource_usage.py` | Sizing and resource comparison across runs |
-| `scripts/answer_diff.py` | Side-by-side answer comparison between runs |
-| `scripts/provenance_precision.py` | Attribute retrieved text back to its origin documents |
-| `scripts/kg_variant_significance.py` | Significance testing across KG variants |
+| `scripts/analysis/analyze_experiments.py` | Analyze a single run directory |
+| `scripts/analysis/analyze_matrix.py` | Aggregate multiple runs into CSV/JSON summaries |
+| `scripts/analysis/analyze_resource_usage.py` | Sizing and resource comparison across runs |
+| `scripts/analysis/answer_diff.py` | Side-by-side answer comparison between runs |
+| `scripts/analysis/provenance_precision.py` | Attribute retrieved text back to its origin documents |
+| `scripts/analysis/kg_variant_significance.py` | Significance testing across KG variants |
 | `evaluation/scripts/build_results_tables.py` | Build the paper's result tables |
 | `evaluation/scripts/hard_subset.py` | Isolate the hard subset of the reference set |
 
@@ -697,15 +697,15 @@ worth keeping.
 ### Smoke tests
 
 ```bash
-python scripts/smoke_check.py            # health check: Neo4j + LLM connectivity
-python scripts/smoke_kg_retriever.py     # KG retriever
-python scripts/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
-python scripts/smoke_dense_rag.py        # dense text backend
-python scripts/check_vector_index.py --min-resolving 1000
-python scripts/run_pipeline_smoke_full.py
+python scripts/smoke/smoke_check.py            # health check: Neo4j + LLM connectivity
+python scripts/smoke/smoke_kg_retriever.py     # KG retriever
+python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
+python scripts/smoke/smoke_dense_rag.py        # dense text backend
+python scripts/kg/check_vector_index.py --min-resolving 1000
+python scripts/smoke/run_pipeline_smoke_full.py
 ```
 
-On Windows: `powershell -ExecutionPolicy Bypass -File scripts/preflight.ps1`.
+On Windows: `powershell -ExecutionPolicy Bypass -File scripts/cluster/preflight.ps1`.
 
 ### CI
 
@@ -724,14 +724,14 @@ templates.
 
 | Script | Purpose |
 |---|---|
-| `scripts/run_kg_pipeline.sbatch` | Detached KG pipeline run |
-| `scripts/run_graphrag.sbatch` | GraphRAG job on a GPU node |
-| `scripts/run_graphrag_cpu.sbatch` | GraphRAG job on a CPU node |
-| `scripts/run_experiment_matrix_gpu.sbatch` | Experiment matrix on a GPU node |
-| `scripts/start_vllm.sh`, `start_vllm_qwen25_7b.sh`, `_qwen25_72b.sh`, `start_vllm_qwen3.sh`, `start_vllm_qwen3_32b.sh`, `start_vllm_densify.sh` | Generation servers, one per model |
-| `scripts/start_vllm_encoder.sh` | Multilingual sentence encoder for the vector channel |
-| `scripts/start_neo4j_staging.sh` / `promote_staging_to_aura.sh` | Local staging graph and promotion |
-| `scripts/submit_matrix_from_env.sh` | Submit a matrix parameterized via environment variables |
+| `scripts/cluster/run_kg_pipeline.sbatch` | Detached KG pipeline run |
+| `scripts/cluster/run_graphrag.sbatch` | GraphRAG job on a GPU node |
+| `scripts/cluster/run_graphrag_cpu.sbatch` | GraphRAG job on a CPU node |
+| `scripts/cluster/run_experiment_matrix_gpu.sbatch` | Experiment matrix on a GPU node |
+| `scripts/serving/start_vllm.sh`, `start_vllm_qwen25_7b.sh`, `_qwen25_72b.sh`, `start_vllm_qwen3.sh`, `start_vllm_qwen3_32b.sh`, `start_vllm_densify.sh` | Generation servers, one per model |
+| `scripts/serving/start_vllm_encoder.sh` | Multilingual sentence encoder for the vector channel |
+| `scripts/serving/start_neo4j_staging.sh` / `promote_staging_to_aura.sh` | Local staging graph and promotion |
+| `scripts/cluster/submit_matrix_from_env.sh` | Submit a matrix parameterized via environment variables |
 
 ```bash
 export NEO4J_URL="neo4j+s://<your-instance>"
@@ -739,8 +739,8 @@ export NEO4J_USERNAME="<user>"
 export NEO4J_PASSWORD="<pass>"
 export NEO4J_DATABASE="<db>"
 
-sbatch -p <gpu_partition> scripts/run_graphrag.sbatch
-sbatch -p <cpu_partition> scripts/run_graphrag_cpu.sbatch
+sbatch -p <gpu_partition> scripts/cluster/run_graphrag.sbatch
+sbatch -p <cpu_partition> scripts/cluster/run_graphrag_cpu.sbatch
 ```
 
 Full deployment guide: [docs/cluster.md](docs/cluster.md).
@@ -777,9 +777,17 @@ Full deployment guide: [docs/cluster.md](docs/cluster.md).
 │   ├── fixtures/            #   question sets for matrix runs
 │   ├── baselines/           #   regression baselines
 │   └── tests/
-├── scripts/                 # runners, analyzers, KG repair/index utilities, demos, SLURM templates
-│   ├── kg_quality/          #   graph cleanup passes
-│   └── chat_templates/      #   per-model chat templates
+├── scripts/                 # operational entrypoints, grouped by job
+│   ├── kg/                  #   graph lifecycle: backup/restore/wipe, repair passes, indexes
+│   │   └── quality/         #     graph cleanup passes
+│   ├── gold/                #   gold-set construction, question generation, lexicons
+│   ├── domain_gate/         #   domain-scope calibration and held-out evaluation
+│   ├── runners/             #   experiment drivers (retrieval matrix, gold variants, arms)
+│   ├── smoke/               #   reachability and end-to-end smoke checks
+│   ├── analysis/            #   result analyzers, diffs, significance, KG comparisons
+│   ├── serving/             #   vLLM/Neo4j/demo start-stop wrappers
+│   │   └── chat_templates/  #     per-model chat templates
+│   └── cluster/             #   SLURM templates and submission helpers
 ├── tests/                   # core unit tests, incl. test_audit_fixes.py
 ├── docs/                    # cluster guide, audits, worklogs, plans
 ├── COMMANDS.md              # full command reference
@@ -807,12 +815,12 @@ the repository tree.
 | `ModuleNotFoundError` on a KG-pipeline import | Environment installed before the dependency declarations landed | Reinstall from a current `requirements*.txt`, then `pip install -e .` |
 | Local model loading fails | Insufficient GPU memory | Smaller model, lower `--max-new-tokens`, tune `--gpu-memory-fraction` |
 | torch/torchvision mismatch on GPU nodes | Unpinned installs | Use `requirements-gpu.txt` |
-| `import vllm` fails inside `graphllm` | Broken vLLM install in that env | Serve models from the `vllm-serve` virtualenv (`scripts/start_vllm*.sh`) |
+| `import vllm` fails inside `graphllm` | Broken vLLM install in that env | Serve models from the `vllm-serve` virtualenv (`scripts/serving/start_vllm*.sh`) |
 | vLLM run produces no answers | Server URL or model name mismatch | Confirm `VLLM_BASE_URL` and the model name match the running server |
-| Run aborts on `EmbeddingUnavailable` | Encoder down or overloaded | Start it with `scripts/start_vllm_encoder.sh`. This is a stop, not a degradation, by design |
-| "vector channel skipped" warnings | Vector index missing | Rerun `scripts/kg_vector_index.py` |
-| Vector channel looks healthy but recall drops | Carriers went stale after a store reload | `python scripts/check_vector_index.py --min-resolving 1000`, then rebuild the index |
-| "Full-text index unavailable" warning, then slow queries | Index missing | Run `scripts/kg_search_index.py` |
+| Run aborts on `EmbeddingUnavailable` | Encoder down or overloaded | Start it with `scripts/serving/start_vllm_encoder.sh`. This is a stop, not a degradation, by design |
+| "vector channel skipped" warnings | Vector index missing | Rerun `scripts/kg/kg_vector_index.py` |
+| Vector channel looks healthy but recall drops | Carriers went stale after a store reload | `python scripts/kg/check_vector_index.py --min-resolving 1000`, then rebuild the index |
+| "Full-text index unavailable" warning, then slow queries | Index missing | Run `scripts/kg/kg_search_index.py` |
 | Evaluation warns "GOLD JOIN FALLBACK" | The run emitted no `query_id` | Use `python -m graphrag.cli --experiment` with a `.json`/`.csv` gold as `--questions-file` |
 | Runs complete but context is empty | Retrieval or extraction issue | Inspect `summary.json` and `results.jsonl` before modifying the pipeline |
 | KG stage 3 hits malformed LLM output | Expected behaviour | Failures are logged to `failed_chunks.jsonl`; the pipeline continues |

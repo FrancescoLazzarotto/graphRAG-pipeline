@@ -137,12 +137,20 @@ graphRAGPipelineExp1/
 │       └── telemetry.py                    # Serialize run results to CSV + JSON
 │
 ├── scripts/
-│   ├── run_retrieval_matrix.py             # Main experiment matrix launcher (A/B, performance profiles)
-│   ├── run_ab_fast_profile.py              # A/B test: default vs production_fast with quality delta
-│   ├── analyze_experiments.py              # Aggregate results.csv, rank by latency/pass-rate
-│   ├── smoke_check.py                      # Smoke test: Neo4j health + LLM connectivity
-│   ├── smoke_test_pipeline.py              # End-to-end pipeline smoke test
-│   └── run_*.sbatch                        # SLURM batch job submission scripts
+│   ├── runners/
+│   │   ├── run_retrieval_matrix.py         # Main experiment matrix launcher (A/B, performance profiles)
+│   │   └── run_ab_fast_profile.py          # A/B test: default vs production_fast with quality delta
+│   ├── analysis/
+│   │   └── analyze_experiments.py          # Aggregate results.csv, rank by latency/pass-rate
+│   ├── smoke/
+│   │   ├── smoke_check.py                  # Smoke test: Neo4j health + LLM connectivity
+│   │   └── smoke_test_pipeline.py          # End-to-end pipeline smoke test
+│   ├── kg/                                 # Graph lifecycle: backup/restore/wipe, repair passes, indexes
+│   ├── gold/                               # Gold-set construction and question generation
+│   ├── domain_gate/                        # Domain-scope calibration and held-out evaluation
+│   ├── serving/                            # vLLM / Neo4j / demo start-stop wrappers
+│   └── cluster/
+│       └── run_*.sbatch                    # SLURM batch job submission scripts
 │
 ├── evaluation/
 │   ├── run_ragas_eval.py                   # RAGAS framework evaluation (faithfulness, relevance, etc.)
@@ -680,7 +688,7 @@ python -m kg_pipeline.main --input-dir ./documents --output-dir ./kg_pipeline/ar
 
 **Run experiment matrix:**
 ```bash
-python scripts/run_retrieval_matrix.py \
+python scripts/runners/run_retrieval_matrix.py \
   --questions-file questions.txt \
   --models "7b,32b" \
   --strategies "default,text_plus_triples" \
@@ -689,12 +697,12 @@ python scripts/run_retrieval_matrix.py \
 
 **Check system health:**
 ```bash
-python scripts/smoke_check.py --check-neo4j --check-llm
+python scripts/smoke/smoke_check.py --check-neo4j --check-llm
 ```
 
 **Analyze results:**
 ```bash
-python scripts/analyze_experiments.py \
+python scripts/analysis/analyze_experiments.py \
   --results-dir artifacts/experiments \
   --output-csv results_ranked.csv
 ```
@@ -741,7 +749,7 @@ export VLLM_BASE_URL="http://localhost:8000/v1"
 | Neo4j UnknownPropertyKey warnings | Using string concatenation in Cypher | Use `properties(node)['key']` accessor in Cypher |
 | KG stage 3 crashes on malformed LLM output | JSON parse error or invalid triple schema | Exception caught; failed chunk logged to `failed_chunks.jsonl`; continues to next chunk |
 | Entity resolution too aggressive | Similarity threshold too low (default 0.92) | Increase threshold in config.yaml `resolution.similarity_threshold: 0.95` |
-| Long KG pipeline hangs on notebook disconnect | Terminal killed; async process orphaned | Use `sbatch scripts/run_kg_pipeline.sbatch` for detached execution |
+| Long KG pipeline hangs on notebook disconnect | Terminal killed; async process orphaned | Use `sbatch scripts/cluster/run_kg_pipeline.sbatch` for detached execution |
 
 ---
 

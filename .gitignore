@@ -72,3 +72,4 @@ docs/report_latex/
 
 # Scratch scripts: leading underscore marks a throwaway with hardcoded paths.
 scripts/_*.py
+scripts/**/_*.py
