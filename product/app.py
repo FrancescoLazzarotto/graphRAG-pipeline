@@ -192,7 +192,7 @@ def _ask(
 
 
 st.set_page_config(page_title="AI — Economia Circolare del Cibo", page_icon="")
-st.title("Demo GraphRAG")
+st.title("AI - Circular Food Economy")
 st.caption("Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.")
 
 models = _available_models()
@@ -244,7 +244,7 @@ with st.sidebar:
     if MEMORY and chat["memory"] is not None:
         active = chat["memory"].seed_entities()
         if active:
-            st.caption("In conversazione su: " + ", ".join(active))
+            st.caption("Argomenti in memoria: " + ", ".join(active))
         else:
             st.caption("Nessun argomento attivo.")
 
