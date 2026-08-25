@@ -75,6 +75,65 @@ _STOPWORDS = _STOPWORDS_IT | _STOPWORDS_EN
 # almost every triple.
 _MIN_CONTENT_TERM_LEN = 4
 
+# A name the model has never seen is the one thing the domain gate cannot judge.
+# Measured on the served 32B with the shipped scope text: "Che cos'è SeED?" ->
+# OUT, "Chi è Barilla?" -> OUT, "Cos'è il MATTM?" -> OUT, "Che cos'è REPAiR?" ->
+# OUT — while the graph holds 5, 4, 1 and 1 nodes named after them. Adding "il
+# progetto" flips SEeD to IN, which is the tell: the model is not judging the
+# topic, it is admitting it does not recognise the acronym. In the 2026-08-24
+# expert session that cost a 0.66 s refusal on the first question asked.
+#
+# So the graph answers the half the model cannot — which names this collection
+# contains — and the model keeps the verdict. That split matters: a node named
+# "Torino" must not turn "consigliami un ristorante a Torino" into an in-domain
+# question, and it does not, because the model still reads the question.
+#
+# Any token carrying an uppercase letter is a candidate; the bilingual stopword
+# list drops the sentence-initial "Che"/"What" that every question starts with.
+_PROPER_NOUN_RE = re.compile(r"\b\w*[^\W\d_a-zà-öø-ÿ]\w*\b", re.UNICODE)
+# Shorter than this an "acronym" is noise ("UE" aside, two letters match half
+# the graph once the full-text index tokenises them).
+_MIN_PROPER_NOUN_LEN = 3
+# Interrogatives open a question and are capitalised there, but they are not in
+# `_STOPWORDS` because `_grade` needs that list for a different job. Left in,
+# "Chi è Barilla?" offered the gate "Chi-squared tests" and "Tappo a chi?"
+# alongside the name that mattered. `cos` and `qual` are what the elision regex
+# leaves of "cos'è" and "qual è".
+_GATE_EXTRA_STOPWORDS = {
+    "chi", "cos", "qual", "quale", "quali", "come", "dove", "quando", "quanto",
+    "quanta", "quanti", "quante", "perche", "perché", "parlami", "spiegami",
+    "dimmi", "elenca", "descrivi", "why", "who", "whose", "whom",
+}
+# A question mentioning more names than this is prose, not a lookup; and the
+# gate prompt must not grow into a context of its own.
+_MAX_GATE_ENTITY_TERMS = 6
+_MAX_GATE_ENTITY_NAMES = 8
+
+
+def _proper_noun_terms(question: str) -> list[str]:
+    """Capitalised tokens from ``question`` that might name a graph entity.
+
+    Args:
+        question: The question as typed.
+
+    Returns:
+        Distinct candidate names, at most :data:`_MAX_GATE_ENTITY_TERMS`, in the
+        order they appear.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in _PROPER_NOUN_RE.findall(question):
+        lowered = token.lower()
+        if len(token) < _MIN_PROPER_NOUN_LEN or lowered in seen:
+            continue
+        if lowered in _STOPWORDS or lowered in _GATE_EXTRA_STOPWORDS:
+            continue
+        seen.add(lowered)
+        terms.append(token)
+        if len(terms) >= _MAX_GATE_ENTITY_TERMS:
+            break
+    return terms
+
 
 def _term_matches(term: str, haystack: str) -> bool:
     """Whether ``term`` occurs in ``haystack`` on word boundaries.
@@ -192,10 +251,72 @@ class KGRAGAgent:
         if len(_WORD_RE.findall(question)) <= _MIN_GATED_TOKENS:
             return {"in_domain": True}
 
-        in_domain = self.llm.classify_in_domain(question, self.config)
+        known = self._known_entity_names(question)
+        in_domain = self.llm.classify_in_domain(question, self.config, known)
         if not in_domain:
-            logger.info("Domain gate refused: %s", question[:100])
+            logger.info(
+                "Domain gate refused: %s (graph names offered: %s)",
+                question[:100],
+                known or "none",
+            )
         return {"in_domain": in_domain}
+
+    def _known_entity_names(self, question: str) -> list[str]:
+        """Names the graph holds for the proper nouns in ``question``.
+
+        One indexed lookup, never a scan: when the full-text index is
+        unavailable ``fulltext_search_nodes`` returns None and the gate runs on
+        exactly the wording it was validated with, which is the behaviour to
+        degrade to.
+
+        The index tokenises, so it answers "documents mentioning these terms",
+        not "nodes named this". The word-boundary filter afterwards is what
+        makes the answer a name: without it a question about SEeD would be told
+        the collection contains "Potatoes, Curd, and Linseed Oil".
+
+        It also inherits the index's own blind spot. Lucene's tokeniser keeps
+        an underscore inside a token, so the node "REPORT MATTM_Definitivo.pdf"
+        is unreachable by the term MATTM and no hint is produced for it — the
+        gate then runs on the model's own judgement, as it did before. Nothing
+        to work around here: the fix belongs in what
+        `scripts/kg/kg_search_index.py` feeds the index.
+
+        Args:
+            question: The question as typed.
+
+        Returns:
+            Matching node names, at most :data:`_MAX_GATE_ENTITY_NAMES`.
+        """
+        if self.kg_retriever is None:
+            return []
+        terms = _proper_noun_terms(question)
+        if not terms:
+            return []
+        try:
+            nodes = self.kg_retriever.kg_store.fulltext_search_nodes(
+                terms, limit=_MAX_GATE_ENTITY_NAMES * 4
+            )
+        except Exception as exc:  # noqa: BLE001 - a gate hint is never worth a failure
+            logger.warning("Domain-gate entity lookup failed (%s); continuing", exc)
+            return []
+        if not nodes:
+            return []
+
+        lowered_terms = [term.lower() for term in terms]
+        names: list[str] = []
+        seen: set[str] = set()
+        for node in nodes:
+            name = str(node.get("text") or "").strip()
+            key = name.lower()
+            if not name or key in seen:
+                continue
+            if not any(_term_matches(term, key) for term in lowered_terms):
+                continue
+            seen.add(key)
+            names.append(name)
+            if len(names) >= _MAX_GATE_ENTITY_NAMES:
+                break
+        return names
 
     def _refuse_out_of_scope(self, state: RAGState) -> dict:
         """Terminal state for a rejected question.

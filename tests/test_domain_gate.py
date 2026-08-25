@@ -17,7 +17,7 @@ The scope wording itself is measured, not asserted here — see
 
 from __future__ import annotations
 
-from graphrag.agent.core import KGRAGAgent
+from graphrag.agent.core import KGRAGAgent, _proper_noun_terms
 from graphrag.config import AgentConfig
 from graphrag.llm.prompts import PromptLibrary
 
@@ -29,9 +29,11 @@ class _StubLLM:
         self.verdict = verdict
         self.explode = explode
         self.seen: list[str] = []
+        self.seen_entities: list[list[str]] = []
 
-    def classify_in_domain(self, question: str, config) -> bool:
+    def classify_in_domain(self, question: str, config, known_entities=()) -> bool:
         self.seen.append(question)
+        self.seen_entities.append(list(known_entities))
         if self.explode:
             raise RuntimeError("gate backend down")
         return self.verdict
@@ -40,9 +42,28 @@ class _StubLLM:
         pass
 
 
-def _agent(llm: _StubLLM | None, **config_kwargs) -> KGRAGAgent:
+class _StubKGStore:
+    """Answers the gate's name lookup with a fixed node list."""
+
+    def __init__(self, names: list[str] | None = None, unavailable: bool = False) -> None:
+        self.names = names or []
+        self.unavailable = unavailable
+        self.searched: list[list[str]] = []
+
+    def fulltext_search_nodes(self, terms, labels=None, limit=None, boosts=None):
+        self.searched.append(list(terms))
+        if self.unavailable:
+            return None
+        return [{"text": name} for name in self.names]
+
+
+class _StubRetriever:
+    def __init__(self, kg_store: _StubKGStore) -> None:
+        self.kg_store = kg_store
+
+def _agent(llm: _StubLLM | None, retriever=None, **config_kwargs) -> KGRAGAgent:
     config = AgentConfig(llm_warmup=False, **config_kwargs)
-    return KGRAGAgent(config=config, kg_retriever=None, llm=llm)
+    return KGRAGAgent(config=config, kg_retriever=retriever, llm=llm)
 
 
 def test_gate_refuses_out_of_domain_question_without_generating():
@@ -202,3 +223,111 @@ def test_closing_prompt_line_matches_the_grounding_rule():
 
     marked = str(PromptLibrary.answer_prompt(AgentConfig(allow_parametric_fallback=True)))
     assert "not in the retrieved evidence" in marked
+
+
+# ---------------------------------------------------------------- #
+# names the model cannot know
+# ---------------------------------------------------------------- #
+
+
+def test_capitalised_tokens_are_candidates_and_question_words_are_not():
+    """"Chi è Barilla?" must look up Barilla, not "Chi"."""
+    assert _proper_noun_terms("Chi è Barilla?") == ["Barilla"]
+    assert _proper_noun_terms("Che cos'è SeED?") == ["SeED"]
+    assert _proper_noun_terms("What is SEeD?") == ["SEeD"]
+    # Nothing capitalised beyond the opening word: no lookup worth making.
+    assert _proper_noun_terms("Quante calorie ha una mela?") == []
+
+
+def test_names_the_graph_holds_reach_the_classifier():
+    llm = _StubLLM(verdict=True)
+    store = _StubKGStore(["SEeD", "SEeD project"])
+    agent = _agent(llm, retriever=_StubRetriever(store), enable_domain_gate=True)
+
+    agent._scope_gate({"question": "Che cos'è SeED?"})
+
+    assert store.searched == [["SeED"]]
+    assert llm.seen_entities == [["SEeD", "SEeD project"]]
+
+
+def test_a_name_that_only_looks_like_a_match_is_dropped():
+    """The full-text index tokenises, so it returns more than it was asked.
+
+    "Potatoes, Curd, and Linseed Oil" comes back for SEeD because "Linseed"
+    stems to it. Telling the gate the collection contains that is worse than
+    telling it nothing.
+    """
+    llm = _StubLLM(verdict=True)
+    store = _StubKGStore(["Potatoes, Curd, and Linseed Oil", "SEeD project"])
+    agent = _agent(llm, retriever=_StubRetriever(store), enable_domain_gate=True)
+
+    agent._scope_gate({"question": "Che cos'è SeED?"})
+
+    assert llm.seen_entities == [["SEeD project"]]
+
+
+def test_the_lookup_never_decides_the_verdict():
+    """A node named Torino does not make a restaurant question in domain.
+
+    The graph says which names exist; the model says whether the question is
+    one this collection answers. Collapsing the two is the failure mode this
+    whole path has to avoid.
+    """
+    llm = _StubLLM(verdict=False)
+    store = _StubKGStore(["Torino", "Politecnico di Torino"])
+    agent = _agent(llm, retriever=_StubRetriever(store), enable_domain_gate=True)
+
+    state = agent._scope_gate({"question": "Consigliami un ristorante a Torino"})
+
+    assert llm.seen_entities == [["Torino", "Politecnico di Torino"]]
+    assert state["in_domain"] is False
+
+
+def test_an_unavailable_index_leaves_the_prompt_as_validated():
+    """`fulltext_search_nodes` returns None while the index is disabled."""
+    llm = _StubLLM(verdict=True)
+    agent = _agent(
+        llm,
+        retriever=_StubRetriever(_StubKGStore(unavailable=True)),
+        enable_domain_gate=True,
+    )
+
+    agent._scope_gate({"question": "Che cos'è SeED?"})
+
+    assert llm.seen_entities == [[]]
+
+
+def test_a_failed_lookup_does_not_fail_the_gate():
+    class _Exploding(_StubKGStore):
+        def fulltext_search_nodes(self, *args, **kwargs):
+            raise RuntimeError("neo4j unreachable")
+
+    llm = _StubLLM(verdict=True)
+    agent = _agent(llm, retriever=_StubRetriever(_Exploding()), enable_domain_gate=True)
+
+    assert agent._scope_gate({"question": "Che cos'è SeED?"})["in_domain"] is True
+    assert llm.seen_entities == [[]]
+
+
+def test_without_a_retriever_the_gate_still_runs():
+    llm = _StubLLM(verdict=True)
+    agent = _agent(llm, enable_domain_gate=True)
+
+    agent._scope_gate({"question": "Che cos'è SeED?"})
+
+    assert llm.seen_entities == [[]]
+
+
+def test_the_prompt_is_byte_identical_when_no_name_matched():
+    """The validated wording must survive untouched on the no-match path."""
+    plain = str(PromptLibrary.domain_gate_prompt())
+    assert str(PromptLibrary.domain_gate_prompt(known_entities=[])) == plain
+    assert str(PromptLibrary.domain_gate_prompt(known_entities=["  "])) == plain
+    assert str(PromptLibrary.domain_gate_prompt(known_entities=["SEeD"])) != plain
+
+
+def test_listed_names_are_offered_as_evidence_not_as_a_verdict():
+    rendered = str(PromptLibrary.domain_gate_prompt(known_entities=["SEeD", "SEeD"]))
+
+    assert rendered.count("SEeD") == 1, "duplicates must collapse"
+    assert "judge the question itself" in rendered

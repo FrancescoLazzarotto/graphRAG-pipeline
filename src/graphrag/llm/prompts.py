@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from langchain_core.prompts import ChatPromptTemplate
 
 from graphrag.config import AgentConfig, OUTPUT_COMPLEXITY, OUTPUT_TONE
@@ -446,12 +448,17 @@ class PromptLibrary:
     )
 
     @staticmethod
-    def domain_gate_prompt(scope: str = "") -> ChatPromptTemplate:
+    def domain_gate_prompt(
+        scope: str = "", known_entities: Sequence[str] = ()
+    ) -> ChatPromptTemplate:
         """Single-token in/out classification of a question against the corpus.
 
         Args:
             scope: What the collection covers. Empty uses
                 :data:`DEFAULT_DOMAIN_SCOPE`.
+            known_entities: Names the graph actually holds that this question
+                mentions. Empty leaves the prompt byte-identical to the
+                validated wording.
 
         Returns:
             A prompt whose completion is ``IN`` or ``OUT``.
@@ -481,6 +488,23 @@ class PromptLibrary:
             "for: the retrieval step decides that, not you. Answer with the "
             "single word only."
         )
+        # Names are the one thing the model cannot judge from world knowledge:
+        # a project acronym it has never seen looks like no domain at all.
+        # When the graph itself reports that it holds a node by that name, say
+        # so — and say only that. The verdict stays with the model, because a
+        # node named "Torino" does not turn "consigliami un ristorante a
+        # Torino" into a question this collection answers.
+        names = [str(name).strip() for name in known_entities if str(name).strip()]
+        if names:
+            listed = "; ".join(dict.fromkeys(names))
+            system_message += (
+                "\n\nThe collection is known to contain entries named: "
+                f"{listed}. These are real names from this collection, so a "
+                "question asking what one of them is, or what it does, is IN "
+                "even if the name means nothing to you. This tells you the "
+                "name exists here, nothing more: judge the question itself as "
+                "above."
+            )
         return ChatPromptTemplate.from_messages(
             [("system", system_message), ("human", "{question}")]
         )

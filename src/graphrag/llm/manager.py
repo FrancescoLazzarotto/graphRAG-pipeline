@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -392,7 +393,9 @@ class LLMManager:
         )
         return ChatHuggingFace(llm=HuggingFacePipeline(pipeline=generation))
 
-    def classify_in_domain(self, question: str, config: Any) -> bool:
+    def classify_in_domain(
+        self, question: str, config: Any, known_entities: Sequence[str] = ()
+    ) -> bool:
         """Whether the question belongs to the corpus domain.
 
         One classification call before retrieval, answering a single word.
@@ -405,12 +408,17 @@ class LLMManager:
         Args:
             question: The question as typed.
             config: The agent config, read for ``domain_scope``.
+            known_entities: Names the graph holds that this question mentions,
+                so the model is not asked to recognise an acronym it has never
+                seen. Empty leaves the prompt exactly as validated.
 
         Returns:
             ``True`` when in domain, and on any failure — a broken gate must not
             silence a working demo.
         """
-        prompt = PromptLibrary.domain_gate_prompt(getattr(config, "domain_scope", ""))
+        prompt = PromptLibrary.domain_gate_prompt(
+            getattr(config, "domain_scope", ""), known_entities
+        )
         try:
             model = self.load_llm()
             output = self._invoke_with_retry(
