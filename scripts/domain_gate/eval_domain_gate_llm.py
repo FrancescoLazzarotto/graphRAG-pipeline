@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 import time
 import urllib.request
 from pathlib import Path
@@ -33,6 +34,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts" / "domain_gate"))
 
 from calibrate_domain_gate import IT_IN_DOMAIN, OUT_OF_DOMAIN, load_gold_questions  # noqa: E402
+from graphrag.llm.prompts import PromptLibrary  # noqa: E402
 
 VLLM_URL = "http://localhost:8000/v1/chat/completions"
 
@@ -40,40 +42,36 @@ VLLM_URL = "http://localhost:8000/v1/chat/completions"
 # to cover what the corpus actually holds (circular economy, food systems,
 # agri-food by-products, sustainability policy, territorial projects) without
 # turning into "anything to do with food", which would let a recipe through.
-GATE_SYSTEM = (
-    "You classify whether a question can be answered from a document collection "
-    "about the circular economy of food. The collection covers: circular economy "
-    "principles and frameworks applied to food, food systems and supply chains, "
-    "agri-food by-products and residues and their valorisation — including their "
-    "chemical composition and their pharmaceutical, nutraceutical, cosmetic, "
-    "energy and material uses — food waste, food and beverage packaging and its "
-    "materials, sustainability indicators and policy, and territorial or regional "
-    "food projects.\n\n"
-    "Answer with exactly one word:\n"
-    "IN — the question is about that domain\n"
-    "OUT — the question is about something else (programming, mathematics, "
-    "geography, entertainment, general knowledge, or any other field)\n\n"
-    "A question is IN whenever its subject is a food, a crop, a food-industry "
-    "residue or by-product, or a food supply chain — whatever is being asked "
-    "about it. Asking what compounds rice bran contains, or what a food package "
-    "is made of, is a question about the domain, not about pharmacology or "
-    "materials science.\n\n"
-    "A question is also IN when it asks about the theoretical vocabulary of the "
-    "Circular Economy for Food framework itself, even when it never mentions "
-    "food: the three C's (Capital, Cyclicality, Co-evolution), metabolisation "
-    "and its implementation cycles, extension, cascading, ecodesign, industrial "
-    "symbiosis, and the relations between these concepts.\n\n"
-    "Answer IN whenever the question plausibly belongs to the domain, even if "
-    "you doubt the collection holds the specific detail asked for: the retrieval "
-    "step decides that, not you. Answer with the single word only."
-)
+#
+# Read from PromptLibrary, never copied. This file used to hold its own copy of
+# the wording and the two drifted: the copy opened "about the circular economy
+# of food. The collection covers:" where the shipped prompt says "about the
+# following domain:". One clause, and it moved two of the twelve held-out
+# out-of-domain questions — "A che temperatura si cuoce il petto di pollo?" and
+# "Quanto tempo si conserva il latte aperto in frigorifero?" — from OUT under
+# the copy to IN under what actually shipped. Measured 2026-08-25 on
+# Qwen2.5-32B-Instruct-AWQ, 74 questions, 2 disagreements, both false accepts
+# the suite could not see. A suite that scores a prompt nobody runs is not a
+# suite.
 
 
-def classify(question: str, model_id: str) -> tuple[str, float]:
+def gate_system(known_entities: Sequence[str] = ()) -> str:
+    """The shipped domain-gate system message, optionally naming graph entities."""
+    return PromptLibrary.domain_gate_prompt(
+        known_entities=known_entities
+    ).messages[0].prompt.template
+
+
+GATE_SYSTEM = gate_system()
+
+
+def classify(
+    question: str, model_id: str, known_entities: Sequence[str] = ()
+) -> tuple[str, float]:
     payload = {
         "model": model_id,
         "messages": [
-            {"role": "system", "content": GATE_SYSTEM},
+            {"role": "system", "content": gate_system(known_entities)},
             {"role": "user", "content": question},
         ],
         "temperature": 0,
