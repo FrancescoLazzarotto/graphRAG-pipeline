@@ -427,3 +427,44 @@ def test_a_bare_modal_on_a_self_contained_question_is_not_a_follow_up():
     assert is_follow_up(
         "puoi elencare le strategie della Regione Piemonte?", has_context=True
     ) is False
+
+
+# --------------------------------------------------------------------------- #
+# the rewrite guard, shared by both rewrite paths
+# --------------------------------------------------------------------------- #
+
+
+def test_a_rewrite_that_explains_itself_is_discarded():
+    """Measured 2026-08-25: Gemma-4-31B answered the rewrite prompt with an essay.
+
+    Three numbered options, a "Key Improvements Made" section, 1500 characters.
+    Passed to the retriever whole it buried "3C" under marketing vocabulary the
+    corpus does not contain, and the demo reported the framework as absent.
+    """
+    from graphrag.agent.core import _plausible_rewrite
+
+    essay = (
+        'Depending on the context of your knowledge base, the term "3C" can refer '
+        "to different frameworks.\n\n"
+        "### Option 1: Marketing & Strategy (Kenichi Ohmae)\n"
+        "> **Rewritten:** Cosa sono le 3C di Kenichi Ohmae?\n\n"
+        "### Key Improvements Made:\n"
+        "*   **Disambiguation:** \"3C\" is an ambiguous term.\n"
+    )
+    assert _plausible_rewrite(essay, "Cosa sono le 3C?") == "Cosa sono le 3C?"
+
+
+def test_a_one_line_rewrite_survives():
+    from graphrag.agent.core import _plausible_rewrite
+
+    reply = "Rewritten question: Cosa sono le 3C della Circular Economy for Food?"
+    assert (
+        _plausible_rewrite(reply, "Cosa sono le 3C?")
+        == "Cosa sono le 3C della Circular Economy for Food?"
+    )
+
+
+def test_an_empty_rewrite_keeps_the_question():
+    from graphrag.agent.core import _plausible_rewrite
+
+    assert _plausible_rewrite("   \n\n  ", "Cosa sono le 3C?") == "Cosa sono le 3C?"

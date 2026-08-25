@@ -359,9 +359,21 @@ class PromptLibrary:
         if config.rewrite_prompt:
             return ChatPromptTemplate.from_template(config.rewrite_prompt)
         return ChatPromptTemplate.from_template(
-            "Rewrite this question to improve retrieval over the target knowledge base. "
-            "Add relevant synonyms or domain terms.\n\n"
-            "Original: {question}\nRewritten:"
+            "You rewrite a question so that it retrieves better over a knowledge "
+            "base, without changing what it asks.\n\n"
+            "Original: {question}\n\n"
+            "Rules:\n"
+            "- Keep the user's intent and the user's language.\n"
+            "- Never guess what an acronym or a shorthand stands for. Asked about "
+            "the 3C, both served models supplied an expansion from marketing and "
+            "sent retrieval to documents the question was not about; the letters "
+            "alone retrieve the right passage, an invented expansion does not.\n"
+            "- Add a synonym or a domain term only when it certainly belongs to "
+            "the question's subject.\n"
+            "- Do not add facts, do not answer, and do not explain your choices.\n"
+            "- If you cannot improve it, repeat the question unchanged.\n"
+            "- Reply with the rewritten question only, on a single line.\n\n"
+            "Rewritten question:"
         )
 
     @staticmethod

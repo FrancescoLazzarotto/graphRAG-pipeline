@@ -94,6 +94,68 @@ _PROPER_NOUN_RE = re.compile(r"\b\w*[^\W\d_a-zà-öø-ÿ]\w*\b", re.UNICODE)
 # Shorter than this an "acronym" is noise ("UE" aside, two letters match half
 # the graph once the full-text index tokenises them).
 _MIN_PROPER_NOUN_LEN = 3
+
+
+def _plausible_rewrite(raw: str, question: str) -> str:
+    """Take the rewritten query out of a model's reply, or give up on it.
+
+    Both rewrite paths ask for one line and get whatever the served model feels
+    like producing. Measured on "Cosa sono le 3C?" (2026-08-25): Qwen2.5-32B
+    answered with the query plus a parenthetical guess, Gemma-4-31B answered
+    with 1500 characters of markdown offering three numbered options and a
+    "Key Improvements Made" section. Fed to the retriever whole, that blob
+    buried the question under the vocabulary of whichever domain the model had
+    guessed, and the demo reported the framework as absent from the corpus.
+
+    Length alone does not separate the two: the first line of that essay was a
+    plausible 97 characters. What separates them is shape. A rewrite is one
+    line, because that is what both prompts ask for; a reply that runs to
+    several is a model explaining the rewrite instead of producing one, and the
+    original question retrieves better than an explanation of how it might be
+    rewritten.
+
+    Args:
+        raw: The model's reply, as text.
+        question: The question that was sent for rewriting.
+
+    Returns:
+        The rewritten question, or `question` when the reply is not usable.
+    """
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+
+    # One line is the contract; a label on its own line ahead of the rewrite is
+    # the only variation worth tolerating.
+    if len(lines) > 2:
+        logger.warning(
+            "Discarding an implausible rewrite (%d lines); keeping the question.",
+            len(lines),
+        )
+        return question
+
+    candidate = ""
+    for line in lines:
+        stripped = line.strip("\"'")
+        for label in ("Rewritten question:", "Rewritten:"):
+            stripped = stripped.removeprefix(label)
+        stripped = stripped.lstrip("#>*-").strip().strip("\"'")
+        if stripped:
+            candidate = stripped
+            break
+
+    # A trailing colon means the line introduced something rather than asking it.
+    if (
+        not candidate
+        or candidate.endswith(":")
+        or len(candidate) > max(400, len(question) * 4)
+    ):
+        logger.warning(
+            "Discarding an implausible rewrite (%d chars); keeping the question.",
+            len(candidate),
+        )
+        return question
+    return candidate
+
+
 # Interrogatives open a question and are capitalised there, but they are not in
 # `_STOPWORDS` because `_grade` needs that list for a different job. Left in,
 # "Chi è Barilla?" offered the gate "Chi-squared tests" and "Tappo a chi?"
@@ -395,9 +457,12 @@ class KGRAGAgent:
 
         model = self.llm.load_llm()
         output = model.invoke(rendered)
-        rewritten = str(
-            output.content if hasattr(output, "content") else output
-        ).strip()
+        raw = str(output.content if hasattr(output, "content") else output)
+        # Until 2026-08-25 this path trusted the reply whole, while the
+        # follow-up rewrite next door already sanitised its own. A model that
+        # explains its rewrite instead of producing one then went straight to
+        # the retriever.
+        rewritten = _plausible_rewrite(raw, question)
         rewrite_count = state.get("rewrite_count", 0) + 1
         # Generation is deterministic (temperature 0 / do_sample=False), so a
         # rewrite equal to the query already tried can never change retrieval:
@@ -1628,20 +1693,7 @@ class KGRAGAgent:
             return question
 
         raw = str(output.content if hasattr(output, "content") else output)
-        rewritten = ""
-        for line in raw.splitlines():
-            candidate = line.strip().strip("\"'").removeprefix("Rewritten question:")
-            candidate = candidate.strip().strip("\"'")
-            if candidate:
-                rewritten = candidate
-                break
-
-        # A rewrite that ran long stopped rewriting and started answering.
-        if not rewritten or len(rewritten) > max(400, len(question) * 4):
-            logger.warning(
-                "Discarding an implausible follow-up rewrite (%d chars).", len(rewritten)
-            )
-            return question
+        rewritten = _plausible_rewrite(raw, question)
 
         if rewritten != question:
             logger.info("Follow-up rewritten for retrieval: %r -> %r", question, rewritten)
