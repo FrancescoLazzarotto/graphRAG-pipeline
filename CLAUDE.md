@@ -198,7 +198,7 @@ python scripts/kg/kg_vector_index.py    # :NodeVec carriers + node_embedding vec
 
 LangGraph state machine over `RAGState` (TypedDict). Nodes, in graph order:
 
-1. **scope** — optional out-of-domain gate (one LLM call); follow-ups and questions of ≤3 words are exempt
+1. **scope** — optional out-of-domain gate (one indexed name lookup + one LLM call); follow-ups and questions of ≤3 words are exempt. The lookup tells the classifier which of the question's proper nouns the graph actually holds, because a model cannot recognise a project acronym it has never seen; the verdict stays with the model
 2. **refuse** — terminal state for a rejected question; the only path to END without generating
 3. **decompose** — optional; breaks the question into sub-questions; disabled by default
 4. **route** — optional adaptive routing (`TEXT`/`KG`/`HYBRID`/`MULTIHOP`); disabled by default, defaults to `HYBRID`
@@ -342,8 +342,11 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
 - Adding a generic phrase to `_REFUSAL_MARKERS` or `_INSUFFICIENT_MARKERS`
   (`src/graphrag/llm/refusal.py`) — they are substring-matched over the whole answer
 - Returning a new key from an agent node without declaring it in `RAGState`
-- Changing `PromptLibrary.DEFAULT_DOMAIN_SCOPE` or the domain-gate wording without rerunning
-  `scripts/domain_gate/eval_domain_gate_llm.py` and `scripts/domain_gate/eval_domain_gate_heldout.py`
+- Changing `PromptLibrary.DEFAULT_DOMAIN_SCOPE` or the domain-gate wording without rerunning all three
+  suites: `scripts/domain_gate/eval_domain_gate_llm.py`, `eval_domain_gate_heldout.py` and
+  `eval_domain_gate_entities.py` (the last one needs the graph as well as the model)
+- Copying a prompt out of `PromptLibrary` into a script that measures it — the eval suite did,
+  the two drifted, and it scored a prompt nobody ran
 
 ## Validation after edits
 
