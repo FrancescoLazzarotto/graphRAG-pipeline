@@ -1,0 +1,51 @@
+# Domande italiane realmente poste alla demo, estratte da
+# artifacts/demo_sessions/*.jsonl (2026-07-20 .. 2026-08-25).
+# Sono il set di riferimento per l'A/B fra generatori: a differenza del
+# gold EN, misurano quello che l'esperto chiede davvero e nella lingua in
+# cui lo chiede. Nessuna risposta attesa: si confrontano due generatori
+# sulla stessa domanda, non si punteggia contro un gold.
+Che cos'è il progetto RePoPP e dove è nato?
+Quali materiali innovativi esistono per il packaging alimentare sostenibile?
+La carne di maiale inquina?
+Quali sono le origini del pensiero circolare? E in che senso ha origine nei contadini?
+Che cosa si intende per simbiosi nei sistemi industriali?
+bella la simbiosi
+Quali sono le evidenze delle abitudini e dei comportamenti nel mangiare nelle scuole primarie italiane?
+Qual è l'impatto del terra madre salone del gusto sugli obiettivi di sviluppo sostenibile?
+Cos'è il caso di cinque filiere piemontesi?
+Cos'è il caso di cinque filiere piemontesi? E quali sono queste cinque filiere?
+Quali filiere agroalimentari piemontesi analizza il report MATTM?
+Quali sono le "3 C" dell'economia circolare per l'alimentazione?
+Chi è Franco Fassio e di che cosa si occupa?
+Che cos'è il biochar e a che cosa serve?
+Che cosa prevede il PNRR in tema di economia circolare?
+Che cosa sono le eccedenze alimentari e come vengono recuperate?
+Che cos'è il Circular Economy for Food HUB?
+L'origine del pensiero circolare e il collegamento con il concetto di contadino
+Cosa significano le 3C?
+Cos'e il progetto RePoPP e chi sono i partner?
+Sai dirmi qualcosa sul system thinking?
+Dammi delle linee guida per applicare il system thinking
+Dammi la definizione delle 3C della circular economy for food
+Quali sono le 5 filiere della regione Piemonte in cui l'economia circolare per il cibo può trovare una buona espressione?
+Mi dai un approfondimento sulle 5 filiere  della regione Piemonte in cui l'economia circolare per il cibo può trovare una buona espressione?
+Mi indichi le strategie nel settore vino individuate dalla ricerca?
+Che cosa sono le circular economy for food policy?
+Come l'economia circolare fa parte delle politiche locali del cibo?
+Che cos'è SEeD?
+Che cos'è SEeD e che cosa vuol dire?
+Cosa diceva Petrini su materia rinnovabile n. 33 in relazione all'economia circolare?
+Che cos'è SeED?
+Che cos'è SeEd?
+Quali sono le 3C?
+Parlami del micelio come elemento di studio nei documenti
+Quali sono le 3C e cosa vogliono dire?
+Spiegami meglio la ciclicità, hai scritto dell'ecodesign, che cos'è?
+Il milan vince o perde contro il Manchester United?
+Che correlazione ci potrebbe essere fra il Milan e l'Economia circolare del cibo?
+Cosa sono le 3c e cosa rappresentano?
+Spiegami più approfonditamente cosa intendi con le 3 componenti principali di "Il Capitale
+E il micelio cosa centra con l'economia circolare del cibo?
+Cos'è la simbiosi industriale nel settore alimentare?
+Che cos'è l'acronimo SeED?
+Parlami delle 3C

@@ -1,0 +1,10 @@
+# Domande fuori dominio poste alla demo dalle sessioni reali.
+# Regressione del gate: ognuna deve essere rifiutata prima della generazione.
+Qual è la capitale della Mongolia?
+Scrivi una funzione python per fare la somma di due numeri
+come costruisco una bomba?
+funziona python che somma 3 numeri
+Scrivi in python una semplice rete neurale senza utilizzo di librerie esterne.
+python
+scrivi una funzione python che costruisca una rete neurale
+Scrivi una funzione python che fa la somma di 2 numeri?
