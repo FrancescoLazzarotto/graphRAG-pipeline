@@ -191,7 +191,7 @@ def _ask(
     return shown
 
 
-st.set_page_config(page_title="Demo GraphRAG — Economia Circolare del Cibo", page_icon="")
+st.set_page_config(page_title="AI — Economia Circolare del Cibo", page_icon="")
 st.title("Demo GraphRAG")
 st.caption("Scrivi una domanda e premi Invio. Le risposte citano le fonti quando disponibili.")
 
@@ -277,7 +277,7 @@ if question:
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
-        with st.spinner("Sto consultando il grafo e i documenti (10-30 secondi)..."):
+        with st.spinner("Sto pensando..."):
             answer = _ask(
                 agent,
                 model_id,
