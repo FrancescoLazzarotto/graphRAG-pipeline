@@ -74,7 +74,33 @@ _QUESTION_STOPWORDS_EN = {
     "some", "all", "such", "same", "other", "another", "more", "most",
     "two", "three", "four", "say", "says", "said", "according", "following",
 }
-_QUESTION_STOPWORDS = _QUESTION_STOPWORDS_IT | _QUESTION_STOPWORDS_EN
+# Imperative request verbs. These are NOT function words, so they sit apart from
+# the two sets above rather than diluting what that comment promises: they are
+# content words that happen to never name anything, because they address the
+# system instead of the corpus.
+#
+# Left out, `_SINGLE_TOKEN_ENTITY_RE` picks them up as proper nouns -- they open
+# the question, so they are capitalised -- and retrieval anchors on the verb.
+# Measured 2026-08-26 over the 53 questions of the demo fixtures: "Parlami delle
+# 3C" searched for `Parlami`, and three more questions did the same with
+# `Spiegami` and `Dammi`. The subject of the question reached retrieval in
+# neither case.
+#
+# Safe in all five places `_QUESTION_STOPWORDS` is read, including the phrase-edge
+# trimming that the comment above warns about: no node name in the graph contains
+# any of these (checked against every `n.name`, zero hits), so no entity candidate
+# can be corrupted by dropping them.
+#
+# Italian only, because that is what was measured. The English imperatives
+# ("explain", "list", "give") have the same shape, but no fixture question
+# triggers them and it was not verified that they are absent from node names --
+# "List" and "Give" are plausible inside a document title.
+_REQUEST_VERBS_IT = {
+    "parlami", "spiegami", "dimmi", "dammi", "elencami",
+    "descrivi", "fornisci", "indicami", "mostrami", "raccontami",
+}
+
+_QUESTION_STOPWORDS = _QUESTION_STOPWORDS_IT | _QUESTION_STOPWORDS_EN | _REQUEST_VERBS_IT
 
 _PLACEHOLDER_ENTITIES = {
     "entita a",

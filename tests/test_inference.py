@@ -20,7 +20,7 @@ import pytest
 from graphrag.agent.compression import ContextCompressor
 from graphrag.config import AgentConfig
 from graphrag.experiments.runner import ExperimentResult, ExperimentRunner, Question
-from graphrag.kg.retriever import KGRetriever
+from graphrag.kg.retriever import KGRetriever, _REQUEST_VERBS_IT
 from graphrag.llm.refusal import looks_like_refusal
 from graphrag.strategies import STRATEGY_PRESETS, apply_strategy
 
@@ -579,3 +579,31 @@ def test_italian_title_phrase_still_extracted():
         "Quali strategie propone la Regione Piemonte per gli scarti alimentari?"
     )
     assert "Regione Piemonte" in candidates
+
+
+def test_request_verb_does_not_become_the_entity():
+    """Measured 2026-08-26: "Parlami delle 3C" searched the graph for `Parlami`.
+
+    The verb opens the question, so it is capitalised, so
+    `_SINGLE_TOKEN_ENTITY_RE` reads it as a proper noun. Four of the 53 demo
+    fixture questions anchored retrieval on the verb rather than on what they
+    asked about.
+    """
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    for question in (
+        "Parlami del micelio come elemento di studio",
+        "Spiegami meglio la ciclicità",
+        "Dammi la definizione delle 3C",
+    ):
+        candidates = retriever._extract_entity_candidates(question)
+        assert not [c for c in candidates if c.lower() in _REQUEST_VERBS_IT], (
+            question,
+            candidates,
+        )
+
+
+def test_request_verbs_do_not_swallow_a_real_name():
+    """The verbs are dropped, the entity beside them is not."""
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates("Parlami di Terra Madre")
+    assert "Terra Madre" in candidates
