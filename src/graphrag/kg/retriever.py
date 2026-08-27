@@ -36,6 +36,25 @@ _NUMERIC_TERM_RE = re.compile(
     r"\b(?:(?:19|20)\d{2}|\d+(?:[.,]\d+)?\s*(?:%|kg|Mt|Gt|million|billion|tonnes|°C))(?!\w)",
     re.IGNORECASE,
 )
+# Numeric acronyms: "3C", "3R", "9R", "10R", "4Rs". The corpus names its
+# frameworks this way and none of the other extraction paths sees them --
+# `_SINGLE_TOKEN_ENTITY_RE` wants a leading capital, the `len(tok) >= 3` filters
+# in `_tokenize` and in keyword extraction drop two-character tokens, and
+# `_NUMERIC_TERM_RE` above covers only years and quantities with an explicit
+# unit. Left out, "Cosa sono le 3C?" produces no search term at all and falls
+# back to the raw question string, which matches no node in the full-text index.
+# Measured on the live graph 2026-08-27: 0 nodes / 0 triples before, 7 / 20
+# after. Of the 53 demo fixture questions the pattern fires on 6, all of them
+# about the 3C, with no other hit.
+#
+# The lookahead drops English ordinals -- "21st Century", "2nd report", "1st
+# Award" all appear in node names and are the only false-positive family the
+# corpus actually contains.
+_NUMERIC_ACRONYM_RE = re.compile(
+    r"\b\d{1,2}(?!(?:st|nd|rd|th)\b)[A-Za-z]{1,3}\b", re.IGNORECASE
+)
+_NUMERIC_ACRONYM_PARTS_RE = re.compile(r"^(\d+)([A-Za-z]+)$")
+
 # Cap on lowercase content keywords added per query: enough to cover the
 # topic terms of a long question without flooding the Lucene OR-query.
 _MAX_KEYWORD_TERMS = 8
@@ -839,6 +858,16 @@ class KGRetriever:
             value = term.strip()
             if value:
                 candidates.append(value)
+
+        # Both spellings are emitted because the corpus uses both and the index
+        # tokenises them differently: "3C (Capitale, Ciclicita e Coevoluzione)"
+        # against "3 C di CEFF". Measured, the spaced variant adds 4 nodes on
+        # "3C" and 2 on "10R", and adds nothing -- not noise -- on "3R" and "9R".
+        for term in _NUMERIC_ACRONYM_RE.findall(text):
+            candidates.append(term)
+            parts = _NUMERIC_ACRONYM_PARTS_RE.match(term)
+            if parts:
+                candidates.append(f"{parts.group(1)} {parts.group(2)}")
 
         return self._unique_values(candidates)
 

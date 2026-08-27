@@ -607,3 +607,62 @@ def test_request_verbs_do_not_swallow_a_real_name():
     retriever = KGRetriever(kg_store=None, config=AgentConfig())
     candidates = retriever._extract_entity_candidates("Parlami di Terra Madre")
     assert "Terra Madre" in candidates
+
+
+def test_numeric_acronym_becomes_a_search_term():
+    """Measured on the live graph 2026-08-27: "Cosa sono le 3C?" retrieved
+    0 nodes and 0 triples, because every token is either a stopword or shorter
+    than the three characters the keyword filter requires, so the query fell
+    back to the raw question string -- which matches no node. With the acronym
+    extracted the same question retrieves 7 nodes and 20 triples, among them
+    "3C (Capitale, Ciclicita e Coevoluzione)".
+    """
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    for question, expected in (
+        ("Cosa sono le 3C?", "3C"),
+        ("Parlami delle 3C", "3C"),
+        ("Cosa sono le 3c e cosa rappresentano?", "3c"),
+        ("Quali strategie coprono le 10R?", "10R"),
+    ):
+        candidates = retriever._extract_entity_candidates(question)
+        assert expected in candidates, (question, candidates)
+
+
+def test_numeric_acronym_is_searched_in_both_spellings():
+    """The corpus writes the framework both ways -- "3C (Capitale, ...)" and
+    "3 C di CEFF" -- and the full-text index tokenises the two differently.
+    Emitting only the compact form finds 3 of the 7 nodes.
+    """
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates("Quali sono le 3C?")
+    assert "3C" in candidates
+    assert "3 C" in candidates
+
+
+def test_english_ordinals_are_not_read_as_acronyms():
+    """"21st Century", "2nd report" and "1st Award" all occur inside node names.
+    They share the digit+letter shape and name nothing, so the pattern must not
+    anchor retrieval on them.
+    """
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    for question in (
+        "What does Doughnut Economics say about the 21st century?",
+        "Chi ha vinto il 1st Ideas4Change Award?",
+        "Cosa dice il 2nd report sui sottoprodotti del caffe?",
+    ):
+        candidates = retriever._extract_entity_candidates(question)
+        assert not [
+            c for c in candidates if c.lower().rstrip("s") in
+            {"21st", "1st", "2nd", "3rd", "11th", "12th"}
+        ], (question, candidates)
+
+
+def test_acronym_extraction_leaves_quantities_alone():
+    """`_NUMERIC_TERM_RE` already owns quantities with an explicit unit; the
+    acronym pattern must not turn "50 kg" into a second, different candidate.
+    """
+    retriever = KGRetriever(kg_store=None, config=AgentConfig())
+    candidates = retriever._extract_entity_candidates(
+        "Quante tonnes di scarto produce la filiera nel 2019?"
+    )
+    assert "2019" in candidates
