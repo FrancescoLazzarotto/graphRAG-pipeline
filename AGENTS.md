@@ -152,16 +152,17 @@ Both build their own `AgentConfig` inline; they do not read the CLI flags.
 ## Known repository details
 
 - `scripts/smoke/smoke_check.py` reads exported environment variables; it does not auto-load `.env`.
-- `graphrag-demo` may point to a stale interpreter if a user-local shim is on PATH; if that
-  happens, use `conda run -n graphllm python -m graphrag.cli`.
+- `graphrag-demo` is the installed console script; if it exits 126 the shim is from a stale
+  install, so re-run `pip install -e .`. `python -m graphrag.cli` never depends on the shim.
 - `import vllm` is broken inside `graphllm`; serve models from the `vllm-serve` virtualenv.
 - Retrieval needs APOC on the Neo4j instance (`apoc.map.removeKey` in every node projection).
 - `RAGState` is a LangGraph channel schema: a key returned by a node but not declared there is
   silently dropped from the final state.
-- `requirements*.txt` and `pyproject.toml` are missing `pymupdf4llm`, `gliner`, `openai`,
-  `pyyaml` and `requests`; the `graphllm` env has them, a clean install does not.
-- CI runs `python -m compileall src scripts` (not `kg_pipeline` / `evaluation`) plus the full
-  test suite on `requirements-cpu.txt`.
+- `pyproject.toml` carries the full runtime dependency set, so `pip install -e .` alone is a
+  working install; the requirements files exist for the pinned CPU/GPU cluster targets. Extras:
+  `demo`, `eval`, `gpu`, `dev`.
+- CI runs two jobs: `syntax` (`compileall` under Python 3.10, the declared floor) and `test`
+  (`pip install -e ".[dev]"` from `pyproject.toml` alone, then the full suite).
 - Real sample outputs exist under `artifacts/experiments/`, `exp_results*/` and
   `kg_pipeline/artifacts/`; use them when you need concrete examples of a schema.
 
@@ -175,7 +176,7 @@ After an edit, use the smallest check that can falsify the change:
 - Retrieval or metric changes: the unit tests, which are fast and cover the tricky parts
 
 ```bash
-pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q
+pytest -q     # 526 tests; paths come from pyproject.toml, so any cwd works
 python scripts/smoke/smoke_check.py
 python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
 python scripts/smoke/smoke_kg_retriever.py

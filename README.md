@@ -70,9 +70,9 @@ A complete command reference lives in **[COMMANDS.md](COMMANDS.md)**.
 Assumes a populated Neo4j instance and a vLLM server already running.
 
 ```bash
-# 1. environment
-conda create -n graphllm python=3.10 -y && conda activate graphllm
-pip install -r requirements.txt && pip install -e .
+# 1. environment (3.12 is the tested version; 3.10 is the declared floor)
+conda create -n graphllm python=3.12 -y && conda activate graphllm
+pip install -e .
 
 # 2. credentials
 cp .env.example .env && $EDITOR .env
@@ -121,15 +121,32 @@ Italian/English gap. Both are built by scripts, not by ingestion.
 
 ## Installation
 
-Recommended environment: Conda, named `graphllm`, Python 3.10+.
+Recommended environment: Conda, named `graphllm`. Python 3.12 is the version
+the project is tested on; `pyproject.toml` declares a 3.10 floor and CI checks
+that the sources still parse under it.
 
 ```bash
-conda create -n graphllm python=3.10 -y
+conda create -n graphllm python=3.12 -y
 conda activate graphllm
+pip install -e .
 ```
 
-Pick **one** requirements file for your target — the three form a hierarchy, not
-a sequence:
+That single command is enough for the CLI, the KG pipeline and the demos:
+`pyproject.toml` now carries every runtime dependency, including
+`langchain-openai` (the vLLM generation path) and `sacrebleu` (reference BLEU),
+which used to be reachable only through a requirements file.
+
+Optional extras, all installable as `pip install -e ".[<name>]"`:
+
+| Extra | Contents |
+|---|---|
+| `demo` | Streamlit, for the browser demo in `product/` |
+| `eval` | RAGAS, pandas, datasets, ROUGE, matplotlib — the heavier evaluation workflows |
+| `gpu` | `bitsandbytes`, `autoawq`, `vllm` — GPU nodes serving models locally |
+| `dev` | pytest and pytest-cov |
+
+The requirements files remain for the pinned targets, where a resolver needs to
+be told exactly which wheel to take:
 
 | File | Target | Notes |
 |---|---|---|
@@ -142,9 +159,8 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Every runtime import is now declared — `pymupdf4llm`, `gliner`, `openai`,
-`pyyaml`, `requests`, `faiss-cpu`, `sentence-transformers` and `sacrebleu` are in
-all three files and in `pyproject.toml`. No manual follow-up install is needed.
+Every runtime import is declared in `pyproject.toml` and in all three
+requirements files. No manual follow-up install is needed.
 
 Evaluation extras — RAGAS, ROUGE, plotting — are separate and optional:
 
@@ -686,10 +702,13 @@ flags, and they do not currently enable the vector channel.
 ## Testing
 
 ```bash
-pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 480 tests
+pytest -q     # 526 tests: 252 agent/retrieval, 31 KG pipeline, 243 evaluation
 ```
 
-31 of them live in `tests/test_audit_fixes.py` and each locks one finding from
+The paths come from `[tool.pytest.ini_options]` in `pyproject.toml`, so the bare
+command works from any working directory.
+
+34 of them live in `tests/test_audit_fixes.py` and each locks one finding from
 the [August 2026 audit](docs/code_audit_2026-08-15.md). Every one of them passed
 *before* its fix — which is why the suite gave no signal at all, and why they are
 worth keeping.
@@ -709,10 +728,17 @@ On Windows: `powershell -ExecutionPolicy Bypass -File scripts/cluster/preflight.
 
 ### CI
 
-GitHub Actions runs a **syntax check only** —
-`python -m compileall src scripts kg_pipeline evaluation` — on every push to
-`main`/`master` and on every pull request. The unit suite is not part of CI;
-run it locally before pushing.
+GitHub Actions runs two jobs on every push to `main`/`master` and on every pull
+request:
+
+| Job | What it proves |
+|---|---|
+| `syntax` | `compileall` under Python 3.10 — the floor declared in `pyproject.toml` still parses |
+| `test` | `pip install -e ".[dev]"` from `pyproject.toml` alone, then the full suite |
+
+The `test` job installs from `pyproject.toml` and never from a requirements
+file, so a dependency declared in only one of the two shows up as a CI failure
+rather than in a user's clean install.
 
 ---
 

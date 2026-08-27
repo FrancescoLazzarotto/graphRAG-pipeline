@@ -24,22 +24,21 @@ Many commands write artifacts that are later analyzed or included in paper-style
 ## Environment
 
 ```bash
-conda create -n graphllm python=3.10 -y
+conda create -n graphllm python=3.12 -y     # 3.12 is what is tested; pyproject declares a 3.10 floor
 conda activate graphllm
 
-# CPU
-pip install -r requirements-cpu.txt && pip install -e .
+# Everything: pyproject.toml carries the full runtime dependency set
+pip install -e .
 
-# GPU (CUDA 12.4)
-pip install -r requirements-gpu.txt && pip install -e .
+# Extras: demo (Streamlit) · eval (RAGAS, pandas, plots) · gpu (bitsandbytes, autoawq, vllm) · dev (pytest)
+pip install -e ".[demo,dev]"
+
+# Pinned cluster targets, where the resolver must be told the exact wheel
+pip install -r requirements-cpu.txt && pip install -e .      # CPU nodes
+pip install -r requirements-gpu.txt && pip install -e .      # GPU nodes, CUDA 12.4
 ```
 
 Always prefer the `graphllm` Conda environment. Use `conda run -n graphllm ...` for reproducible script invocation.
-
-> **Known packaging gap.** The requirements files and `pyproject.toml` do not list
-> `pymupdf4llm`, `gliner`, `openai`, `pyyaml` or `requests`, all of which are imported at
-> module import time by `kg_pipeline/` and `graphrag.embeddings`. The `graphllm` env has
-> them; a clean install does not. See `docs/code_audit_2026-08-15.md` §5.2.
 
 > `import vllm` is broken inside `graphllm`. Every (re)start of a served model must go
 > through the `vllm-serve` virtualenv — see the `scripts/serving/start_vllm*.sh` wrappers.
@@ -94,7 +93,7 @@ bash scripts/serving/stop_demo.sh                  # everything back down
 
 # Single question
 conda run -n graphllm python -m graphrag.cli --question "What is X?" --entity "Y"
-# graphrag-demo may point to a stale shim; use the above if exit code 126 occurs
+# graphrag-demo is equivalent; if it ever exits 126 the console script is stale, so `pip install -e .`
 
 # Build KG from documents
 conda run -n graphllm python -m kg_pipeline.main \
@@ -136,7 +135,8 @@ python scripts/smoke/run_pipeline_smoke_full.py
 ## Running tests
 
 ```bash
-pytest tests/ kg_pipeline/tests/ evaluation/tests/ -q     # 508 tests
+pytest -q     # 526 tests: 252 agent/retrieval, 31 KG pipeline, 243 evaluation
+# The paths come from [tool.pytest.ini_options] in pyproject.toml, so this works from any cwd
 
 # Single file / single test
 pytest evaluation/tests/test_metrics.py -v
@@ -360,7 +360,7 @@ unique before stage 4 resolution — use `CanonicalEntityRecord` after stage 4.
 
 | Issue | Workaround |
 |-------|-----------|
-| Exit code 126 on `graphrag-demo` | Use `conda run -n graphllm python -m graphrag.cli` |
+| Exit code 126 on `graphrag-demo` | The console script is from a stale install: re-run `pip install -e .` (fixed 2026-08-27). `python -m graphrag.cli` always works |
 | `import vllm` fails inside `graphllm` | Serve models from the `vllm-serve` virtualenv (`scripts/serving/start_vllm*.sh`) |
 | torch/torchvision version mismatch | Pin `torch==2.5.1+cu124` + `torchvision==0.20.1+cu124` |
 | Neo4j UnknownPropertyKey warnings | Use `properties(node)['key']` accessor in Cypher |
