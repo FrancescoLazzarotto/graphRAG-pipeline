@@ -15,7 +15,7 @@ vllm>=0.4,<1.0
 neo4j>=5.20,<6.0
 python-dotenv>=1.0,<2.0
 pymupdf>=1.24,<2.0
-psutil>=5.9,<7.0
+psutil>=5.9,<9.0
 faiss-cpu>=1.7,<2.0
 sentence-transformers>=3.0,<4.0
 # Required by kg_pipeline at import time — see requirements.txt (audit §5.2).
@@ -26,3 +26,6 @@ pyyaml>=6.0,<7.0
 requests>=2.31,<3.0
 bitsandbytes>=0.43,<0.47
 autoawq>=0.2
+
+# Keeps evalkit BLEU on the reference implementation instead of the local fallback.
+sacrebleu>=2.4,<3.0

@@ -1,3 +1,5 @@
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .config import (
     AgentConfig,
     KGConfig,
@@ -15,7 +17,17 @@ from .text_rag.manager import TextChunk, TextRAGManager
 from .text_rag.pipeline import RetrievedTextChunk, StandardTextRAGPipeline
 from .types import KGNode, KGTriple, ProvenanceRecord, RAGState, Triple
 
+# Read from the installed distribution metadata so the version has one source of
+# truth (pyproject.toml). The fallback covers running straight from a source
+# checkout that was never `pip install`ed — the tests and the cluster sbatch
+# scripts both do that.
+try:
+    __version__ = _pkg_version("graphrag-pipeline")
+except PackageNotFoundError:  # pragma: no cover - source checkout without install
+    __version__ = "0.0.0.dev0"
+
 __all__ = [
+    "__version__",
     "AgentConfig",
     "KGConfig",
     "OUTPUT_COMPLEXITY",
