@@ -417,7 +417,7 @@ Requires `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` to be set.
 Joins experiment results with gold-standard labels.
 
 ```bash
-PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
+graphrag-eval build-dataset \
   --input artifacts/experiments \
   --gold-file evaluation/gold/gold_questions_template.csv \
   --output artifacts/evaluation/eval_dataset.csv
@@ -434,7 +434,7 @@ PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
 ### Retrieval metrics — `evalkit.cli retrieval`
 
 ```bash
-PYTHONPATH=evaluation python -m evalkit.cli retrieval \
+graphrag-eval retrieval \
   --input artifacts/evaluation/eval_dataset.csv \
   --k 5 \
   --save-csv artifacts/evaluation/metrics.csv \
@@ -453,7 +453,7 @@ PYTHONPATH=evaluation python -m evalkit.cli retrieval \
 ### RAGAS evaluation (optional) — `evalkit.cli ragas`
 
 ```bash
-PYTHONPATH=evaluation python -m evalkit.cli ragas \
+graphrag-eval ragas \
   --input artifacts/evaluation/eval_dataset.csv \
   --save-summary-json artifacts/evaluation/ragas_summary.json \
   --save-row-csv artifacts/evaluation/ragas_rows.csv

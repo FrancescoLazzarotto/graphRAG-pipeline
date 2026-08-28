@@ -57,7 +57,7 @@ The repository covers the full path from a folder of PDFs to a scored table:
 | `graphrag-demo` — or `python -m graphrag.cli` | Single-question retrieval/generation and batch experiments; the full option surface |
 | `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
 | `python scripts/runners/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
-| `python -m evalkit.cli` — with `PYTHONPATH=evaluation` | Evaluation toolkit |
+| `graphrag-eval` — or `python -m evalkit.cli` | Evaluation toolkit |
 | `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
 | `streamlit run product/app.py` | Expert demo console |
 
@@ -636,19 +636,19 @@ comparisons through the `evalkit` toolkit.
 
 ```bash
 # 1. join run output with the gold set
-PYTHONPATH=evaluation python -m evalkit.cli build-dataset \
+graphrag-eval build-dataset \
   --input exp_results/<run_dir> \
   --gold-file evaluation/gold/gold_v3.json \
   --output artifacts/evaluation/eval_dataset.csv
 
 # 2. retrieval metrics
-PYTHONPATH=evaluation python -m evalkit.cli retrieval \
+graphrag-eval retrieval \
   --input artifacts/evaluation/eval_dataset.csv \
   --save-json artifacts/evaluation/retrieval_summary.json
 
 # 3. optional: LLM-as-a-Judge and RAGAS
-PYTHONPATH=evaluation python -m evalkit.cli judge --input artifacts/evaluation/eval_dataset.csv ...
-PYTHONPATH=evaluation python -m evalkit.cli ragas --input artifacts/evaluation/eval_dataset.csv ...
+graphrag-eval judge --input artifacts/evaluation/eval_dataset.csv ...
+graphrag-eval ragas --input artifacts/evaluation/eval_dataset.csv ...
 ```
 
 Subcommands: `build-dataset`, `retrieval`, `text`, `judge`, `judge-compare`,

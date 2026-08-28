@@ -120,7 +120,7 @@ Expected run outputs:
 
 ### 4) Evaluation
 
-`PYTHONPATH=evaluation python -m evalkit.cli <subcommand>` — `build-dataset`, `retrieval`,
+`graphrag-eval <subcommand>` — `build-dataset`, `retrieval`,
 `text`, `judge`, `judge-compare`, `ragas`, `kg`, `gold-triples`, `report-experiment`,
 `report-project`, `baseline-update`.
 

@@ -36,7 +36,7 @@ Optional but recommended columns:
 ## 2) Build joined evaluation dataset
 
 ```bash
-PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli build-dataset \
+conda run -n graphllm graphrag-eval build-dataset \
   --input artifacts/experiments/20260418_133106_retrieval_matrix_full_llm_qwen25_7b \
   --gold-file evaluation/gold/gold_questions_template.csv \
   --output artifacts/evaluation/qwen25_7b_eval_dataset.csv
@@ -47,7 +47,7 @@ This creates a row-level dataset ready for retrieval metrics and RAGAS.
 ## 3) Retrieval metrics
 
 ```bash
-PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli retrieval \
+conda run -n graphllm graphrag-eval retrieval \
   --input artifacts/evaluation/qwen25_7b_eval_dataset.csv \
   --save-csv artifacts/evaluation/qwen25_7b_retrieval_summary.csv \
   --save-json artifacts/evaluation/qwen25_7b_retrieval_summary.json
@@ -85,24 +85,24 @@ subscription as a batch judge (grey area in Anthropic's usage policy) and is
 
 ```bash
 # Pro subscription, both models, batched + resumable:
-conda run -n graphllm python -m evalkit.cli judge \
+conda run -n graphllm graphrag-eval judge \
   --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
   --backend claude_code --model haiku --batch-size 8 --resume \
   --out artifacts/evaluation/judge_haiku
-conda run -n graphllm python -m evalkit.cli judge \
+conda run -n graphllm graphrag-eval judge \
   --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
   --backend claude_code --model sonnet --batch-size 8 --resume \
   --out artifacts/evaluation/judge_sonnet
 
 # Judge-model agreement (robustness table for the paper):
-conda run -n graphllm python -m evalkit.cli judge-compare \
+conda run -n graphllm graphrag-eval judge-compare \
   --a artifacts/evaluation/judge_haiku --b artifacts/evaluation/judge_sonnet \
   --label-a haiku --label-b sonnet \
   --out artifacts/evaluation/judge_compare
 
 # Same numbers via API (needs ANTHROPIC_API_KEY), pinned + reproducible:
 conda run -n graphllm python -m pip install anthropic
-conda run -n graphllm python -m evalkit.cli judge \
+conda run -n graphllm graphrag-eval judge \
   --input artifacts/evaluation/eval_dataset_gold23q_v2.csv \
   --backend api --provider anthropic --model claude-sonnet-4-6 \
   --batch-size 8 --out artifacts/evaluation/judge_api
@@ -123,7 +123,7 @@ conda run -n graphllm python -m pip install -r evaluation/requirements.txt
 Run RAGAS with local judge model:
 
 ```bash
-PYTHONPATH=evaluation conda run -n graphllm python -m evalkit.cli ragas \
+conda run -n graphllm graphrag-eval ragas \
   --input artifacts/evaluation/qwen25_7b_eval_dataset.csv \
   --metrics faithfulness,answer_relevancy,answer_correctness,context_precision,context_recall \
   --judge-model Qwen/Qwen2.5-14B-Instruct \

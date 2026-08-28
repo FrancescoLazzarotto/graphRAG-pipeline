@@ -283,7 +283,7 @@ If you touch experiment code, confirm output names still match the analysis scri
 
 ### Evaluation (`evaluation/`)
 
-`evalkit` is the toolkit; run it as `PYTHONPATH=evaluation python -m evalkit.cli <subcommand>`.
+`evalkit` is the toolkit; run it as `graphrag-eval <subcommand>`.
 Subcommands: `build-dataset`, `retrieval`, `text`, `judge`, `judge-compare`, `ragas`, `kg`,
 `gold-triples`, `report-experiment`, `report-project`, `baseline-update`.
 
