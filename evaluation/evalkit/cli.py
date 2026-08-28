@@ -535,7 +535,7 @@ def cmd_baseline_update(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python -m evaluation.evalkit.cli",
+        prog="graphrag-eval",
         description="evalkit — evaluation toolkit for graphRAGPipelineExp1",
     )
     sub = parser.add_subparsers(dest="subcommand", required=True)

@@ -77,12 +77,28 @@ dev = [
 
 [project.scripts]
 graphrag-demo = "graphrag.cli:main"
+graphrag-eval = "evalkit.cli:main"
 
+# Two package roots: the engine under src/, the evaluation toolkit under
+# evaluation/. `packages` is listed explicitly rather than auto-discovered
+# because automatic discovery cannot span two roots — the cost is one line per
+# new subpackage, which is rarer than a release.
 [tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
+package-dir = {"" = "src", "evalkit" = "evaluation/evalkit"}
+packages = [
+    "graphrag",
+    "graphrag.agent",
+    "graphrag.experiments",
+    "graphrag.kg",
+    "graphrag.llm",
+    "graphrag.text_rag",
+    "evalkit",
+    "evalkit.io",
+    "evalkit.judge",
+    "evalkit.kg",
+    "evalkit.metrics",
+    "evalkit.report",
+]
 
 [tool.pytest.ini_options]
 # `kg_pipeline` is a top-level package in the repo root and `evalkit` lives under
