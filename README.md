@@ -57,7 +57,7 @@ The repository covers the full path from a folder of PDFs to a scored table:
 | `python scripts/runners/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
 | `graphrag-eval` — or `python -m evalkit.cli` | Evaluation toolkit |
 | `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
-| `streamlit run product/app.py` | Expert demo console |
+| `streamlit run product/app.py` | UI Demo console |
 
 ---
 
