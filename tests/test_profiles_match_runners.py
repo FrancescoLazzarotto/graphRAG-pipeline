@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from graphrag.cli import _build_arg_parser, _build_base_config
+from graphrag.cli import _build_arg_parser, _build_base_config, _parse_args
 from graphrag.profiles import build_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +79,9 @@ def _normalise(config) -> dict:
 @pytest.mark.parametrize("script", RUNNERS)
 def test_runner_flags_resolve_to_the_profile(script: str) -> None:
     """Every field the shell script produces matches THESIS_CAMPAIGN."""
-    args = _build_arg_parser().parse_args(_shell_cli_args(script))
+    # `_parse_args`, not `parse_args`: it resolves --profile too, so this test
+    # holds whether the script spells the configuration out or names it.
+    args = _parse_args(_build_arg_parser(), _shell_cli_args(script))
     from_shell = _normalise(_build_base_config(args))
     from_profile = _normalise(build_config("thesis_campaign"))
 
@@ -102,7 +104,7 @@ def test_runner_still_passes_a_recognised_flag_block(script: str) -> None:
     args = _shell_cli_args(script)
     assert args, f"{script}: no CLI arguments extracted"
     assert "--experiment" in args
-    _build_arg_parser().parse_args(args)
+    _parse_args(_build_arg_parser(), args)
 
 
 def test_abstention_arms_only_adds_documented_per_arm_flags() -> None:

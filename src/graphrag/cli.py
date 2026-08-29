@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
+import enum
 import json
 import logging
 import os
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from graphrag.experiments import ExperimentRunner, Question
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
+from graphrag.profiles import PROFILES
 from graphrag.strategies import apply_strategy
 from graphrag.text_rag.factory import (
     DEFAULT_CHUNK_OVERLAP,
@@ -36,6 +39,15 @@ logger = logging.getLogger("graphrag.cli")
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run GraphRAG demo pipeline")
+    parser.add_argument(
+        "--profile",
+        choices=sorted(PROFILES),
+        default=None,
+        help=(
+            "Start from a named configuration profile (graphrag.profiles). "
+            "Any flag given explicitly still wins over the profile."
+        ),
+    )
     parser.add_argument(
         "--question",
         default="Quali sono gli obiettivi della strategia Farm to Fork?",
@@ -334,6 +346,66 @@ def _build_llm_manager(args: argparse.Namespace, warmup: bool) -> LLMManager | N
         use_vllm=args.vllm,
         vllm_base_url=args.vllm_base_url,
     )
+
+
+# AgentConfig fields whose CLI flag carries a different name. The parser writes
+# `--max-context-tokens` into `max_context_tokens`, which `_build_base_config`
+# then assigns to `max_content_tokens` -- content, not context. Everything else
+# maps onto itself.
+_PROFILE_FIELD_TO_ARG = {"max_content_tokens": "max_context_tokens"}
+
+
+def _profile_defaults(
+    parser: argparse.ArgumentParser,
+    profile: str,
+    known_dests: set[str],
+) -> dict[str, object]:
+    """Translate a profile into parser defaults, keyed by argparse dest.
+
+    Raises through ``parser.error`` if the profile carries a field with no
+    corresponding flag: silently dropping it would hand the caller a
+    configuration that is not the profile they asked for.
+    """
+    defaults: dict[str, object] = {}
+    unreachable: list[str] = []
+    for field, value in PROFILES[profile].items():
+        dest = _PROFILE_FIELD_TO_ARG.get(field, field)
+        if dest not in known_dests:
+            unreachable.append(field)
+            continue
+        defaults[dest] = value.value if isinstance(value, enum.Enum) else value
+    if unreachable:
+        parser.error(
+            f"profile '{profile}' sets {', '.join(sorted(unreachable))}, which "
+            "the CLI has no flag for; use it through graphrag.profiles instead"
+        )
+    return defaults
+
+
+def _parse_args(
+    parser: argparse.ArgumentParser, argv: Sequence[str] | None = None
+) -> argparse.Namespace:
+    """Parse the command line, letting ``--profile`` supply the defaults.
+
+    Precedence is argparse's own. The profile is installed with
+    ``set_defaults`` and the same argv is parsed a second time, so a flag the
+    caller typed beats the profile without this function having to work out
+    which flags were typed -- a distinction argparse does not otherwise expose.
+
+    Args:
+        parser: The parser from :func:`_build_arg_parser`.
+        argv: Argument list; ``None`` reads ``sys.argv``.
+
+    Returns:
+        The parsed namespace. Without ``--profile`` it is exactly what a single
+        ``parse_args`` would have returned.
+    """
+    args = parser.parse_args(argv)
+    profile = getattr(args, "profile", None)
+    if not profile:
+        return args
+    parser.set_defaults(**_profile_defaults(parser, profile, set(vars(args))))
+    return parser.parse_args(argv)
 
 
 def _build_base_config(args: argparse.Namespace) -> AgentConfig:
@@ -909,7 +981,7 @@ def _run_experiments(
 
 def main() -> None:
     parser = _build_arg_parser()
-    args = parser.parse_args()
+    args = _parse_args(parser)
 
     # Load local .env if present while preserving variables already set by system/scheduler.
     load_dotenv(override=False)
