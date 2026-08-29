@@ -30,6 +30,7 @@ Start from the owning file for the behavior you want to change:
 - [src/graphrag/cli.py](src/graphrag/cli.py): public command-line interface and experiment orchestration
 - [src/graphrag/config.py](src/graphrag/config.py): `AgentConfig` / `KGConfig` — every tunable, each with the measurement that motivated its default
 - [src/graphrag/strategies.py](src/graphrag/strategies.py): the eight retrieval presets, single source of truth
+- [src/graphrag/profiles.py](src/graphrag/profiles.py): the named configurations that are actually run — `thesis_campaign`, `demo`, `research_baseline`
 - [src/graphrag/agent/core.py](src/graphrag/agent/core.py): the LangGraph state machine
 - [src/graphrag/agent/evidence.py](src/graphrag/agent/evidence.py): numbered evidence, citation gate, quote gate, reference lists
 - [src/graphrag/agent/memory.py](src/graphrag/agent/memory.py): intra-session conversational memory (demo only)
@@ -82,6 +83,10 @@ Important behavior from `src/graphrag/cli.py`:
   `--focused-answer`, `--complexity`, `--enforce-language`, `--legacy-insufficiency-wording`.
 - `--enable-decomposition-step` and `--enable-adaptive-routing-step` add extra LLM calls before
   retrieval; enable only when the experiment needs them.
+- `--profile` starts from a named configuration in `graphrag.profiles` instead of spelling it
+  out. A flag given explicitly still wins: the profile is installed with `set_defaults` and the
+  command line is parsed a second time, so precedence is argparse's own. A profile that sets a
+  field with no corresponding flag (`demo` does) is refused rather than half-applied.
 
 ### 2) KG pipeline
 
@@ -230,6 +235,13 @@ Each of these has cost this project a measurement or a run.
   two drifted, and it scored a prompt nobody ran
 - Editing `graphrag.config` or `graphrag.strategies` to change demo behaviour. Those are what the
   campaigns were measured with; demo settings live in `product/config.py`
+- Editing a profile in `graphrag.profiles`, or the flag block of a runner under
+  `scripts/runners/`, without running `tests/test_profiles.py` and
+  `tests/test_profiles_match_runners.py`. They pin `thesis_campaign` from both ends — against the
+  configuration a real campaign recorded, and against what the runners resolve to today — so a
+  change that would move a published number fails there and names the field
+- Adding a field to a profile without a matching CLI flag. `--profile` refuses such a profile
+  outright rather than applying it in part, so the failure is at startup, not in the results
 
 ## Validation habits
 
@@ -241,7 +253,7 @@ After an edit, use the smallest check that can falsify the change:
 - Retrieval or metric changes: the unit tests, which are fast and cover the tricky parts
 
 ```bash
-pytest -q     # 550 tests; paths come from pyproject.toml, so any cwd works
+pytest -q     # 560 tests; paths come from pyproject.toml, so any cwd works
 python scripts/smoke/smoke_check.py
 python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setup" --top-k 4
 python scripts/smoke/smoke_kg_retriever.py

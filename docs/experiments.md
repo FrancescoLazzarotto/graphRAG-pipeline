@@ -81,6 +81,14 @@ bash scripts/runners/run_italian_arm.sh
 VARIANT=v2_baseline bash scripts/runners/run_gold_variant.sh
 ```
 
+All three pass `--profile thesis_campaign` rather than spelling the configuration
+out. That is the same configuration the earlier campaigns ran with, verified
+field by field against a recorded run — see
+[Profiles](cli.md#profiles). What stays on each command line is what a profile
+cannot carry: question set, model, endpoints, corpus and output location. The
+abstention arms add `--legacy-insufficiency-wording` and `--enable-domain-gate`
+per arm, which is what that experiment varies.
+
 > [!WARNING]
 > A carrier count cannot tell a live vector index from one whose identifiers went
 > stale under a store reload — the count passes, the channel silently degrades to

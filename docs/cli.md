@@ -24,6 +24,37 @@ In single-question mode only the **first** entry of `--strategies` is applied.
 
 ---
 
+## Profiles
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--profile` | none | Start from a named configuration in [`graphrag.profiles`](../src/graphrag/profiles.py): `thesis_campaign`, `demo`, `research_baseline` |
+
+A profile is a set of overrides against the defaults on this page, so it replaces
+flags rather than adding behaviour. `--profile thesis_campaign` is exactly the
+sixteen configuration flags the campaign runners used to spell out — ten that
+changed something, six that restated a default.
+
+**Precedence.** A flag given explicitly wins over the profile. The profile is
+installed with `set_defaults` and the command line is parsed a second time, so
+this is argparse's own ordering rather than a rule reimplemented here:
+
+```bash
+graphrag-demo --profile thesis_campaign --subgraph-seed-count 7   # 7, not the profile's 3
+```
+
+A profile that sets a field with no flag on this page is **refused at startup**,
+not applied in part — `demo` is one, because `always_include_limits` and
+`text_retriever_top_k` have no flags. Use it through `graphrag.profiles` instead.
+
+Two test suites pin `thesis_campaign` from both ends: `tests/test_profiles.py`
+against the configuration a real campaign recorded, and
+`tests/test_profiles_match_runners.py` against what the runner scripts resolve to
+today. A profile edit that would move a published number fails there, naming the
+field.
+
+---
+
 ## Question and model
 
 | Flag | Default | Effect |
