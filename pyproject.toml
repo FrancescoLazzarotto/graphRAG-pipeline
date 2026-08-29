@@ -78,13 +78,17 @@ dev = [
 [project.scripts]
 graphrag-demo = "graphrag.cli:main"
 graphrag-eval = "evalkit.cli:main"
+graphrag-kg = "kg_pipeline.main:main"
 
-# Two package roots: the engine under src/, the evaluation toolkit under
-# evaluation/. `packages` is listed explicitly rather than auto-discovered
-# because automatic discovery cannot span two roots — the cost is one line per
-# new subpackage, which is rarer than a release.
+# Three package roots: the engine under src/, the evaluation toolkit under
+# evaluation/, the KG pipeline at the repository root. `packages` is listed
+# explicitly rather than auto-discovered because automatic discovery cannot span
+# three roots — the cost is one line per new subpackage, which is rarer than a
+# release. Listing them also means the wheel carries only the declared modules:
+# kg_pipeline/ sits alongside 381 MB of artifacts, run logs and two .env files
+# holding a Neo4j password, and none of it is packaged.
 [tool.setuptools]
-package-dir = {"" = "src", "evalkit" = "evaluation/evalkit"}
+package-dir = {"" = "src", "evalkit" = "evaluation/evalkit", "kg_pipeline" = "kg_pipeline"}
 packages = [
     "graphrag",
     "graphrag.agent",
@@ -98,6 +102,11 @@ packages = [
     "evalkit.kg",
     "evalkit.metrics",
     "evalkit.report",
+    "kg_pipeline",
+    "kg_pipeline.models",
+    "kg_pipeline.prompts",
+    "kg_pipeline.stages",
+    "kg_pipeline.utils",
 ]
 
 [tool.pytest.ini_options]
