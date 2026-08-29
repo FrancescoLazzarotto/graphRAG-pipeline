@@ -53,7 +53,7 @@ The repository covers the full path from a folder of PDFs to a scored table:
 | Entry point | Purpose |
 |---|---|
 | `graphrag-demo` — or `python -m graphrag.cli` | Single-question retrieval/generation and batch experiments; the full option surface |
-| `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
+| `graphrag-kg` — or `python -m kg_pipeline.main` | Knowledge Graph construction pipeline |
 | `python scripts/runners/run_retrieval_matrix.py` | Standard-RAG vs GraphRAG matrices with resource telemetry |
 | `graphrag-eval` — or `python -m evalkit.cli` | Evaluation toolkit |
 | `python evaluation/scripts/score_gold_run.py` | Gold scoring for the paper: two channels, two levels |
