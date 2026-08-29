@@ -259,7 +259,7 @@ and the fully resolved per-strategy config is serialised into every run's
 ## Testing
 
 ```bash
-pytest -q     # 526 tests: 252 agent/retrieval, 31 KG pipeline, 243 evaluation
+pytest -q     # 550 tests: 276 agent/retrieval, 31 KG pipeline, 243 evaluation
 ```
 
 The paths come from `[tool.pytest.ini_options]` in `pyproject.toml`, so the bare
