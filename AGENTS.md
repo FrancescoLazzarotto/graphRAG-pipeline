@@ -19,9 +19,13 @@ schemas are part of the contract.
 
 Start from the owning file for the behavior you want to change:
 
-- [README.md](README.md): user-facing documentation and canonical run examples
-- [CLAUDE.md](CLAUDE.md): environment, architecture, conventions, known issues
-- [docs/code_audit_2026-08-15.md](docs/code_audit_2026-08-15.md): current catalogue of known logic defects
+- [README.md](README.md): orientation, install, architecture, limitations, reproducibility
+- [docs/cli.md](docs/cli.md): every `graphrag.cli` flag with its real default — the single source of truth for the option surface
+- [docs/configuration.md](docs/configuration.md): every environment variable, and how `.env` is loaded per entry point
+- [docs/experiments.md](docs/experiments.md): reference sets, runner choice, campaign drivers, run output layout
+- [docs/troubleshooting.md](docs/troubleshooting.md): symptoms seen in this project and what actually caused them
+- [COMMANDS.md](COMMANDS.md): task recipes
+- [tests/test_audit_fixes.py](tests/test_audit_fixes.py): 34 tests, one per finding of the August 2026 audit — the tracked record of the known logic defects
 - [pyproject.toml](pyproject.toml): package metadata, dependencies, CLI entry point
 - [src/graphrag/cli.py](src/graphrag/cli.py): public command-line interface and experiment orchestration
 - [src/graphrag/config.py](src/graphrag/config.py): `AgentConfig` / `KGConfig` — every tunable, each with the measurement that motivated its default
@@ -151,7 +155,10 @@ Both build their own `AgentConfig` inline; they do not read the CLI flags.
 
 ## Known repository details
 
-- `scripts/smoke/smoke_check.py` reads exported environment variables; it does not auto-load `.env`.
+- `scripts/smoke/smoke_check.py` fills missing variables from `--env-file` (default
+  `kg_pipeline/.env`) and then a local `.env`, both non-overriding — anything already exported
+  wins. Every check runs by default and a failure is a non-zero exit; waive one with
+  `--skip-neo4j` / `--skip-llm` / `--skip-encoder`.
 - `graphrag-demo` is the installed console script; if it exits 126 the shim is from a stale
   install, so re-run `pip install -e .`. `python -m graphrag.cli` never depends on the shim.
 - `import vllm` is broken inside `graphllm`; serve models from the `vllm-serve` virtualenv.
@@ -163,14 +170,72 @@ Both build their own `AgentConfig` inline; they do not read the CLI flags.
   `demo`, `eval`, `gpu`, `dev`.
 - CI runs two jobs: `syntax` (`compileall` under Python 3.10, the declared floor) and `test`
   (`pip install -e ".[dev]"` from `pyproject.toml` alone, then the full suite).
+- Two gold files coexist. `evaluation/gold/gold.json` shares the 30 `query_id`s of
+  `gold_v3.json` but differs in `expected_entities` on 7 of them, and
+  `evaluation/scripts/score_gold_run.py` defaults to the older one. Always pass
+  `--gold evaluation/gold/gold_v3.json` explicitly.
+- `scripts/runners/run_retrieval_matrix.py` takes `--graph-strategies` and
+  `--standard-strategies`. It has no `--strategies` and no `--models`.
+- `scripts/kg/kg_postprocess.py --passes` defaults to `1,2,3,4`. Pass 5 exists and is opt-in.
 - Real sample outputs exist under `artifacts/experiments/`, `exp_results*/` and
   `kg_pipeline/artifacts/`; use them when you need concrete examples of a schema.
+
+## Data models
+
+Core Pydantic models live in `kg_pipeline/models/types.py`. `RAGState`, `KGNode`, `Triple` and
+`ProvenanceRecord` are TypedDicts in `src/graphrag/types.py`.
+
+`RAGState` is the LangGraph channel schema: **a key a node returns but does not declare there is
+silently dropped**. `retrieved_neighbors` and `visible_evidence_refs` are declared there; check the
+schema before returning any new key.
+
+`KGTriple` predicates must be `SCREAMING_SNAKE_CASE` (validated by regex). Entity names are **not**
+unique before stage-4 resolution — use `CanonicalEntityRecord` after stage 4.
+
+## Code conventions
+
+- **Type hints**: always; union types with `|` (Python 3.10+)
+- **Docstrings**: Google-style — one-liner plus Args/Returns/Raises
+- **Logging**: module-level `logger = logging.getLogger("graphrag")` or `"kg_pipeline"`; INFO for milestones, DEBUG for traces, WARNING for recoverable issues
+- **Imports**: stdlib → third-party → local, separated by blank lines
+- **Pydantic**: `ConfigDict(extra="forbid")`; `field_validator` for normalisation
+- **Cypher**: always parameterised — never f-string user input into a query
+- **Neo4j writes**: UNWIND + MERGE for batches; never loop with individual queries
+- **Property access in Cypher**: `properties(node)['key']` avoids the `UnknownPropertyKey` warnings
+- **Comments explain why, not what.** This codebase's comments record measurements and rejected
+  alternatives. Keep that register — a comment restating the line above it is noise here.
+
+## Anti-patterns
+
+Each of these has cost this project a measurement or a run.
+
+- Bare `except:` or a silent `except Exception:` — catch the specific exception
+- Querying Neo4j inside a loop
+- Assuming entity names are unique before stage-4 resolution
+- Calling an LLM without retry logic — `LLMManager` already handles it
+- Hardcoding model paths or credentials
+- Skipping `validate_triples()` after parsing LLM JSON
+- Mixing async and sync without coordinating `LLMManager._load_lock`
+- Appending experiment results without `run_id` / timestamp
+- Assuming vLLM is available — health-check first
+- Ignoring checkpoint files: re-running stage 3 without clearing resumes from the checkpoint
+- Adding a generic phrase to `_REFUSAL_MARKERS` or `_INSUFFICIENT_MARKERS`
+  (`src/graphrag/llm/refusal.py`) — they are substring-matched over the whole answer, feed both an
+  answer-replacement path and a published metric, and a generic phrase silently rewrites correct answers
+- Returning a new key from an agent node without declaring it in `RAGState`
+- Changing `PromptLibrary.DEFAULT_DOMAIN_SCOPE` or the domain-gate wording without rerunning all
+  three suites: `scripts/domain_gate/eval_domain_gate_llm.py`, `eval_domain_gate_heldout.py` and
+  `eval_domain_gate_entities.py` (the last needs the graph as well as the model)
+- Copying a prompt out of `PromptLibrary` into a script that measures it — the eval suite did, the
+  two drifted, and it scored a prompt nobody ran
+- Editing `graphrag.config` or `graphrag.strategies` to change demo behaviour. Those are what the
+  campaigns were measured with; demo settings live in `product/config.py`
 
 ## Validation habits
 
 After an edit, use the smallest check that can falsify the change:
 
-- Documentation only: `git diff --check -- README.md AGENTS.md CLAUDE.md`
+- Documentation only: `git diff --check -- '*.md'`, then confirm every relative link still resolves
 - Python logic changes: targeted smoke script or a narrow module run
 - CLI or pipeline changes: the smallest relevant command that exercises the touched path
 - Retrieval or metric changes: the unit tests, which are fast and cover the tricky parts
@@ -209,9 +274,13 @@ names still match the analysis scripts.
 
 ## Before you change behaviour
 
-Read [docs/code_audit_2026-08-15.md](docs/code_audit_2026-08-15.md). It lists the known logic
-defects with file, line and failure mode. Several behaviours that look like bugs on first reading
-are already catalogued there; several that look correct are not.
+`tests/test_audit_fixes.py` locks 34 findings from the August 2026 code audit, one test each.
+Every one of them passed *before* its fix, which is why the suite gave no signal at all. Read the
+test that covers the area you are about to touch: several behaviours that look like bugs on first
+reading are deliberate, and several that look correct are not.
+
+The audit write-up itself (`docs/code_audit_2026-08-15.md`) is an internal working document and is
+not tracked by git — it exists only in a local checkout that has it.
 
 ## If you are unsure
 

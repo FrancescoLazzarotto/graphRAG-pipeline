@@ -34,12 +34,18 @@ what the answers look like, how the whole thing starts. Change demo behaviour
 here, never in `graphrag.config` or `graphrag.strategies`.
 
 Every setting in `config.py` is an environment variable with the value the demo
-ships with, so nothing needs editing to try something:
+ships with, so nothing needs editing to try something. The full list, with each
+default, is in
+[../docs/configuration.md](../docs/configuration.md#demo-settings):
 
 ```bash
 DEMO_STRATEGY=default DEMO_COMPLEXITY=medium \
   conda run -n graphllm streamlit run product/app.py
 ```
+
+The demos do **not** enable the vector channel, so a demo answer is not a
+retrieval measurement. Read them as a presentation of the engine, never as a
+data point.
 
 `config.py` is also where the graph connection lives. The primary graph is a
 hosted instance that suspends itself after three idle days; when it does not
