@@ -50,15 +50,10 @@ run_arm() {
     --strategies "$STRATEGIES" \
     --llm --vllm --vllm-base-url "$BASE_URL" \
     --model-id "$MODEL" \
-    --max-new-tokens 1024 --max-context-tokens 6000 \
-    --complexity medium --enforce-language \
-    --cite-evidence --citation-policy mark --citation-display label \
-    --prefer-verbatim-definitions \
-    --text-docs-dir artifacts/corpus_circular22 --text-retriever-backend tfidf \
-    --text-retriever-mmr --text-retriever-mmr-lambda 0.7 \
-    --text-retriever-max-per-doc 2 \
-    --vector-retrieval --seed-from-retrieved --subgraph-seed-count 3 \
-    --focused-answer --evidence-max-triple-items "${EVIDENCE_CAP:-30}" \
+    --profile thesis_campaign \
+    --max-new-tokens 1024 \
+    --text-docs-dir artifacts/corpus_circular22 \
+    --evidence-max-triple-items "${EVIDENCE_CAP:-30}" \
     --output-dir "${OUT_ROOT}/${tag}" \
     --experiment-tag "abst_${tag}" \
     "$@"
