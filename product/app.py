@@ -54,6 +54,31 @@ logger = logging.getLogger("expert_demo")
 # the renderer shows what follows inside a monospace expander so triple IDs
 # and <doc.pdf> references are not parsed as Markdown links/HTML.
 EVIDENCE_MARKER = "\n\n%%EVIDENZE%%\n"
+try:  # pragma: no cover - depends on the installed driver
+    from neo4j.exceptions import ServiceUnavailable, SessionExpired
+
+    _GRAPH_OUTAGE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        ServiceUnavailable,
+        SessionExpired,
+    )
+except Exception:  # pragma: no cover - driver without these names
+    _GRAPH_OUTAGE_EXCEPTIONS = ()
+
+# Rebuilding the agent re-indexes the text corpus, so a burst of questions
+# arriving during an outage must not each pay for it. One rebuild per minute is
+# enough: after the first, the others find the rebuilt agent in the cache.
+_FAILOVER_COOLDOWN_SEC = 60.0
+_last_failover_at = 0.0
+
+# Shown on an answer built without the cross-lingual channel, because the
+# encoder was unreachable. The product degrades instead of failing (see
+# product/config.py); this is the half that keeps the degradation honest.
+DEGRADED_NOTICE = (
+    "\n\n---\n*Nota: il canale di ricerca cross-lingua non era disponibile per "
+    "questa domanda. La risposta usa solo la ricerca testuale e per parole "
+    "chiave, quindi può essere meno completa — soprattutto se la domanda è in "
+    "una lingua diversa da quella dei documenti.*"
+)
 
 
 @st.cache_resource(show_spinner=False)
@@ -171,10 +196,73 @@ def _chat_label(text: str, max_chars: int = 30) -> str:
     return label[:max_chars].rsplit(" ", 1)[0] + "…"
 
 
+def _is_graph_outage(exc: BaseException) -> bool:
+    """True when this failure is the graph becoming unreachable, not a bug.
+
+    The whole chain is inspected because the driver's exception reaches here
+    wrapped by whatever re-raised it, and a failover decision taken on the
+    outermost type alone would miss the case it exists for.
+    """
+    if not _GRAPH_OUTAGE_EXCEPTIONS:
+        return False
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, _GRAPH_OUTAGE_EXCEPTIONS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _rebuild_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str, str] | None:
+    """Drop the cached agent and build a new one, or None if that failed too.
+
+    `build_kg_manager` already falls back from the suspended Aura instance to
+    the local mirror — but it only runs while the agent is being built, and the
+    agent is a cached resource built once per process. An instance that
+    suspended *after* the demo started therefore killed every later question,
+    with a working mirror one rebuild away and nothing to trigger it.
+    """
+    global _last_failover_at
+    now = time.monotonic()
+    if now - _last_failover_at < _FAILOVER_COOLDOWN_SEC:
+        # Another question already rebuilt; use what it left in the cache.
+        try:
+            return _load_agent(base_url, model_id)
+        except Exception:  # noqa: BLE001 - the caller reports the original failure
+            return None
+    _last_failover_at = now
+    logger.warning("Graph unreachable mid-session: rebuilding the agent once.")
+    try:
+        _load_agent.clear()
+        return _load_agent(base_url, model_id)
+    except Exception as exc:  # noqa: BLE001 - no graph at all is the caller's problem
+        logger.error("Rebuild after the graph outage failed too: %s", exc)
+        return None
+
+
+def _vector_skips(agent: KGRAGAgent) -> int:
+    """How many times the cross-lingual channel has been skipped so far.
+
+    Two independent causes, and the reader of an answer cannot tell them
+    apart nor should have to: the encoder is unreachable (counted by the
+    retriever) or the vector index cannot be queried (counted by the graph
+    manager). Either way the answer in front of them was built without that
+    channel, so both feed the same notice.
+    """
+    retriever = getattr(agent, "kg_retriever", None)
+    store = getattr(retriever, "kg_store", None)
+    return int(getattr(retriever, "vector_skips", 0) or 0) + int(
+        getattr(store, "vector_skips", 0) or 0
+    )
+
+
 def _ask(
     agent: KGRAGAgent,
     model_id: str,
     question: str,
+    base_url: str = "",
     memory: ConversationMemory | None = None,
     chat_id: str = "",
     graph_label: str = "",
@@ -192,8 +280,25 @@ def _ask(
         # is what separates two parallel threads of questions after the fact.
         "chat_id": chat_id,
     }
+    skips_before = _vector_skips(agent)
     try:
-        result = agent.invoke(question, memory=memory)
+        try:
+            result = agent.invoke(question, memory=memory)
+        except Exception as exc:  # noqa: BLE001 - only a graph outage is handled here
+            if not (base_url and _is_graph_outage(exc)):
+                raise
+            rebuilt = _rebuild_agent(base_url, model_id)
+            if rebuilt is None:
+                raise
+            # The caption above still names the old graph; the st.rerun() at the
+            # end of the question redraws it from the rebuilt agent.
+            agent, _, record["graph_label"] = rebuilt
+            record["graph_failover"] = True
+            # Counters belong to the agent, and this one is new.
+            skips_before = _vector_skips(agent)
+            # memory.observe() runs after a successful graph.invoke, so the
+            # failed attempt left no turn behind and this is not a double count.
+            result = agent.invoke(question, memory=memory)
         answer = str(result.get("answer", "")).strip()
         elapsed = time.perf_counter() - started
         record["answer"] = answer
@@ -222,6 +327,12 @@ def _ask(
         # inline; only the legacy triple dump goes into the collapsed expander.
         body, sep, evidence = answer.partition("\nVerifica nel grafo:")
         shown = body.strip() + f"\n\n*[{elapsed:.0f}s]*"
+        # A degraded answer has to say so. Per-question, not per-session: the
+        # encoder can come back, and an answer given while it was down is worth
+        # less than the one before it and the one after it.
+        record["vector_degraded"] = _vector_skips(agent) > skips_before
+        if record["vector_degraded"]:
+            shown += DEGRADED_NOTICE
         if sep and SHOW_FULL_ANSWER:
             shown += EVIDENCE_MARKER + evidence.strip()
     except Exception as exc:  # noqa: BLE001 - UI must survive any failure
@@ -326,6 +437,7 @@ if question:
                 agent,
                 model_id,
                 question,
+                base_url=base_url,
                 memory=chat["memory"],
                 chat_id=st.session_state.current_chat,
                 graph_label=graph_label,
