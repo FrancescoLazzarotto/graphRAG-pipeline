@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from kg_pipeline.stages.neo4j_ingestion import _resolve_neo4j_env
+from kg_pipeline.relations import CANONICAL_RELATION_TYPES
 from kg_pipeline.utils.validation import parse_json_array
 
 LOGGER = logging.getLogger("kg_pipeline.neo4j_postprocess")
@@ -28,69 +29,9 @@ LOGGER = logging.getLogger("kg_pipeline.neo4j_postprocess")
 """ Controllare tutta la parte di post process con documenti nuovi """
 
 
-_CANONICAL_RELATION_TYPES = [
-    "RELATED_TO",
-    "AFFECTS",
-    "IMPACTS",
-    "INFLUENCES",
-    "CAUSES",
-    "CAUSED_BY",
-    "CONTRIBUTES_TO",
-    "LEADS_TO",
-    "DRIVEN_BY",
-    "DEPENDS_ON",
-    "ASSOCIATED_WITH",
-    "BASED_ON",
-    "DERIVED_FROM",
-    "PART_OF",
-    "HAS_PART",
-    "HAS_COMPONENT",
-    "COMPOSED_OF",
-    "INCLUDES",
-    "CONTAINS_DATA",
-    "IS_TYPE_OF",
-    "DEFINED_AS",
-    "HAS_MAXIMUM_LEVEL",
-    "HAS_MINIMUM_LEVEL",
-    "HAS_VALUE",
-    "HAS_UNIT",
-    "VALUE_OF",
-    "MEASURES",
-    "INDICATES",
-    "APPLIES_TO",
-    "TARGETS",
-    "TARGET_OF",
-    "REQUIRES",
-    "REQUIRED_BY",
-    "USES",
-    "USED_BY",
-    "USES_METHOD",
-    "HAS_METHOD",
-    "MANAGES",
-    "MANAGED_BY",
-    "REGULATES",
-    "REGULATED_BY",
-    "GOVERNS",
-    "GOVERNED_BY",
-    "COMPLIES_WITH",
-    "SHOULD_BE_MANAGED_BY",
-    "ENSURES",
-    "AIMS_TO_ACHIEVE",
-    "NEEDED_FOR",
-    "PUBLISHED",
-    "WORKED_WITH",
-    "EXCHANGES_INFO_WITH",
-    "TAKE_INTO_ACCOUNT",
-    "PRODUCES",
-    "LOCATED_IN",
-    "OCCURS_IN",
-    "BELONGS_TO",
-    "HAS_MEMBER",
-    "MEMBER_OF",
-    "ANALYZES",
-    "ESTABLISHES",
-    "ESTABLISHED_BY",
-]
+# The canonical vocabulary is shared with the kg_repair passes, which used
+# to keep their own copy of it.
+_CANONICAL_RELATION_TYPES = CANONICAL_RELATION_TYPES
 
 _INVERSE_RELATION_REWRITES = [
     {"from": "ESTABLISHED_BY", "to": "ESTABLISHES"},
