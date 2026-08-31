@@ -186,8 +186,12 @@ def step_1_isolated_nodes(session) -> dict[str, Any]:
         "samples": [],
     }
 
+    # See neo4j_postprocess._fix_isolated_nodes: :NodeVec carriers are isolated
+    # by design and carry the vector index, and having no `name` they reach the
+    # delete branch. Excluding them here too, or this pass reintroduces the
+    # 2026-08-24 loss the moment someone runs it.
     rows = session.run(
-        "MATCH (n) WHERE NOT (n)--() "
+        "MATCH (n) WHERE NOT (n)--() AND NOT n:NodeVec AND n.name IS NOT NULL "
         "RETURN id(n) AS id, n.name AS name, "
         "       coalesce(n.source_documents, []) AS src_docs, "
         "       labels(n) AS labels"

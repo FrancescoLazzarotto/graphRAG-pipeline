@@ -1296,8 +1296,17 @@ def _cleanup_isolated_nodes(
         "samples": [],
     }
 
+    # :NodeVec carriers are isolated BY DESIGN — one per entity, joined by the
+    # `of` property rather than by an edge, and they hold the vector index. They
+    # also have no `name`, so the merge branch below cannot match them and every
+    # one of them falls through to DETACH DELETE. Running this pass unfiltered on
+    # 2026-08-24 cost the demo graph 1 661 carriers, 43 entities and all 532
+    # PART_OF relationships. Both conditions are load-bearing: the label keeps
+    # the vector index alive, the name check keeps this pass to nodes it can
+    # actually reason about.
     rows = session.run(
-        "MATCH (n) WHERE NOT (n)--() RETURN id(n) AS id, n.name AS name"
+        "MATCH (n) WHERE NOT (n)--() AND NOT n:NodeVec AND n.name IS NOT NULL "
+        "RETURN id(n) AS id, n.name AS name"
     ).data()
     report["candidates"] = len(rows)
     if not rows:
