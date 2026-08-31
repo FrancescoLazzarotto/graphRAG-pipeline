@@ -44,7 +44,12 @@ the retrieval method mid-comparison and does it asymmetrically: measured once, i
 dropped the channel on 3 queries for 3 of 6 compared models and 0 for the other
 3. A stopped run is recoverable; a campaign scored under two different retrieval
 methods is not. `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` restores degradation for
-interactive use only.
+interactive use only, and `product/config.py` sets it for both demos: there, a
+stopped encoder used to make every question fail with "problema tecnico",
+including the ones the graph answers lexically and the ones answered from the
+text channel, which does not use that encoder at all. The demo prints a notice
+under any answer built without the channel, so the degradation is visible to
+the person reading it.
 
 ---
 

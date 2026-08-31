@@ -228,8 +228,9 @@ This differs on purpose.
 | Missing | Behaviour |
 |---|---|
 | Full-text index | Falls back to a per-term `CONTAINS` scan, with a warning |
-| Vector index not built | Lexical only, with a warning |
-| Embedding endpoint failing after its retries | **Raises.** A silent, model-asymmetric change of retrieval method mid-comparison is worse than a stopped run. `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` restores degradation for interactive use only |
+| Vector index not built | Lexical only, with a warning naming `kg_vector_index.py` |
+| Vector index present but unqueryable (wrong dimensionality, procedure absent) | Lexical only, logged at ERROR with the real cause. Not reported as a missing index: rebuilding would not fix a dimension mismatch, which means the index was built with a different encoder |
+| Embedding endpoint failing after its retries | **Raises.** A silent, model-asymmetric change of retrieval method mid-comparison is worse than a stopped run. `GRAPHRAG_VECTOR_ALLOW_DEGRADED=1` restores degradation for interactive use only, and the demos set it |
 
 ---
 

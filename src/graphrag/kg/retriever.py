@@ -152,6 +152,17 @@ class KGRetriever:
                 "the text channel will be skipped for every retrieval."
             )
 
+    @property
+    def vector_skips(self) -> int:
+        """How many queries lost the vector channel because the encoder failed.
+
+        Read-only, and the only supported way to ask. A caller that degrades on
+        purpose (the demo does) has to be able to tell a degraded answer from a
+        healthy one, or the degradation is silent — which is the failure mode
+        the raise was protecting against in the first place.
+        """
+        return self._vector_skips
+
     def retrieve(self, query: str | None = None) -> dict[str, Any]:
         query_text = (query or self.config.query or self.config.entity or "").strip()
         configured_entity = self._sanitize_entity_name(self.config.entity or "")

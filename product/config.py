@@ -107,6 +107,16 @@ PARAMETRIC_FALLBACK = _flag("DEMO_PARAMETRIC_FALLBACK")
 # passed it before, so the fix had never reached a live session; both graphs in
 # use carry the 14 520 :NodeVec carriers the channel needs.
 VECTOR_RETRIEVAL = _flag("DEMO_VECTOR_RETRIEVAL")
+# ...and what to do when that encoder is unreachable. The engine raises by
+# default, which is right for a campaign: a run that silently changes retrieval
+# method halfway is worse than a run that stops. It is the wrong answer here.
+# A stopped encoder made every single question in the demo fail with "problema
+# tecnico", including the ones the graph could still answer lexically and the
+# ones answered mostly from the text channel, which does not use that encoder
+# at all. Degrading is only acceptable because the UI says so on the affected
+# answer; without that caption this line would trade a loud failure for a
+# quiet loss of quality. `setdefault`, so an operator can still export 0.
+os.environ.setdefault("GRAPHRAG_VECTOR_ALLOW_DEGRADED", "1")
 # Stage0 runs feeding the text index, most authoritative first. Explicit on
 # purpose: auto-discovery picked the newest run, which is the 2-document repair
 # run, so the text channel saw 2 of the 22 circular-food documents. Older runs

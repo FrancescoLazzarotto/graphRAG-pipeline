@@ -71,7 +71,7 @@ All optional. Each is read from the environment at call time.
 |---|---|---|
 | `GRAPHRAG_FULLTEXT_INDEX` | `node_search` | Full-text index name |
 | `GRAPHRAG_VECTOR_PROPERTY` | `embedding` | Property stripped from node projections |
-| `GRAPHRAG_VECTOR_ALLOW_DEGRADED` | `""` (off) | `1` lets a failed encoder degrade to lexical-only instead of raising. **Interactive use only** — see [Reproducibility](../README.md#reproducibility-notes) |
+| `GRAPHRAG_VECTOR_ALLOW_DEGRADED` | `""` (off) for the CLI, `1` for the demo | `1` lets a failed encoder degrade to lexical-only instead of raising. `product/config.py` sets it with `setdefault`, so both demos degrade and say so on the affected answer; the CLI keeps raising, because a campaign scored under two retrieval methods is not recoverable — see [Reproducibility](../README.md#reproducibility-notes) |
 | `GRAPHRAG_TEXT_STAGE0_RUNS` | `""` | Default for `--text-stage0-runs` |
 
 ### Retries and timeouts
@@ -83,6 +83,10 @@ All optional. Each is read from the environment at call time.
 | `GRAPHRAG_EMBED_MAX_CHARS` | `1700` | Truncation applied before the encoder's context window |
 | `GRAPHRAG_NEO4J_QUERY_RETRIES` | `3` | Transient-error retries per Cypher query |
 | `GRAPHRAG_NEO4J_QUERY_RETRY_BACKOFF_SEC` | `1.0` | Backoff between Cypher retries |
+| `GRAPHRAG_NEO4J_QUERY_TIMEOUT_SEC` | `45` | Cap on one Cypher query. Measured on the live graph, 34 of 36 queries in a retrieval finish under 0.23 s and the two slow ones are the unindexed `CONTAINS` scan at ~24 s, so this clears the slowest observed query with room to spare |
+| `GRAPHRAG_NEO4J_MAX_RETRY_TIME_SEC` | `8` | Driver retry window per query (its own default is 30). At 30, one unreachable graph cost **301 s** of waiting in a measured demo session, because every query in a retrieval burned the window independently; at 8 the same failure took 119 s |
+| `GRAPHRAG_NEO4J_CONNECTION_TIMEOUT_SEC` | `5` | TCP connect timeout |
+| `GRAPHRAG_NEO4J_ACQUISITION_TIMEOUT_SEC` | `10` | Wait for a pooled connection |
 | `GRAPHRAG_LLM_GENERATE_RETRIES` | `2` | Transient-error retries per LLM call |
 | `GRAPHRAG_LLM_GENERATE_RETRY_BACKOFF_SEC` | `1.0` | Backoff between LLM retries |
 | `GRAPHRAG_LLM_HTTP_TIMEOUT_SEC` | `300` | Client timeout on the interactive path, where someone is waiting |
