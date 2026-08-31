@@ -62,10 +62,42 @@ def _available_models() -> dict[str, tuple[str, str]]:
     return probe_vllm_endpoints()
 
 
+def _configure_logging() -> None:
+    """Send the engine's own warnings to a file that survives the session.
+
+    `graphrag` used to be pinned to ERROR here, which silenced exactly the
+    messages that report silent degradation — "embedding endpoint unavailable,
+    vector channel skipped", "fulltext index disabled, falling back", "answer
+    language mismatch", "discarding an implausible rewrite". A session that
+    answered badly was then indistinguishable from a healthy one after the fact.
+
+    The file is separate from streamlit.log because that one is mostly Neo4j
+    deprecation notices, and a warning worth reading was lost in it.
+    """
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    engine = logging.getLogger("graphrag")
+    engine.setLevel(logging.WARNING)
+
+    # Streamlit re-runs this module on every interaction, so attaching the
+    # handler unguarded would multiply it by the number of clicks.
+    if any(getattr(h, "_demo_handler", False) for h in engine.handlers):
+        return
+    # Beside streamlit.log, not beside the session transcripts: this is
+    # operational output, while LOG_DIR holds what people asked and were told
+    # and is meant to become access-restricted.
+    run_log_dir = Path(os.environ.get("DEMO_LOG_DIR_RUNTIME", ROOT / "artifacts" / "demo_logs"))
+    run_log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(run_log_dir / "graphrag.log", encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
+    handler._demo_handler = True  # type: ignore[attr-defined]
+    engine.addHandler(handler)
+
+
 @st.cache_resource(show_spinner="Avvio in corso (connessione al grafo e indice testi)...")
 def _load_agent(base_url: str, model_id: str) -> tuple[KGRAGAgent, str, str]:
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    logging.getLogger("graphrag").setLevel(logging.ERROR)
+    _configure_logging()
     os.chdir(ROOT)
     agent, graph_label = build_demo_agent(base_url, model_id)
     return agent, model_id, graph_label
@@ -145,6 +177,7 @@ def _ask(
     question: str,
     memory: ConversationMemory | None = None,
     chat_id: str = "",
+    graph_label: str = "",
 ) -> str:
     started = time.perf_counter()
     record: dict[str, object] = {
@@ -152,6 +185,9 @@ def _ask(
         "question": question,
         "strategy": STRATEGY,
         "model_id": model_id,
+        # Which graph answered. Without it a session served by the local mirror
+        # during an Aura outage reads exactly like a healthy one.
+        "graph_label": graph_label,
         # One log per browser session, several conversations inside it: the id
         # is what separates two parallel threads of questions after the fact.
         "chat_id": chat_id,
@@ -162,6 +198,14 @@ def _ask(
         elapsed = time.perf_counter() - started
         record["answer"] = answer
         record["latency_s"] = round(elapsed, 2)
+        # What the answer was actually built from. A thin answer has two very
+        # different causes — the gate refused, or retrieval came back empty —
+        # and without these counts the log cannot tell them apart.
+        record["out_of_scope"] = bool(result.get("out_of_scope"))
+        record["insufficient"] = bool(result.get("insufficient_answer"))
+        record["n_triples"] = len(result.get("kg_triples") or [])
+        record["n_nodes"] = len(result.get("retrieved_nodes") or [])
+        record["n_text_sources"] = len(result.get("retrieved_text_sources") or [])
         # WP7: the question actually sent to retrieval, and what resolved it.
         # Logged separately from `question` so a rewrite that hurt the answer
         # can be recognised as such after the session.
@@ -284,9 +328,14 @@ if question:
                 question,
                 memory=chat["memory"],
                 chat_id=st.session_state.current_chat,
+                graph_label=graph_label,
             )
+        # Appended before rendering: a rerun raised inside _render (a sidebar
+        # click during the spinner, a browser reconnect) used to drop the answer
+        # from the transcript while the JSONL row was already written and
+        # memory.observe() had already run, leaving the three disagreeing.
+        chat["messages"].append(("assistant", answer))
         _render(answer)
-    chat["messages"].append(("assistant", answer))
     # The sidebar rendered before the answer existed: rerun so the chat list
     # shows the new title and the updated topics.
     st.rerun()
