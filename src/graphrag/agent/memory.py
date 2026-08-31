@@ -85,6 +85,17 @@ _MAX_ELLIPTIC_TOKENS = 16
 # seeds.
 _MIN_ENTITY_CHARS = 3
 _MAX_ENTITY_CHARS = 60
+# A document is where an answer came from, not what it was about. The graph
+# holds document nodes under their file name, so "SEeD for Change.pdf" reached
+# the seed list in two recorded sessions and led it in one of them, spending one
+# of only four slots on a name that steers a rewrite towards the file rather
+# than the subject.
+_DOCUMENT_SUFFIXES = (
+    ".pdf", ".doc", ".docx", ".odt", ".rtf",
+    ".xls", ".xlsx", ".ods", ".csv",
+    ".ppt", ".pptx", ".odp",
+    ".txt", ".md", ".json", ".xml", ".html", ".htm",
+)
 
 _TOKEN_RE = re.compile(r"[\wÀ-ÿ'’-]+")
 
@@ -341,6 +352,8 @@ def _entity_names(
         if not (_MIN_ENTITY_CHARS <= len(name) <= _MAX_ENTITY_CHARS):
             return
         if not any(char.isalpha() for char in name):
+            return
+        if name.lower().endswith(_DOCUMENT_SUFFIXES):
             return
         key = name.lower()
         if key in seen:
