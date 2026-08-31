@@ -356,8 +356,10 @@ def step_3_micro_consolidation(session) -> dict[str, Any]:
     # Simple renames
     renames = [
         # Was HAS_PERCENTAGE -> HAS_PERCENTAGE_SHARE. Neither type is canonical
-        # and neither has any instance; percentages are carried by HAS_VALUE,
-        # which holds them in its `percentage` property.
+        # and neither exists in the graph, so this rename only matters to a
+        # future extraction run that produces HAS_PERCENTAGE. It points at the
+        # type such an edge would have been given anyway: percentages already
+        # live in HAS_VALUE, 347 of whose 1306 edges carry `unit = '%'`.
         ("HAS_PERCENTAGE", "HAS_VALUE"),
         ("AUTHORED",       "PUBLISHED"),
         ("TARGETS",        "AFFECTS"),
