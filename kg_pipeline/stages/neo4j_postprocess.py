@@ -2974,6 +2974,35 @@ def main() -> None:
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
+    # The JSON above is printed first and unchanged, so anything parsing stdout
+    # keeps working. What changes is the exit status: every step collects its
+    # failures into `errors` and the run used to exit 0 regardless, so a pass
+    # that renamed nothing because every APOC call failed was indistinguishable
+    # from a clean one to anyone reading the status instead of the report.
+    failures = _collect_errors(report)
+    if failures:
+        LOGGER.error(
+            "%d step(s) reported errors; see the report above. First: %s",
+            len(failures),
+            failures[0],
+        )
+        sys.exit(1)
+
+
+def _collect_errors(report: object) -> list[str]:
+    """Every non-empty ``errors`` entry anywhere in the nested report."""
+    found: list[str] = []
+    if isinstance(report, dict):
+        for key, value in report.items():
+            if key == "errors" and isinstance(value, (list, tuple)):
+                found.extend(str(item) for item in value)
+            else:
+                found.extend(_collect_errors(value))
+    elif isinstance(report, (list, tuple)):
+        for item in report:
+            found.extend(_collect_errors(item))
+    return found
+
 
 if __name__ == "__main__":
     main()

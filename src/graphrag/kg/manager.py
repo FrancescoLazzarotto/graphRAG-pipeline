@@ -29,6 +29,15 @@ except (
 from graphrag.config import KGConfig
 from graphrag.types import KGNode, KGTriple
 
+
+def _env_float(name: str, default: float) -> float:
+    """A positive float from the environment, or the default if it is unusable."""
+    try:
+        value = float(os.getenv(name, "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
 logger = logging.getLogger("graphrag")
 
 # Property holding the multilingual node embedding (scripts/kg/kg_vector_index.py).
@@ -86,6 +95,10 @@ class KnowledgeGraphManager:
         self._fulltext_failures: int = 0
         self._token_df: dict[str, int] | None = None
         self._token_df_total: int = 0
+        # Queries that lost the vector channel because the index could not be
+        # queried. Counted, not just logged, so the demo can say so on the
+        # affected answer the way it does for an unreachable encoder.
+        self._vector_skips: int = 0
 
     # ------------------------------------------------------------------ #
     # term specificity
@@ -194,6 +207,30 @@ class KnowledgeGraphManager:
             username=self.config.username,
             password=self.config.password,
             database=self.config.database,
+            timeout=_env_float("GRAPHRAG_NEO4J_QUERY_TIMEOUT_SEC", 45.0),
+            driver_config={
+                # Measured on the live graph: 34 of 36 queries in a retrieval
+                # finish under 0.23 s, and the two slow ones are the unindexed
+                # CONTAINS scan at ~24 s. 45 s is nearly twice the slowest
+                # observed query and still bounds a runaway one.
+                #
+                # The retry window is the setting that matters, though. At the
+                # driver default of 30 s, one unreachable graph cost 301 s of
+                # waiting in a demo: every query in a retrieval independently
+                # burned the window, and our own retry loop multiplied it. The
+                # graph either answers in a fraction of a second or is not
+                # there, so 8 s is still two driver retries and turns five
+                # minutes of dead air into a failover the user sits through.
+                "max_transaction_retry_time": _env_float(
+                    "GRAPHRAG_NEO4J_MAX_RETRY_TIME_SEC", 8.0
+                ),
+                "connection_timeout": _env_float(
+                    "GRAPHRAG_NEO4J_CONNECTION_TIMEOUT_SEC", 5.0
+                ),
+                "connection_acquisition_timeout": _env_float(
+                    "GRAPHRAG_NEO4J_ACQUISITION_TIMEOUT_SEC", 10.0
+                ),
+            },
         )
 
     def _reconnect(self) -> None:
@@ -571,25 +608,51 @@ class KnowledgeGraphManager:
             raise
         return [self._row_to_triple(row) for row in rows]
 
-    _VECTOR_MISSING_MARKERS = (
-        "no such index",
-        "not found",
-        "there is no such vector schema index",
-        "db.index.vector.querynodes",
-    )
+    # Neo4j 5 says exactly this when the index does not exist:
+    #   Failed to invoke procedure `db.index.vector.queryNodes`: Caused by:
+    #   java.lang.IllegalArgumentException: There is no such vector schema
+    #   index: <name>
+    # The list used to also hold "not found" and the procedure's own name. Both
+    # match errors that have nothing to do with a missing index — every failure
+    # of this procedure names the procedure, and "not found" matches
+    # ProcedureNotFound, DatabaseNotFound and anything else phrased that way —
+    # so an unrelated fault was reported as "run kg_vector_index.py to build
+    # it", which would not have fixed it. A dimension mismatch, for instance,
+    # means the index was built with a different encoder than the one now
+    # answering: the advice to build the index is exactly wrong there.
+    _VECTOR_MISSING_MARKERS = ("there is no such vector schema index",)
 
     def _handle_vector_error(self, exc: Exception, index: str) -> bool:
-        """Return True (and warn) when the vector index is simply absent."""
+        """Skip the vector channel for this query, and say why.
+
+        Always returns True: the lexical and text channels can still answer,
+        and killing the question over one unavailable channel is the wrong
+        trade for an interactive product. What changes with the cause is the
+        log — a missing index is an operator task with a known fix, anything
+        else is a fault that needs reading before it is guessed at.
+        """
+        self._vector_skips += 1
         text = f"{type(exc).__name__}: {exc}".lower()
         if any(marker in text for marker in self._VECTOR_MISSING_MARKERS):
             logger.warning(
-                "Vector index %r unavailable (%s) — the cross-lingual channel is "
+                "Vector index %r does not exist — the cross-lingual channel is "
                 "skipped for this query. Run scripts/kg/kg_vector_index.py to build it.",
+                index,
+            )
+        else:
+            logger.error(
+                "Vector index %r could not be queried, and not because it is "
+                "missing — the cross-lingual channel is skipped for this query "
+                "and answers are lexical-only until this is fixed: %s",
                 index,
                 exc,
             )
-            return True
-        return False
+        return True
+
+    @property
+    def vector_skips(self) -> int:
+        """How many queries lost the vector channel at the index."""
+        return self._vector_skips
 
     # Backoff schedule for a disabled index, in seconds. One transient failure
     # used to cost every later question in the process — and, in the Streamlit
