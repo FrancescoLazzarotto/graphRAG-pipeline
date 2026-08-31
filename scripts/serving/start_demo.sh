@@ -21,6 +21,15 @@
 # scripts/serving/stop_demo.sh.
 set -euo pipefail
 
+# ~/.local/lib/python3.12/site-packages shadows the conda env with an
+# incompatible pair (torch 2.5.1+cu124 / sentence-transformers 5.3.0 against the
+# env's 2.10.0+cu128 / 3.4.1). The two resolve module by module, and the mixture
+# raises `ModuleNotFoundError: Could not import module 'PreTrainedModel'` the
+# first time the dense text backend builds its embeddings — i.e. at demo
+# startup, before the UI is reachable. The env's own packages are fine; only the
+# shadowing is not. Exported here so both the preflight and streamlit inherit it.
+export PYTHONNOUSERSITE=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # The per-model start scripts sit beside this one. Resolved once, absolute:
 # the launcher cd's to ROOT before spawning, so a relative path would not
@@ -34,17 +43,10 @@ ENCODER_PORT="${EMBED_PORT:-8002}"
 # vLLM loading a 32B checkpoint from a cold page cache is minutes, not seconds.
 BOOT_TIMEOUT_SEC="${DEMO_BOOT_TIMEOUT_SEC:-900}"
 
-# key -> "start script|port|gpus|description"
-declare -A MODELS=(
-  [qwen25-32b]="start_vllm.sh|8000|0|Qwen2.5-32B-AWQ — the generator the thesis numbers were measured on"
-  [qwen3-32b]="start_vllm_qwen3_32b.sh|8000|0|Qwen3-32B-AWQ — newer, reasoning model (verbose unless thinking is off)"
-  [qwen25-7b]="start_vllm_qwen25_7b.sh|8001|1|Qwen2.5-7B — small, fast, for side-by-side comparison"
-  [qwen3-30b-a3b]="start_vllm_qwen3.sh|8001|1|Qwen3-30B-A3B-FP8 — MoE, cheap to run"
-  [qwen38-27b-bf16]="start_vllm_qwen38_27b_bf16.sh|8000|0,1|Qwen3.8-27B BF16 — unquantised, needs BOTH GPUs, slower over PCIe"
-  [qwen38-27b]="start_vllm_qwen38_27b.sh|8001|1|Qwen3.8-27B-INT4 — dense, hybrid attention, thinking off via template"
-  [gemma4-31b]="start_vllm_gemma4_31b.sh|8001|1|Gemma-4-31B QAT w4a16 — dense, Apache 2.0, thinking off by default"
-  [qwen25-72b]="start_vllm_qwen25_72b.sh|8000|0,1|Qwen2.5-72B-AWQ — largest available, needs BOTH GPUs"
-)
+# MODELS and LABEL_PORTS: shared with stop_demo.sh, which has to find the same
+# ports this script binds.
+# shellcheck source=scripts/serving/_models.sh
+source "$SERVING_DIR/_models.sh"
 
 usage() {
   sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -150,7 +152,18 @@ for key in "${WANTED[@]}"; do
 done
 
 echo "== preflight =="
+# Probe the generators this invocation actually started, not the single one
+# named in kg_pipeline/.env: that variable pins one port and one model id, so
+# starting any other model made the preflight fail — and the preflight is fatal,
+# so `start_demo.sh gemma4-31b` could not start the demo at all.
+LLM_PROBES=()
+for key in "${WANTED[@]}"; do
+  IFS='|' read -r _ port _ _ <<<"${MODELS[$key]}"
+  LLM_PROBES+=(--llm-base-url "http://localhost:$port/v1")
+done
+
 conda run -n "$CONDA_ENV" python "$ROOT/scripts/smoke/smoke_check.py" \
+  "${LLM_PROBES[@]}" \
   $([[ $WITH_ENCODER -eq 1 ]] || echo --skip-encoder) || {
     echo "Preflight fallito: la demo partirebbe degradata. Correggi e riprova." >&2
     exit 1

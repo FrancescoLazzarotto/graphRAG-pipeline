@@ -68,9 +68,13 @@ done
 # that recorded it, and then this script reports "already stopped" while the old
 # process keeps the port — so the next start silently keeps serving the previous
 # configuration, and every fix appears not to work.
-declare -A LABEL_PORTS=( [encoder]=8002 [streamlit]=8501 [qwen25-32b]=8000
-                         [qwen3-32b]=8000 [qwen25-72b]=8000 [qwen25-7b]=8001
-                         [qwen3-30b-a3b]=8001 )
+# LABEL_PORTS comes from the table start_demo.sh binds from, and honours the
+# same DEMO_UI_PORT / EMBED_PORT. The copy that used to live here had 8501
+# hardcoded for the UI and knew nothing of gemma4-31b or the two qwen38-27b
+# variants, so on a demo started with DEMO_UI_PORT=8600 this whole pass looked
+# at an empty port and reported success.
+# shellcheck source=scripts/serving/_models.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_models.sh"
 for label in "${targets[@]}"; do
   port="${LABEL_PORTS[$label]:-}"
   [[ -z "$port" ]] && continue
