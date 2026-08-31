@@ -132,6 +132,29 @@ def _check_openai_endpoint(
     return True, f"{label}: {base_url} — {', '.join(served)}"
 
 
+def _check_generators(args: argparse.Namespace) -> tuple[bool, str]:
+    """Probe every generator the caller named, or the one the environment names.
+
+    Args:
+        args: Parsed command line; reads ``llm_base_url``, ``llm_model`` and
+            ``timeout_sec``.
+
+    Returns:
+        Whether every endpoint answered, and one detail line per endpoint.
+    """
+    urls = args.llm_base_url or [os.getenv("VLLM_BASE_URL")]
+    # The identity assertion belongs to the environment-configured single
+    # generator. A caller that passed its own URLs started those servers itself
+    # and knows what is on them.
+    expected = None if args.llm_base_url else (args.llm_model or os.getenv("VLLM_MODEL_NAME"))
+
+    results = [
+        _check_openai_endpoint(url, expected, "generator", args.timeout_sec)
+        for url in urls
+    ]
+    return all(ok for ok, _ in results), "; ".join(detail for _, detail in results)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -148,6 +171,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-llm", action="store_true", help="Waive the generator check")
     parser.add_argument(
         "--skip-encoder", action="store_true", help="Waive the embedding-server check"
+    )
+    parser.add_argument(
+        "--llm-base-url",
+        action="append",
+        default=None,
+        metavar="URL",
+        help=(
+            "Generator endpoint to probe; repeatable, once per running generator. "
+            "Defaults to VLLM_BASE_URL. Passing it also drops the model-identity "
+            "assertion, which only ever held for the single pinned generator: the "
+            "launcher serves eight models across two ports, so a caller that knows "
+            "which port it started is checking reachability, not identity"
+        ),
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help=(
+            "Model id required at the endpoint. Defaults to VLLM_MODEL_NAME, and "
+            "only applies when --llm-base-url is not given"
+        ),
     )
     parser.add_argument("--timeout-sec", type=float, default=5.0)
     parser.add_argument(
@@ -198,12 +242,7 @@ def main() -> int:
         "neo4j": (args.skip_neo4j, _check_neo4j_connectivity),
         "llm": (
             args.skip_llm,
-            lambda: _check_openai_endpoint(
-                os.getenv("VLLM_BASE_URL"),
-                os.getenv("VLLM_MODEL_NAME"),
-                "generator",
-                args.timeout_sec,
-            ),
+            lambda: _check_generators(args),
         ),
         "encoder": (
             args.skip_encoder,
