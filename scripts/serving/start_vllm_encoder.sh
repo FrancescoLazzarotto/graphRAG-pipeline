@@ -32,8 +32,14 @@ if curl -s --max-time 3 "http://localhost:${PORT}/v1/models" | grep -q '"id"'; t
   exit 0
 fi
 
+# Loopback by default: these servers have no authentication and two A40s
+# behind them, and they were bound to 0.0.0.0. Export VLLM_HOST=0.0.0.0 to
+# open them deliberately.
+VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
+
 exec env CUDA_VISIBLE_DEVICES="$GPU" "$VLLM_BIN" serve "$MODEL" \
   --runner pooling \
   --port "$PORT" \
+  --host "$VLLM_HOST" \
   --gpu-memory-utilization "$UTIL" \
   --max-model-len 512

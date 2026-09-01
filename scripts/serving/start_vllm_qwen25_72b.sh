@@ -22,6 +22,11 @@ VLLM_BIN="${VLLM_BIN:-/mnt/storage/flazzarotto/venvs/vllm-serve/bin/vllm}"
 
 export HF_HOME="${HF_HOME:-/mnt/storage/hf-cache}"
 
+# Loopback by default: these servers have no authentication and two A40s
+# behind them, and they were bound to 0.0.0.0. Export VLLM_HOST=0.0.0.0 to
+# open them deliberately.
+VLLM_HOST="${VLLM_HOST:-127.0.0.1}"
+
 exec env CUDA_VISIBLE_DEVICES="$GPUS" "$VLLM_BIN" serve "$MODEL" \
   --tensor-parallel-size 2 \
   --quantization awq_marlin \
@@ -30,4 +35,5 @@ exec env CUDA_VISIBLE_DEVICES="$GPUS" "$VLLM_BIN" serve "$MODEL" \
   --enable-chunked-prefill \
   --max-model-len 32768 \
   --max-num-seqs 16 \
-  --port "$PORT"
+  --port "$PORT" \
+  --host "$VLLM_HOST"
