@@ -46,28 +46,12 @@ def _check_import(module_name: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def _check_neo4j_connectivity() -> tuple[bool, str]:
+def _probe_graph(uri: str, username: str, password: str, database: str) -> tuple[bool, str]:
+    """Whether one graph answers, holds nodes, and has both indexes ONLINE."""
     try:
         from neo4j import GraphDatabase
     except Exception as exc:
         return False, f"neo4j driver unavailable: {exc}"
-
-    uri = os.getenv("NEO4J_URL")
-    username = os.getenv("NEO4J_USERNAME")
-    password = os.getenv("NEO4J_PASSWORD")
-    database = os.getenv("NEO4J_DATABASE", "neo4j")
-
-    missing = [
-        key
-        for key, value in (
-            ("NEO4J_URL", uri),
-            ("NEO4J_USERNAME", username),
-            ("NEO4J_PASSWORD", password),
-        )
-        if not value
-    ]
-    if missing:
-        return False, f"missing environment variables: {', '.join(missing)}"
 
     driver = GraphDatabase.driver(uri, auth=(username, password))
     try:
@@ -95,6 +79,59 @@ def _check_neo4j_connectivity() -> tuple[bool, str]:
         driver.close()
 
     return True, f"{uri} — {nodes} nodes, indexes online"
+
+
+def _check_neo4j_connectivity() -> tuple[bool, str]:
+    """Pass if *either* graph the demo can use is healthy, and say which.
+
+    The demo falls back from the hosted Aura instance to the local mirror when
+    the first is unreachable — Aura Free suspends itself after three idle days.
+    The preflight did not know that, so it failed the launch in exactly the
+    outage the fallback exists for, and `start_demo.sh` stopped before starting
+    a demo that would have worked. Passing on the fallback is not silent: the
+    line says which graph answered, because a session served by the mirror
+    during an outage is not the same thing as a healthy one.
+    """
+    primary = (
+        os.getenv("NEO4J_URL"),
+        os.getenv("NEO4J_USERNAME"),
+        os.getenv("NEO4J_PASSWORD"),
+        os.getenv("NEO4J_DATABASE", "neo4j"),
+    )
+    missing = [
+        key
+        for key, value in zip(("NEO4J_URL", "NEO4J_USERNAME", "NEO4J_PASSWORD"), primary)
+        if not value
+    ]
+    if missing:
+        primary_detail = f"missing environment variables: {', '.join(missing)}"
+    else:
+        ok, primary_detail = _probe_graph(*primary)  # type: ignore[arg-type]
+        if ok:
+            return True, f"primary {primary_detail}"
+
+    fallback_url = (os.getenv("DEMO_NEO4J_FALLBACK_URL") or "").strip()
+    if not fallback_url:
+        return False, (
+            f"primary unusable ({primary_detail}) and no fallback configured "
+            "— set DEMO_NEO4J_FALLBACK_URL / _USERNAME / _PASSWORD / _DATABASE"
+        )
+    # An unset fallback database is not "no database": the driver would read
+    # NEO4J_DATABASE and the mirror would inherit Aura's name. Same default as
+    # product/config.build_kg_manager, so the two agree on what they probe.
+    ok, fallback_detail = _probe_graph(
+        fallback_url,
+        os.getenv("DEMO_NEO4J_FALLBACK_USERNAME") or "",
+        os.getenv("DEMO_NEO4J_FALLBACK_PASSWORD") or "",
+        (os.getenv("DEMO_NEO4J_FALLBACK_DATABASE") or "neo4j").strip() or "neo4j",
+    )
+    if ok:
+        return True, (
+            f"PRIMARY DOWN ({primary_detail}) — running on the fallback: {fallback_detail}"
+        )
+    return False, (
+        f"no usable graph. primary: {primary_detail}. fallback: {fallback_detail}"
+    )
 
 
 def _served_models(base_url: str, timeout_sec: float) -> list[str]:
