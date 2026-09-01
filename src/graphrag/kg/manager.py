@@ -21,10 +21,19 @@ try:  # pragma: no cover - depends on runtime dependency details
         ServiceUnavailable,
         TransientError,
     )
+    # A narrower family than the retryable one, on purpose: TransientError
+    # means the server answered and asked to be asked again (a deadlock, a
+    # leader switch), so the graph is reachable and the breaker below must not
+    # trip on it. These two mean nobody answered.
+    _OUTAGE_NEO4J_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        SessionExpired,
+        ServiceUnavailable,
+    )
 except (
     Exception
 ):  # pragma: no cover - fallback if neo4j exception classes are unavailable
     _RETRYABLE_NEO4J_EXCEPTIONS = ()
+    _OUTAGE_NEO4J_EXCEPTIONS = ()
 
 from graphrag.config import KGConfig
 from graphrag.types import KGNode, KGTriple
@@ -99,6 +108,10 @@ class KnowledgeGraphManager:
         # queried. Counted, not just logged, so the demo can say so on the
         # affected answer the way it does for an unreachable encoder.
         self._vector_skips: int = 0
+        # Circuit breaker on an unreachable graph: monotonic deadline until
+        # which queries fail immediately, and the failure to re-raise.
+        self._outage_until: float = 0.0
+        self._outage_error: BaseException | None = None
 
     # ------------------------------------------------------------------ #
     # term specificity
@@ -293,18 +306,69 @@ class KnowledgeGraphManager:
         self.graph.refresh_schema()
         return self.schema
 
+    # How long one unreachable-graph verdict stands for the queries that follow
+    # it. A retrieval issues several queries, and each one used to rediscover
+    # the outage from scratch: driver retry window, then this loop's own
+    # attempts, each with a reconnect. Measured in a demo session, that made a
+    # graph failover cost 301 s, and 119 s after the driver windows were
+    # tightened, of which roughly 84 s was nothing but re-establishing a fact
+    # already known. Short on purpose: it only has to cover the rest of the
+    # retrieval in progress, after which the demo has rebuilt onto the other
+    # graph. Anything longer would keep failing questions the graph could
+    # already answer again.
+    _OUTAGE_MEMORY_SEC = 5.0
+
+    @staticmethod
+    def _is_outage(exc: BaseException) -> bool:
+        """Whether nobody answered, as opposed to answering with a refusal.
+
+        Deliberately narrower than `_is_retryable_query_error`: a TransientError
+        is the server asking to be asked again, so the graph is reachable and
+        the breaker must not trip.
+        """
+        if _OUTAGE_NEO4J_EXCEPTIONS and isinstance(exc, _OUTAGE_NEO4J_EXCEPTIONS):
+            return True
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return any(
+            marker in text
+            for marker in (
+                "serviceunavailable",
+                "sessionexpired",
+                "could not connect",
+                "couldn't connect",
+                "unable to retrieve routing information",
+                "cannot resolve address",
+                "couldn't resolve address",
+            )
+        )
+
     def run_query(
         self, cypher: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         payload = params or {}
         max_attempts = max(1, self.query_retry_attempts)
 
+        if self._outage_error is not None:
+            if time.monotonic() < self._outage_until:
+                # Already established, moments ago, that nobody is there.
+                raise self._outage_error
+            self._outage_error = None
+
         for attempt in range(1, max_attempts + 1):
             try:
-                return self.graph.query(cypher, payload)
+                rows = self.graph.query(cypher, payload)
             except Exception as exc:
                 retryable = self._is_retryable_query_error(exc)
                 if not retryable or attempt >= max_attempts:
+                    if self._is_outage(exc):
+                        self._outage_until = time.monotonic() + self._OUTAGE_MEMORY_SEC
+                        self._outage_error = exc
+                        logger.warning(
+                            "Neo4j unreachable; failing the next %.0f s of queries "
+                            "immediately instead of rediscovering it each time: %s",
+                            self._OUTAGE_MEMORY_SEC,
+                            exc,
+                        )
                     raise
 
                 backoff_sec = self.query_retry_backoff_sec * attempt
@@ -323,6 +387,9 @@ class KnowledgeGraphManager:
 
                 if backoff_sec > 0:
                     time.sleep(backoff_sec)
+            else:
+                self._outage_error = None
+                return rows
 
         raise RuntimeError("unreachable: retry loop either returns or raises")
 
@@ -1040,19 +1107,34 @@ class KnowledgeGraphManager:
             )
             return []
 
-        if not rows:
-            # The CONTAINS fallback can match hundreds of nodes per side on
-            # generic terms ("food"): unbounded, the a×b cartesian product of
-            # shortestPath calls takes tens of seconds and floods the context
-            # with deep-path noise. Shortest names first ≈ most canonical.
+        # Broadening is for names. An elementId either identifies a node or it
+        # does not, and `_graph_anchors` hands this method ids on purpose (see
+        # its docstring: the name path compares six lowercased properties on
+        # every node, which is a scan). Running the CONTAINS fallback on an id
+        # asks which node *names* contain a UUID — never any — and the only
+        # nodes it can add are those whose own id contains the anchor's as a
+        # substring, which "4:<uuid>:1" inside "4:<uuid>:12" makes an artifact
+        # of id formatting rather than a relationship.
+        #
+        # Measured across 44 questions (the 30-question gold set and the 14 of
+        # the regression harness): the fallback ran 20 times, returned 0 rows
+        # every time, and accounted for 87 % of all graph retrieval time —
+        # 128 s of 147 s on the gold set alone, against 1.5 s for the 30 exact
+        # queries that returned all 58 useful rows.
+        if not rows and not (a_by_id and b_by_id):
+            # With a name on at least one side there is something to broaden.
+            # The CONTAINS side can match hundreds of nodes on a generic term
+            # ("food"): unbounded, the a×b cartesian product of shortestPath
+            # calls takes tens of seconds and floods the context with deep-path
+            # noise. Shortest names first ≈ most canonical.
             cypher_fallback = f"""
             MATCH (a)
-            WHERE {self._node_text_match_clause("a", "entity_a", exact=False)}
+            WHERE {self._node_text_match_clause("a", "entity_a", exact=False, id_only=a_by_id)}
             WITH DISTINCT a
             ORDER BY size({self._coalesce_name_expr("a")}) ASC
             LIMIT 8
             MATCH (b)
-            WHERE {self._node_text_match_clause("b", "entity_b", exact=False)}
+            WHERE {self._node_text_match_clause("b", "entity_b", exact=False, id_only=b_by_id)}
             WITH DISTINCT a, b
             ORDER BY size({self._coalesce_name_expr("b")}) ASC
             WITH a, collect(b)[0..2] AS partners
