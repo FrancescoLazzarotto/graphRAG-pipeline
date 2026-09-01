@@ -10,7 +10,12 @@ fase 0). Refuses to write into a non-empty database unless ``--wipe`` is given.
 Usage:
     python scripts/kg/kg_restore.py \
         --backup-dir artifacts/kg_backups/20260710_114216 \
-        --uri bolt://localhost:7688 --user neo4j --password staging-password
+        --uri bolt://localhost:7689 --user neo4j --password staging-password
+
+The staging instance this refers to opens bolt on **7689**
+(scripts/serving/start_neo4j_staging.sh). 7688 is a different,
+still-running Neo4j from July, so the port in this example used to point
+somewhere real and wrong.
 """
 
 from __future__ import annotations

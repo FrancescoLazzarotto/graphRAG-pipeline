@@ -7,8 +7,13 @@ coverage. Writes a JSON report and prints a summary.
 
 Usage:
     python scripts/kg/quality/kg_metrics.py \
-        --uri bolt://localhost:7688 --password staging-password \
+        --uri bolt://localhost:7689 --password staging-password \
         --output artifacts/kg_quality/metrics_staging_baseline.json
+
+The staging instance this refers to opens bolt on **7689**
+(scripts/serving/start_neo4j_staging.sh). 7688 is a different,
+still-running Neo4j from July, so the port in this example used to point
+somewhere real and wrong.
 """
 
 from __future__ import annotations

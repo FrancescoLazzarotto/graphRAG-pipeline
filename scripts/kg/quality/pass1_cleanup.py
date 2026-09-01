@@ -6,8 +6,15 @@ nodes marked ``delete`` in the report. See docs/kg_fix_plan_2026-07.md.
 
 Usage (dry run):
     python scripts/kg/quality/pass1_cleanup.py \
-        --uri bolt://localhost:7688 --password staging-password \
+        --uri bolt://localhost:7689 --password staging-password \
         --report-dir artifacts/kg_quality
+
+The staging instance this refers to opens bolt on **7689**
+(scripts/serving/start_neo4j_staging.sh). 7688 is a different,
+still-running Neo4j from July, so the port in this example used to point
+somewhere real and wrong.
+This one deletes with ``--apply``, so a copied port is a cleanup of the
+wrong graph.
 """
 
 from __future__ import annotations
