@@ -73,6 +73,19 @@ _last_failover_at = 0.0
 # Shown on an answer built without the cross-lingual channel, because the
 # encoder was unreachable. The product degrades instead of failing (see
 # product/config.py); this is the half that keeps the degradation honest.
+# Shown when memory rewrote the question before retrieval. The expert reads an
+# answer that went somewhere they did not ask about and has no way to see why;
+# the rewrite was logged and never displayed. Only when it actually changed:
+# on most turns it is the question as typed, and saying so every time would
+# train the reader to skip the line that matters.
+def _rewrite_notice(question: str, retrieval_question: str) -> str:
+    typed = " ".join(str(question or "").split())
+    used = " ".join(str(retrieval_question or "").split())
+    if not used or used.casefold() == typed.casefold():
+        return ""
+    return f"\n\n*Cercato nei documenti come: «{used}»*"
+
+
 DEGRADED_NOTICE = (
     "\n\n---\n*Nota: il canale di ricerca cross-lingua non era disponibile per "
     "questa domanda. La risposta usa solo la ricerca testuale e per parole "
@@ -135,6 +148,35 @@ def _session_log_path() -> Path:
     return st.session_state.session_log
 
 
+def _record_feedback(
+    turn_id: str, chat_id: str, verdict: str = "", note: str = ""
+) -> None:
+    """Append one rating, or one note, to the log the turn was written to.
+
+    The demo is the instrument the expert was given to judge the answers, and it
+    collected nothing: searching product/ for feedback, rating or voto found
+    nothing at all, so the only quality signal was whatever they remembered to
+    say out loud. Ratings live in the same file as the turns they rate, so the
+    two are read together and nothing new has to be kept in sync.
+
+    A vote and a note are separate lines and a note carries no `feedback` key,
+    because the log is append-only and a note that repeated the vote would be
+    counted as a second vote. Reading it: lines with `feedback` are votes, last
+    one per `turn_id` wins; lines with `note` are comments on that turn.
+    """
+    row: dict[str, object] = {
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "chat_id": chat_id,
+        "turn_id": turn_id,
+    }
+    if note:
+        row["note"] = note
+    else:
+        row["feedback"] = verdict
+    with _session_log_path().open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 # A chat is named after its first question; until then it needs a placeholder
 # that cannot be confused with the button that creates one.
 NEW_CHAT_TITLE = "(vuota)"
@@ -165,6 +207,11 @@ def _init_chats() -> None:
         st.session_state.chats = {}
         st.session_state.chat_order = []
         _new_chat()
+    # Ratings already given in this browser session, so the buttons can show
+    # what was recorded. The record itself is the JSONL line, not this: a
+    # reload loses the highlight, never the feedback.
+    if "feedback" not in st.session_state:
+        st.session_state.feedback = {}
 
 
 def _current_chat() -> dict:
@@ -262,6 +309,7 @@ def _ask(
     agent: KGRAGAgent,
     model_id: str,
     question: str,
+    turn_id: str = "",
     base_url: str = "",
     memory: ConversationMemory | None = None,
     chat_id: str = "",
@@ -279,6 +327,10 @@ def _ask(
         # One log per browser session, several conversations inside it: the id
         # is what separates two parallel threads of questions after the fact.
         "chat_id": chat_id,
+        # What a feedback line points at. Without it a rating could only be
+        # matched to a turn by timestamp and question text, which stops working
+        # the moment the same question is asked twice.
+        "turn_id": turn_id,
     }
     skips_before = _vector_skips(agent)
     try:
@@ -330,6 +382,9 @@ def _ask(
         # A degraded answer has to say so. Per-question, not per-session: the
         # encoder can come back, and an answer given while it was down is worth
         # less than the one before it and the one after it.
+        # Before the degradation notice: this one explains the answer above it,
+        # the other one qualifies it.
+        shown += _rewrite_notice(question, str(result.get("retrieval_question") or ""))
         record["vector_degraded"] = _vector_skips(agent) > skips_before
         if record["vector_degraded"]:
             shown += DEGRADED_NOTICE
@@ -420,15 +475,51 @@ def _render(content: str) -> None:
             st.code(evidence, language=None)
 
 
-for role, content in chat["messages"]:
+def _feedback_row(turn_id: str, chat_id: str) -> None:
+    """Two buttons and an optional note, under one answer.
+
+    Rendered from the history loop rather than beside the fresh answer, so a
+    reader who changes their mind three questions later can still say so.
+    """
+    given = st.session_state.feedback.get(turn_id)
+    up, down, said = st.columns([1, 1, 10])
+    if up.button("👍", key=f"up_{turn_id}", help="Risposta utile"):
+        st.session_state.feedback[turn_id] = "up"
+        _record_feedback(turn_id, chat_id, "up")
+        st.rerun()
+    if down.button("👎", key=f"down_{turn_id}", help="Risposta sbagliata o inutile"):
+        st.session_state.feedback[turn_id] = "down"
+        _record_feedback(turn_id, chat_id, "down")
+        st.rerun()
+    if given:
+        said.caption("Grazie, registrato." if given == "up" else "Registrato: cosa non andava?")
+        with st.expander("Aggiungi una nota", expanded=False):
+            note = st.text_area(
+                "Nota", key=f"note_{turn_id}", label_visibility="collapsed",
+                placeholder="Che cosa mancava, o che cosa era sbagliato?",
+            )
+            if st.button("Salva nota", key=f"savenote_{turn_id}") and note.strip():
+                _record_feedback(turn_id, chat_id, note=note.strip())
+                st.session_state.feedback[turn_id] = f"{given}+nota"
+                st.rerun()
+
+
+for message in chat["messages"]:
+    # Three items since feedback was added; older entries in a session that was
+    # already open when the app reloaded still have two.
+    role, content = message[0], message[1]
+    turn_id = message[2] if len(message) > 2 else ""
     with st.chat_message(role):
         _render(content)
+        if role == "assistant" and turn_id:
+            _feedback_row(turn_id, st.session_state.current_chat)
 
 question = st.chat_input("Scrivi qui la tua domanda...")
 if question:
     if not chat["messages"]:
         chat["title"] = _chat_label(question)
-    chat["messages"].append(("user", question))
+    chat["messages"].append(("user", question, ""))
+    turn_id = uuid.uuid4().hex[:12]
     with st.chat_message("user"):
         st.markdown(question)
     with st.chat_message("assistant"):
@@ -437,6 +528,7 @@ if question:
                 agent,
                 model_id,
                 question,
+                turn_id=turn_id,
                 base_url=base_url,
                 memory=chat["memory"],
                 chat_id=st.session_state.current_chat,
@@ -446,7 +538,7 @@ if question:
         # click during the spinner, a browser reconnect) used to drop the answer
         # from the transcript while the JSONL row was already written and
         # memory.observe() had already run, leaving the three disagreeing.
-        chat["messages"].append(("assistant", answer))
+        chat["messages"].append(("assistant", answer, turn_id))
         _render(answer)
     # The sidebar rendered before the answer existed: rerun so the chat list
     # shows the new title and the updated topics.
