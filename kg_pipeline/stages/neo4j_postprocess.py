@@ -1222,6 +1222,20 @@ def _cleanup_named_region_nodes(
     return report
 
 
+def _isolated_delete_cap() -> int:
+    """How many isolated nodes one run may delete before it stops and asks.
+
+    Default 500: an order of magnitude above the 41 the guarded query returns
+    on the demo graph, and two below the 14 561 it returned unguarded.
+    """
+    raw = os.getenv("KG_ISOLATED_DELETE_MAX", "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 500
+    return value if value > 0 else 500
+
+
 def _cleanup_isolated_nodes(
     session,
     dry_run: bool,
@@ -1252,6 +1266,31 @@ def _cleanup_isolated_nodes(
     report["candidates"] = len(rows)
     if not rows:
         return report
+
+    # A cleanup that suddenly has thousands of things to delete has almost
+    # certainly stopped meaning what it meant. That is not hypothetical: with
+    # the two guards above missing, this same query returned 14 561 candidates
+    # on the demo graph, of which 14 520 were the vector carriers. With them it
+    # returns 41. Anything in between is a graph that changed shape, or a guard
+    # that stopped working, and either is worth a human before a DETACH DELETE.
+    #
+    # Refusing by turning into a dry run rather than by returning early: the
+    # report below still says exactly what would have gone, which is what the
+    # person now reading this needs. The error makes `main()` exit non-zero.
+    cap = _isolated_delete_cap()
+    if not dry_run and len(rows) > cap:
+        report["errors"].append(
+            f"refusing to delete {len(rows)} isolated nodes: over the safety cap "
+            f"of {cap}. Nothing was written and this run became a dry run. Check "
+            "the sample below, then raise KG_ISOLATED_DELETE_MAX if it is right."
+        )
+        LOGGER.error(
+            "Isolated-node cleanup refused: %d candidates over the cap of %d. "
+            "Ran as a dry run instead; nothing was deleted.",
+            len(rows),
+            cap,
+        )
+        dry_run = True
 
     # The old code ran one lookup query per isolated node — hundreds to
     # thousands of sequential round-trips, each one a full scan for a name.
