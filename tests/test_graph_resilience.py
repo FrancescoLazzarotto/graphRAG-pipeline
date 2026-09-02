@@ -173,3 +173,69 @@ def test_a_query_error_does_not_trip_it() -> None:
         kg.run_query("RETURN 1")
     assert kg._outage_error is None
     assert graph.calls == 1
+
+
+class _SeedSession:
+    """Records every statement; the exact seed query always returns nothing."""
+
+    def __init__(self) -> None:
+        self.statements: list[str] = []
+
+    def query(self, cypher, params=None, *a, **k):  # noqa: ANN001 - test double
+        self.statements.append(" ".join(str(cypher).split()))
+        return []
+
+    def fallbacks(self) -> list[str]:
+        return [s for s in self.statements if "CONTAINS" in s]
+
+
+class _Result:
+    def __init__(self, rows): self._rows = rows
+    def data(self): return self._rows
+    def consume(self): return None
+    def __iter__(self): return iter(self._rows)
+
+
+def _store(session: _SeedSession) -> manager_module.KnowledgeGraphManager:
+    bare = manager_module.KnowledgeGraphManager.__new__(manager_module.KnowledgeGraphManager)
+    bare.config = manager_module.KGConfig(
+        url="bolt://x", username="u", password="p", database="neo4j"
+    )
+    bare.graph = session
+    bare.query_retry_attempts = 1
+    bare.query_retry_backoff_sec = 0.0
+    bare._outage_until = 0.0
+    bare._outage_error = None
+    bare._vector_skips = 0
+    bare._fulltext_available = False
+    return bare
+
+
+ELEMENT_ID = "4:c9865134-b1d8-40ef-9861-2c15e0a3a3d1:1234"
+
+
+@pytest.mark.parametrize("method,kwargs", [
+    ("get_neighbors", {"entity": ELEMENT_ID, "limit": 10}),
+    ("extract_subgraph", {"entity": ELEMENT_ID, "hops": 1, "limit": 10}),
+])
+def test_an_id_anchor_never_falls_back_to_a_name_scan(method: str, kwargs: dict) -> None:
+    """`_graph_anchors` passes elementIds on purpose — matching by name compares
+    six lowercased properties on every node. The exact query respects that with
+    id_only; the fallback dropped it and asked which node *names* contain a
+    UUID, which is a full scan that can only answer no."""
+    session = _SeedSession()
+    getattr(_store(session), method)(**kwargs)
+    assert not session.fallbacks(), (
+        f"{method} issued a CONTAINS scan for an elementId: {session.fallbacks()[0][:120]}"
+    )
+
+
+@pytest.mark.parametrize("method,kwargs", [
+    ("get_neighbors", {"entity": "biochar", "limit": 10}),
+    ("extract_subgraph", {"entity": "biochar", "hops": 1, "limit": 10}),
+])
+def test_a_name_anchor_still_gets_the_fallback(method: str, kwargs: dict) -> None:
+    """With a name there is something to broaden, and that is what it is for."""
+    session = _SeedSession()
+    getattr(_store(session), method)(**kwargs)
+    assert session.fallbacks(), f"{method} lost the fallback for a name anchor"

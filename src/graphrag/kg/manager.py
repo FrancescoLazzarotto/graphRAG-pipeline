@@ -932,7 +932,15 @@ class KnowledgeGraphManager:
         """
 
         rows = self.run_query(cypher_exact, params)
-        if not rows:
+        # Same rule as get_shortest_path: broadening is for names. `seed_by_id`
+        # is already computed for the exact query above, and dropping it here
+        # asked which node *names* contain an elementId — never any, at the
+        # price of a scan of every node over six lowercased properties. When
+        # the anchor is an id there is nothing to broaden, so the fallback is
+        # skipped outright; the only nodes it could add are those whose own id
+        # contains the anchor's as a substring, which is an artifact of id
+        # formatting rather than a relationship.
+        if not rows and not seed_by_id:
             # fallback to a looser text match when exact matching returns nothing
             cypher_fallback = f"""
             MATCH (seed)
@@ -1022,7 +1030,15 @@ class KnowledgeGraphManager:
         LIMIT $limit
         """
         rows = self.run_query(cypher_exact, params)
-        if not rows:
+        # Same rule as get_shortest_path: broadening is for names. `seed_by_id`
+        # is already computed for the exact query above, and dropping it here
+        # asked which node *names* contain an elementId — never any, at the
+        # price of a scan of every node over six lowercased properties. When
+        # the anchor is an id there is nothing to broaden, so the fallback is
+        # skipped outright; the only nodes it could add are those whose own id
+        # contains the anchor's as a substring, which is an artifact of id
+        # formatting rather than a relationship.
+        if not rows and not seed_by_id:
             cypher_fallback = f"""
             MATCH (seed)-[r]-(neighbor)
             WHERE {self._node_text_match_clause("seed", "entity", exact=False)}
