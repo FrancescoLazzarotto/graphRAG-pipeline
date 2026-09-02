@@ -220,6 +220,10 @@ class ConversationMemory:
     window: int = 3
     max_seed_entities: int = 4
     turn: int = 0
+    # Turns that raised before producing an answer. Counted apart from `turn`
+    # so a retry after a graph failover does not spend two turns of the decay
+    # window on one question; see `observe_failure`.
+    failed_turns: int = 0
     active_entities: list[ActiveEntity] = field(default_factory=list)
     last_answer_entities: list[str] = field(default_factory=list)
     last_question: str = ""
@@ -227,6 +231,7 @@ class ConversationMemory:
     def reset(self) -> None:
         """Forget the current topic (the 'Nuovo argomento' button)."""
         self.turn = 0
+        self.failed_turns = 0
         self.active_entities = []
         self.last_answer_entities = []
         self.last_question = ""
@@ -242,7 +247,25 @@ class ConversationMemory:
         flag before it ever reads its markers, so an empty graph turn silently
         disabled follow-up detection for the rest of the session.
         """
-        return self.turn > 0
+        return self.turn > 0 or self.failed_turns > 0
+
+    def observe_failure(self, question: str) -> None:
+        """Record that a turn happened even though it produced no answer.
+
+        `observe` runs only after a successful `graph.invoke`, so a turn that
+        raised left no trace: if the failure was the first turn of a session,
+        `has_context()` stayed false, `is_follow_up` exited on that flag before
+        reading any marker, and the next legitimate follow-up was treated as a
+        fresh question.
+
+        Deliberately not `observe` with an empty answer: that would increment
+        `turn`, and the demo retries the same question after rebuilding onto
+        the fallback graph, so one question would consume two turns and shorten
+        the entity decay window by one. The turn counter stays the truth about
+        answered turns; this only records that the conversation has started.
+        """
+        self.failed_turns += 1
+        self.last_question = " ".join(str(question or "").split())
 
     def seed_entities(self, limit: int | None = None) -> list[str]:
         """Entities to resolve a follow-up against, most useful first.

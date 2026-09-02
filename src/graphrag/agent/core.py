@@ -1763,6 +1763,18 @@ class KGRAGAgent:
                         "Try a more specific question or raise --recursion-limit."
                     )
                 }
+        except Exception:
+            # The turn happened even though it produced nothing. `observe` runs
+            # below, after a successful invoke, so a raised turn used to leave
+            # no trace at all: when the failure was the first turn of a session
+            # `has_context()` stayed false, and the next follow-up — the one the
+            # user asks precisely because the first attempt failed — was treated
+            # as a fresh question. Recorded, then re-raised: the caller still
+            # needs to know, and the demo's graph failover depends on catching
+            # it.
+            if memory is not None:
+                memory.observe_failure(question)
+            raise
         latency_ms = (time.perf_counter() - start) * 1000.0
         output["latency_ms"] = latency_ms
 

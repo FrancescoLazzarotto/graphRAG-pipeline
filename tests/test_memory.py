@@ -142,6 +142,36 @@ def test_the_bare_forms_still_work():
         assert is_follow_up(question) is True, question
 
 
+def test_a_failed_turn_still_starts_the_conversation():
+    """`observe` runs only after a successful invoke, so a turn that raised left
+    no trace: with the failure on the first turn, has_context() stayed false and
+    the follow-up the user asks *because* it failed looked like a fresh
+    question."""
+    memory = ConversationMemory()
+    assert memory.has_context() is False
+    memory.observe_failure("Cosa sono le 3C della Circular Economy for Food?")
+    assert memory.has_context() is True
+    assert is_follow_up("Spiegameli meglio", has_context=memory.has_context()) is True
+
+
+def test_a_failed_turn_does_not_spend_a_turn_of_the_decay_window():
+    """The demo retries the same question after failing over to the other graph.
+    Incrementing `turn` would spend two turns on one question and shorten the
+    entity window by one."""
+    memory = ConversationMemory()
+    memory.observe_failure("Cosa sono le 3C?")
+    assert memory.turn == 0
+    assert memory.failed_turns == 1
+
+
+def test_new_topic_forgets_the_failure_too():
+    memory = ConversationMemory()
+    memory.observe_failure("Cosa sono le 3C?")
+    memory.reset()
+    assert memory.has_context() is False
+    assert memory.failed_turns == 0
+
+
 def test_self_contained_questions_are_left_alone():
     for question in (
         Q3,
