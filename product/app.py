@@ -113,12 +113,19 @@ def _configure_logging() -> None:
     deprecation notices, and a warning worth reading was lost in it.
     """
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
-    engine = logging.getLogger("graphrag")
-    engine.setLevel(logging.WARNING)
+    # Both, not just the engine. `logger` in this module is "expert_demo", so
+    # the file handler attached only to "graphrag" never received the demo's
+    # own diagnostics — including the traceback of a failed question, which is
+    # the single line someone reads when the expert says "yesterday it answered
+    # badly". Those went to stderr, which the docstring above says is where a
+    # warning worth reading gets lost.
+    targets = [logging.getLogger("graphrag"), logging.getLogger("expert_demo")]
+    for target in targets:
+        target.setLevel(logging.WARNING)
 
     # Streamlit re-runs this module on every interaction, so attaching the
     # handler unguarded would multiply it by the number of clicks.
-    if any(getattr(h, "_demo_handler", False) for h in engine.handlers):
+    if any(getattr(h, "_demo_handler", False) for t in targets for h in t.handlers):
         return
     # Beside streamlit.log, not beside the session transcripts: this is
     # operational output, while LOG_DIR holds what people asked and were told
@@ -130,7 +137,8 @@ def _configure_logging() -> None:
         logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
     )
     handler._demo_handler = True  # type: ignore[attr-defined]
-    engine.addHandler(handler)
+    for target in targets:
+        target.addHandler(handler)
 
 
 @st.cache_resource(show_spinner="Avvio in corso (connessione al grafo e indice testi)...")
@@ -463,7 +471,21 @@ base_url, model_id = models[choice]
 try:
     agent, model_id, graph_label = _load_agent(base_url, model_id)
 except RuntimeError as exc:
+    # build_kg_manager raises this one, already phrased for a reader.
     st.error(str(exc))
+    st.stop()
+except Exception as exc:  # noqa: BLE001 - the browser must not receive a traceback
+    # Only RuntimeError used to be caught, but the same call builds the text
+    # pipeline — FAISS, a local e5 — which raises anything at all. A missing
+    # index directory or a torch/sentence-transformers mismatch then reached
+    # the browser as a full traceback: file paths, model names and the shape
+    # of the deployment, shown to whoever opened the page.
+    _configure_logging()
+    logger.error("Startup failed: %s\n%s", exc, traceback.format_exc())
+    st.error(
+        "Avvio non riuscito: il servizio non è disponibile in questo momento. "
+        "Il dettaglio tecnico è nel log del server."
+    )
     st.stop()
 st.caption(f"strategia: {STRATEGY} | modello: {model_id} | grafo: {graph_label}")
 
