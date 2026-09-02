@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from graphrag.agent.evidence import build_evidence_index, render_reference_list
 from graphrag.config import AgentConfig, OUTPUT_COMPLEXITY
 from graphrag.llm.manager import LLMManager
@@ -141,6 +143,51 @@ def test_an_imperative_with_the_pronoun_attached_is_italian():
         "Parlami del micelio",
     ):
         assert LLMManager._detect_query_language(question) == "it", question
+
+
+ARTICULATED_PREPOSITIONS = [
+    "sul", "sullo", "sulla", "sui", "sugli", "sulle",
+    "dal", "dallo", "dalla", "dai", "dagli", "dalle",
+    "nel", "nello", "nella", "nei", "negli", "nelle",
+    "al", "allo", "alla", "ai", "agli", "alle",
+    "del", "dello", "della", "dei", "degli", "delle",
+]
+
+
+@pytest.mark.parametrize("preposition", ARTICULATED_PREPOSITIONS)
+def test_every_articulated_preposition_is_an_italian_signal(preposition: str) -> None:
+    """The list held these by halves — "sulla" and "sui" but not "sul", every
+    "di + article" but not one of "da + article". A question whose only Italian
+    signal was a missing one scored zero on both sides, and the tie goes to
+    English. The phrase carries no other marker, so the preposition is what is
+    being tested."""
+    assert LLMManager._detect_query_language(f"{preposition} system thinking") == "it"
+
+
+def test_a_phrase_with_no_italian_signal_is_still_english():
+    """The control for the test above: without the preposition there is no
+    evidence either way, and the tie must keep going to English — flipping it
+    was measured and would repair two questions while breaking eight."""
+    assert LLMManager._detect_query_language("qqq system thinking") == "en"
+
+
+def test_the_recorded_question_that_was_answered_in_the_wrong_language():
+    """From the session logs. None of its six tokens matched either list."""
+    assert LLMManager._detect_query_language("Sai dirmi qualcosa sul system thinking?") == "it"
+
+
+def test_short_english_questions_without_function_words_stay_english():
+    """These score zero on both sides too, and are the reason the tie defaults
+    to English."""
+    for question in (
+        "Biochar production yield?",
+        "SEeD definition?",
+        "Circular economy metrics?",
+        "Industrial symbiosis examples",
+        "Grape stalks percentage",
+        "Food waste recovery strategies",
+    ):
+        assert LLMManager._detect_query_language(question) == "en", question
 
 
 def test_english_questions_are_not_flipped():

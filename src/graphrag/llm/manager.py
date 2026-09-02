@@ -842,6 +842,22 @@ class LLMManager:
             return "en"
 
         italian_markers = {
+            # Articulated prepositions are a closed class, and this list held
+            # them by halves: "sulla"/"sui"/"sulle" but not "sul", every "di +
+            # article" but not one of "da + article". A question then scored
+            # zero on both sides and the tie below sent it to English —
+            # measured on the expert's own questions, "Sai dirmi qualcosa sul
+            # system thinking?" matched nothing at all in either list and was
+            # answered in English. The paradigms are completed here rather than
+            # patched word by word, which is how they came to be uneven.
+            # "i" is deliberately left out: lowercased, it is also English "I".
+            "sul", "sullo", "sugli",
+            "dal", "dallo", "dalla", "dai", "dagli", "dalle",
+            "nello", "nei",
+            "al", "allo", "alla", "ai",
+            "lo", "le",
+            # Attested in the recorded sessions and absent from the list.
+            "sai", "dirmi", "qualcosa", "cui", "ha", "hanno",
             "il",
             "la",
             "gli",
