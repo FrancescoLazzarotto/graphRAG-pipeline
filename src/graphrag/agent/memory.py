@@ -71,7 +71,21 @@ _REQUEST_OPENER = re.compile(
     # spiegarmelo in modo più semplice?" was read as a fresh question, and with
     # the domain gate on it was refused outright as out of domain.
     r"(?:puoi|potresti|riesci\s+a|sai)\s+\w+|"
-    r"dammi|dimmi|fammi|spiegami|elencami|indicami|riportami|mostrami|"
+    # Stem plus clitic, not the bare "-mi" form. Italian attaches pronouns to
+    # the imperative, and the word boundary after "spiegami" does not fall
+    # inside "spiegameli", so the whole family was invisible: "Spiegameli
+    # meglio" was read as a fresh question, went out without the conversation's
+    # subject and without the answer-language pin, and came back in English
+    # about something else — with citations and a phantom rate of 0.0, so it
+    # looked as trustworthy as any other answer. The suffixes are the paradigm
+    # these verbs actually take: -mi, -melo/-mela/-meli/-mele, -mene.
+    #
+    # `parlam` is new rather than clitic-widened: "parlami" was in no list at
+    # all, and it appears twice in the expert's recorded questions — more often
+    # than "spiegameli". Only verbs that appear in those sessions are here;
+    # guessing at more would widen the follow-up exemption for nothing.
+    r"(?:damm|dimm|famm|spiegam|elencam|indicam|riportam|mostram|parlam)"
+    r"(?:i|e(?:l[oaie]|ne))|"
     r"give me|show me|list me|(?:can|could)\s+you\s+\w+"
     r")\b",
     re.IGNORECASE,

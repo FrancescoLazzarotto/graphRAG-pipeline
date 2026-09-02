@@ -113,6 +113,35 @@ def test_continuity_markers_fire_regardless_of_length():
         assert is_follow_up(question) is True, question
 
 
+def test_an_imperative_with_the_pronoun_attached_is_a_follow_up():
+    """Italian attaches the pronoun to the imperative, and the word boundary
+    after "spiegami" does not fall inside "spiegameli", so the whole family was
+    invisible: no rewrite, no memory, no answer-language pin."""
+    for question in (
+        "Spiegameli meglio",
+        "Spiegamelo meglio",
+        "Spiegamene uno",
+        "Dammene un esempio",
+        "Dimmelo in modo semplice",
+        "Elencameli tutti",
+        "Mostrameli",
+    ):
+        assert is_follow_up(question) is True, question
+
+
+def test_parlami_was_in_no_list_at_all():
+    """It appears twice in the expert's recorded questions, more often than
+    "spiegameli", and matched neither the openers nor the continuity markers."""
+    assert is_follow_up("Parlami del micelio") is True
+
+
+def test_the_bare_forms_still_work():
+    """Widening to stems must not lose what the exact words already caught."""
+    for question in ("Dimmi di più", "Dammi delle linee guida", "Fammi un esempio",
+                     "Riportami i dati", "Indicami le strategie", "Spiegami meglio"):
+        assert is_follow_up(question) is True, question
+
+
 def test_self_contained_questions_are_left_alone():
     for question in (
         Q3,

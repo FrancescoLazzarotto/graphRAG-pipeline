@@ -27,6 +27,16 @@ logger = logging.getLogger("graphrag")
 # function words alone are too thin a signal (WP5).
 _ITALIAN_ACCENTED = re.compile(r"[àèéìòù]")
 _ITALIAN_ELISION = re.compile(r"\b(?:l|dell|nell|all|sull|dall|un|quell|c|d)'")
+# An imperative with the pronoun attached: "spiegameli", "dammene", "mostrameli".
+# No English word takes this shape, and these questions carry no function words
+# at all, so the marker counts below both score zero and the tie goes to English:
+# "Spiegameli meglio" was answered in English to an Italian speaker. Same stems
+# as the follow-up opener in graphrag.agent.memory, for the same reason — the
+# two decide the same class of question.
+_ITALIAN_IMPERATIVE_CLITIC = re.compile(
+    r"\b(?:damm|dimm|famm|spiegam|elencam|indicam|riportam|mostram|parlam)"
+    r"(?:i|e(?:l[oaie]|ne))\b"
+)
 
 
 class LLMManager:
@@ -944,6 +954,8 @@ class LLMManager:
             if _ITALIAN_ACCENTED.search(text):
                 it_score += 1
             if _ITALIAN_ELISION.search(text):
+                it_score += 1
+            if _ITALIAN_IMPERATIVE_CLITIC.search(text):
                 it_score += 1
 
         return "it" if it_score > en_score else "en"

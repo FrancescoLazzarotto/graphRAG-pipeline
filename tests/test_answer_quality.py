@@ -128,6 +128,21 @@ def test_detects_short_italian_questions():
         assert LLMManager._detect_query_language(question) == "it", question
 
 
+def test_an_imperative_with_the_pronoun_attached_is_italian():
+    """These carry no function word at all, so both marker counts were zero and
+    the tie went to English: "Spiegameli meglio" was answered in English to an
+    Italian speaker, with citations and a phantom rate of 0.0."""
+    for question in (
+        "Spiegameli meglio",
+        "Spiegamelo meglio",
+        "Mostrameli",
+        "Elencameli tutti",
+        "Dammene un esempio",
+        "Parlami del micelio",
+    ):
+        assert LLMManager._detect_query_language(question) == "it", question
+
+
 def test_english_questions_are_not_flipped():
     for question in (
         "What is SEeD?",
