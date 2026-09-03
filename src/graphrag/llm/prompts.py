@@ -92,6 +92,7 @@ class PromptLibrary:
         language: str | None = None,
         reinforce_language: bool = False,
         definitional: bool = False,
+        transcript: bool = False,
     ) -> ChatPromptTemplate:
         """Build the answer prompt.
 
@@ -105,9 +106,14 @@ class PromptLibrary:
                 wrong-language answer). Ignored when ``language`` is ``None``.
             definitional: The question asks what something is (WP3). Adds the
                 quote-then-explain structure the expert asked for.
+            transcript: Add a ``transcript`` slot carrying the conversation so
+                far. ``False`` — the default, and what every experiment run
+                uses — leaves the template byte-identical to the one without
+                this parameter.
 
         Returns:
-            The chat prompt template with ``question`` and ``context`` slots.
+            The chat prompt template with ``question`` and ``context`` slots,
+            plus ``transcript`` when that flag is set.
         """
         if config.answer_prompt:
             return ChatPromptTemplate.from_template(config.answer_prompt)
@@ -198,6 +204,25 @@ class PromptLibrary:
                 " Evidence items in the context are numbered: reference them by "
                 "their id so each specific claim stays traceable to its source "
                 "document."
+            )
+
+        # Without this the model has no record of its own prose, so a question
+        # that quotes it — "hai scritto X, quali?" — arrives as a bare claim,
+        # and the grounding rule above is precisely what turns a bare claim into
+        # a denial. Measured on the live demo, 2026-09-03: the assistant told
+        # the expert twice that a sentence it had written fifteen minutes
+        # earlier was a factually wrong premise.
+        if transcript:
+            system_message += (
+                " The conversation so far is given under 'Conversation so far'. "
+                "Those are the user's earlier questions and your own earlier "
+                "replies: they are a record of what was said, never evidence. "
+                "Never cite them, and never treat a statement as supported "
+                "because you made it earlier. When the user refers to something "
+                "you said, take it as said — do not deny it and do not call the "
+                "premise unsupported — then answer by re-grounding that point in "
+                "the context below, and say plainly if the context does not "
+                "support it after all."
             )
 
         # An English heading on top of an Italian answer is exactly the kind of
@@ -315,11 +340,23 @@ class PromptLibrary:
                 "definition and never as a replacement for it. "
             )
 
+        # Ahead of the question and the context on purpose. The transcript only
+        # ever grows at its end, so turn N's prefix extends turn N-1's and the
+        # served prefix cache (--enable-prefix-caching on both endpoints) reuses
+        # it; placed after the context, which is rebuilt every turn, nothing
+        # below it would ever be reusable.
+        transcript_block = (
+            "Conversation so far (what was already said; not evidence, never "
+            "cite it):\n{transcript}\n\n"
+            if transcript
+            else ""
+        )
         human_message_template = (
             f"Target audience: {config.target_audience}.\n"
             f"{tone_map[config.tone]}\n{complexity_map[config.complexity]}\n"
             f"{structured}\n"
-            "Question:\n{question}\n\n"
+            + transcript_block
+            + "Question:\n{question}\n\n"
             "Context:\n{context}\n\n"
             + definition_block
             + depth_block

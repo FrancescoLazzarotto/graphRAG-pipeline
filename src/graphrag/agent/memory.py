@@ -6,12 +6,21 @@ question in isolation and searches for the wrong thing.
 This module holds the state needed to make such a question self-contained again:
 the entities the conversation is actually about. Three hard boundaries:
 
-* **Never a source of facts.** Memory carries *entities*, never claims. The
-  groundedness of a turn is always computed against the evidence retrieved in
-  that turn; a model that could cite something "because it was said earlier"
-  would be self-confirming.
-* **Retrieval only.** The rewritten question steers retrieval; generation still
-  answers the question the user literally typed.
+* **Never a source of facts.** Memory carries *entities* and the plain text of
+  what was already said, never citable claims. The groundedness of a turn is
+  always computed against the evidence retrieved in that turn; a model that
+  could cite something "because it was said earlier" would be self-confirming.
+  The transcript below is what makes the second half enforceable rather than
+  merely intended: reference tags are stripped out of it, so there is no id in
+  the transcript for the model to reuse.
+* **Retrieval only, with one exception.** The rewritten question steers
+  retrieval; generation still answers the question the user literally typed.
+  The exception is the transcript: an expert who writes "hai scritto X, quali?"
+  is quoting the assistant, and with no record of its own prose the model read
+  that as an unsupported premise and told the expert the claim was false —
+  twice, in the session of 2026-09-03, about a sentence it had written fifteen
+  minutes earlier. The transcript is carried so the model can recognise its own
+  words, and for nothing else.
 * **Off unless asked.** No memory object means the previous behaviour, byte for
   byte — gold runs and experiment baselines stay comparable.
 
@@ -22,12 +31,14 @@ decision that a handful of surface markers already settles.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
 __all__ = [
     "ActiveEntity",
+    "Exchange",
     "ConversationMemory",
 ]
 
@@ -47,6 +58,48 @@ _DOCUMENT_SUFFIXES = (
     ".ppt", ".pptx", ".odp",
     ".txt", ".md", ".json", ".xml", ".html", ".htm",
 )
+
+# Reference tags as the answer prompt writes them: "[S1]", "[T12]", and the
+# document form "[REPORT MATTM, p. 70]" with its multi-source "[A, p. 1; B, p. 2]"
+# variant. They are removed from the transcript so a claim the model made earlier
+# cannot come back carrying an id and be recited as if a document supported it.
+# "[...]" is the omission marker the definitional prompt asks for and stays.
+_REFERENCE_TAG_RE = re.compile(r"\[(?!\.\.\.\])[^\[\]\n]{1,200}\]")
+
+# The generated source list closing an answer: pure citation machinery, the part
+# of the text with the highest tag density and the least conversational value.
+_SOURCE_LIST_RE = re.compile(
+    r"\n\s*\*{0,2}(?:Fonti|Sources)\*{0,2}\s*:\s*\n.*\Z",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Characters, not turns: an answer runs from 2.5k to 5k characters, so a turn
+# budget would swing by a factor of two. 16k characters is roughly 4k tokens,
+# about five stripped answers — comfortable inside a 32k window that also has to
+# hold ~3k of retrieved context, and bounded by design because the corpus grows
+# and the context block grows with it.
+_DEFAULT_TRANSCRIPT_CHARS = 16_000
+
+
+def _transcript_budget() -> int:
+    """Character budget for the transcript, overridable per deployment."""
+    raw = os.getenv("GRAPHRAG_TRANSCRIPT_MAX_CHARS", "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_TRANSCRIPT_CHARS
+    return value if value > 0 else _DEFAULT_TRANSCRIPT_CHARS
+
+
+def _strip_references(answer: str) -> str:
+    """The prose of an answer, without the apparatus that makes it citable."""
+    text = _SOURCE_LIST_RE.sub("", str(answer or ""))
+    text = _REFERENCE_TAG_RE.sub("", text)
+    # Removing an inline tag leaves " ." and doubled spaces behind.
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r" +([.,;:!?])", r"\1", text)
+    return text.strip()
+
 
 _TOKEN_RE = re.compile(r"[\wÀ-ÿ'’-]+")
 
@@ -90,6 +143,18 @@ class ActiveEntity:
 
 
 @dataclass
+class Exchange:
+    """One completed turn as plain conversational text.
+
+    The answer is stored stripped of reference tags and of its generated source
+    list: what stays is what the assistant said, not what it cited.
+    """
+
+    question: str
+    answer: str
+
+
+@dataclass
 class ConversationMemory:
     """Entities in play for the current session.
 
@@ -109,6 +174,11 @@ class ConversationMemory:
     active_entities: list[ActiveEntity] = field(default_factory=list)
     last_answer_entities: list[str] = field(default_factory=list)
     last_question: str = ""
+    # The conversation as text, oldest first. Unlike `active_entities` this is
+    # not subject to the `window` decay: a user can refer to something said six
+    # turns ago, and the character budget already bounds it.
+    exchanges: list[Exchange] = field(default_factory=list)
+    max_transcript_chars: int = field(default_factory=_transcript_budget)
 
     def reset(self) -> None:
         """Forget the current topic (the 'Nuovo argomento' button)."""
@@ -117,6 +187,7 @@ class ConversationMemory:
         self.active_entities = []
         self.last_answer_entities = []
         self.last_question = ""
+        self.exchanges = []
 
     def has_context(self) -> bool:
         """Whether anything has been said yet in this session.
@@ -251,6 +322,45 @@ class ConversationMemory:
         self.active_entities = [
             item for item in self.active_entities if item.turn > cutoff
         ]
+
+        self._record_exchange(question=self.last_question, answer=answer)
+
+    def _record_exchange(self, question: str, answer: str) -> None:
+        """Append the turn to the transcript and trim it to the budget.
+
+        Oldest first out: a reference to what was just said is what breaks
+        without a transcript, and the far end of a long conversation is the part
+        the user is least likely to be quoting.
+        """
+        prose = _strip_references(answer)
+        if not question and not prose:
+            return
+        self.exchanges.append(Exchange(question=question, answer=prose))
+
+        budget = self.max_transcript_chars
+        while len(self.exchanges) > 1 and self._transcript_size() > budget:
+            self.exchanges.pop(0)
+
+    def _transcript_size(self) -> int:
+        return sum(len(item.question) + len(item.answer) for item in self.exchanges)
+
+    def transcript(self) -> str:
+        """The conversation so far, as text for the answer prompt.
+
+        Empty until a turn has completed, so the first question of a session
+        renders the prompt exactly as it did before this existed.
+
+        Labels are English because the prompt around them is: the model has to
+        read these as speaker turns, not as retrieved material. The answers
+        carry no reference tags, so nothing here can be cited.
+        """
+        parts: list[str] = []
+        for item in self.exchanges:
+            if item.question:
+                parts.append(f"User: {item.question}")
+            if item.answer:
+                parts.append(f"Assistant: {item.answer}")
+        return "\n\n".join(parts)
 
 
 def _entity_names(

@@ -635,7 +635,13 @@ class LLMManager:
                 if backoff_sec > 0:
                     time.sleep(backoff_sec)
 
-    def generate(self, query: str, context: str, config: AgentConfig) -> dict[str, str]:
+    def generate(
+        self,
+        query: str,
+        context: str,
+        config: AgentConfig,
+        transcript: str = "",
+    ) -> dict[str, str]:
         response_language = self._detect_query_language(query)
 
         # PromptLibrary is the single source of truth for prompts: both the
@@ -653,13 +659,12 @@ class LLMManager:
             config,
             language=response_language if config.enforce_language else None,
             definitional=definitional,
+            transcript=bool(transcript),
         )
-        rendered = prompt.invoke(
-            {
-                "question": query,
-                "context": context,
-            }
-        )
+        slots: dict[str, str] = {"question": query, "context": context}
+        if transcript:
+            slots["transcript"] = transcript
+        rendered = prompt.invoke(slots)
 
         logger.info("Rendered prompt (first 500 chars): %s", str(rendered)[:500])
         logger.info("Context length (chars): %d", len(context))
@@ -736,6 +741,7 @@ class LLMManager:
                 config=config,
                 answer=answer,
                 target_language=response_language,
+                transcript=transcript,
             )
 
         return {
@@ -752,6 +758,7 @@ class LLMManager:
         config: AgentConfig,
         answer: str,
         target_language: str,
+        transcript: str = "",
     ) -> str:
         """Regenerate once when the answer came back in the wrong language (WP5).
 
@@ -779,6 +786,9 @@ class LLMManager:
             target_language,
         )
         try:
+            retry_slots: dict[str, str] = {"question": query, "context": context}
+            if transcript:
+                retry_slots["transcript"] = transcript
             retry_prompt = PromptLibrary.answer_prompt(
                 config,
                 language=target_language,
@@ -787,7 +797,8 @@ class LLMManager:
                     config.prefer_verbatim_definitions
                     and questions.is_definitional(query)
                 ),
-            ).invoke({"question": query, "context": context})
+                transcript=bool(transcript),
+            ).invoke(retry_slots)
             output = self._invoke_with_retry(model, retry_prompt)
             retried = str(
                 output.content if hasattr(output, "content") else output

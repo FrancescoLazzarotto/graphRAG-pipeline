@@ -1310,7 +1310,10 @@ class KGRAGAgent:
 
         if self.llm:
             result = self.llm.generate(
-                query=effective_query, context=context, config=generation_config
+                query=effective_query,
+                context=context,
+                config=generation_config,
+                transcript=str(state.get("transcript", "") or ""),
             )
             answer = result.get("answer", "")
             # Carried to the artifacts so the abstention metric can be computed
@@ -1876,6 +1879,12 @@ class KGRAGAgent:
             # Read by `_scope_gate`, which must not judge a question that only
             # makes sense against the previous turn.
             initial_state["follow_up"] = follow_up
+            # Read by `_generate`, so a question that quotes an earlier answer
+            # is answered instead of being denied. Empty on the first turn,
+            # which keeps that turn's prompt identical to the pre-transcript one.
+            transcript = memory.transcript()
+            if transcript:
+                initial_state["transcript"] = transcript
             if follow_up:
                 retrieval_question = self._rewrite_with_memory(question, memory)
                 if retrieval_question != question:

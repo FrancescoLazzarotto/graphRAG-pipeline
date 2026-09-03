@@ -22,6 +22,10 @@ class RAGState(TypedDict, total=False):
     sub_questions: list[str]
     rewritten_question: str
     rewrite_count: int
+    # The conversation so far, as plain text with reference tags stripped. Read
+    # by the generate node; declared here because LangGraph drops keys the state
+    # does not name, which would leave the answer node blind to it.
+    transcript: str
     text_context: str
     kg_triples: list[Triple]
     # Retrieved evidence lists. Declared as state channels so LangGraph
