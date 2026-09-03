@@ -42,12 +42,21 @@ class VLLMBackend:
         if self._client is None:
             from langchain_openai import ChatOpenAI  # type: ignore
 
+            # The engine's own client sets both of these on purpose and this
+            # one had neither. Without a timeout the OpenAI SDK waits 600 s,
+            # and with its default two retries on top of the three below a
+            # wedged server -- not a dead one, a wedged one -- costs 600 x 3 x
+            # 3, about ninety minutes, with a scoring run apparently still
+            # running. Retries belong to the loop in `complete`, which logs
+            # them; the SDK's own are invisible.
             self._client = ChatOpenAI(
                 model=self.model_id,
                 base_url=self.base_url,
                 api_key=self.api_key,
                 temperature=self.temperature,
                 max_tokens=self.max_new_tokens,
+                timeout=float(os.getenv("GRAPHRAG_LLM_HTTP_TIMEOUT_SEC", "300")),
+                max_retries=0,
             )
         return self._client
 
