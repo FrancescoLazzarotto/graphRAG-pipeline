@@ -438,13 +438,20 @@ class LLMManager:
             logger.warning("Domain gate failed (%s); treating question as in domain", exc)
             return True
 
+        return self._read_gate_verdict(output, question)
+
+    @staticmethod
+    def _read_gate_verdict(output: Any, question: str) -> bool:
+        """Parse a one-word IN/OUT completion, defaulting to IN.
+
+        `startswith("OUT")` read only the first three characters, so any
+        preamble flipped a refusal into an acceptance — and reasoning models
+        open with a <think> block. Strip the reasoning block, then look for the
+        verdict as a whole word anywhere in what remains. See
+        docs/code_audit_2026-08-15.md §1.6.
+        """
         verdict = str(output.content if hasattr(output, "content") else output).strip()
-        logger.info("Domain gate: %r -> %s", question[:80], verdict[:64])
-        # `startswith("OUT")` read only the first three characters, so any
-        # preamble flipped a refusal into an acceptance — and three of the six
-        # campaign generators are reasoning models that open with a <think>
-        # block. Strip the reasoning block, then look for the verdict as a whole
-        # word anywhere in what remains. See docs/code_audit_2026-08-15.md §1.6.
+        logger.info("Gate: %r -> %s", question[:80], verdict[:64])
         cleaned = re.sub(
             r"<think>.*?</think>", " ", verdict, flags=re.DOTALL | re.IGNORECASE
         )
@@ -459,6 +466,33 @@ class LLMManager:
             # its conclusion rather than its restatement of the options.
             return in_domain.start() > out_of_domain.start()
         return True
+
+    def classify_answerable(
+        self,
+        question: str,
+        entity_names: Sequence[str] = (),
+        passages: Sequence[str] = (),
+        sources: Sequence[str] = (),
+    ) -> bool:
+        """Whether what the collection returned is about the question.
+
+        The evidence-grounded counterpart of `classify_in_domain`: it names no
+        domain, so it does not have to be rewritten when the collection grows.
+
+        Returns:
+            ``True`` when the material is about the question, and on any
+            failure — a broken gate must not silence a working demo.
+        """
+        prompt = PromptLibrary.evidence_gate_prompt(entity_names, passages, sources)
+        try:
+            model = self.load_llm()
+            output = self._invoke_with_retry(
+                model, prompt.invoke({"question": question})
+            )
+        except Exception as exc:  # noqa: BLE001 - never let the gate break the demo
+            logger.warning("Evidence gate failed (%s); treating question as in domain", exc)
+            return True
+        return self._read_gate_verdict(output, question)
 
     def _build_vllm_llm(self, model_id: str) -> Any:
         ChatOpenAI = self._import_vllm_stack()

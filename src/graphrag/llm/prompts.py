@@ -522,6 +522,91 @@ class PromptLibrary:
         )
 
     @staticmethod
+    def evidence_gate_prompt(
+        entity_names: Sequence[str] = (),
+        passages: Sequence[str] = (),
+        sources: Sequence[str] = (),
+    ) -> ChatPromptTemplate:
+        """Judge a question against what the collection actually returned.
+
+        The other gate describes the domain in the prompt — food, crops,
+        by-products, the three C's, ecodesign — and that description is a
+        maintenance trap the moment the collection grows: a question about a
+        document added last week is refused because the paragraph above was
+        written before it existed. This one never names a domain. It shows what
+        the collection returned for the question and asks whether that material
+        is about it, which is a judgement the collection itself supplies and
+        which widens on its own as documents are added.
+
+        Retrieval matches strings, so an unrelated question still returns
+        something: "come si fa la carbonara" comes back with "carbonio",
+        "Carrara", "impronta di carbonio". Telling that apart from a real match
+        is exactly what a reader can do and a similarity threshold cannot —
+        measured, the vector score does not separate the two at all.
+
+        Args:
+            entity_names: Names the collection holds for this question's terms.
+            passages: Short snippets from the passages retrieval returned.
+
+        Returns:
+            A prompt whose completion is ``IN`` or ``OUT``.
+        """
+        system_message = (
+            "A document collection was searched for the user's question. You "
+            "are shown what it returned. Decide whether the question belongs "
+            "to the same subject area as that material.\n\n"
+            "Answer with exactly one word:\n"
+            "IN — the question belongs to the same subject area\n"
+            "OUT — the question is about a plainly different subject\n\n"
+            "IN is the normal answer. Say OUT only when the question is about "
+            "a plainly different subject from everything shown.\n\n"
+            "In particular, answer IN when the material is about the right "
+            "subject but does not contain the specific figure, percentage, "
+            "price, name or detail the question asks for. Whether the answer "
+            "is actually in there is decided later by another step, not by "
+            "you: a question asking how much of something there is, or what "
+            "share, or what it costs, is IN as long as the material is about "
+            "that thing.\n\n"
+            "Search matches text, not meaning, so a question about a "
+            "completely different subject still returns results anyway. Before "
+            "answering IN, take each word the question and the material have in "
+            "common and ask whether it is used for the SAME THING in both:\n"
+            "- one spelling can name two unrelated things, and a technical term "
+            "in the material is often the everyday word in the question\n"
+            "- a fragment of a longer word is not the word\n"
+            "- a year, a number, a place name or a common verb appearing in "
+            "both is not a connection at all\n"
+            "When every word in common is an accident of spelling like these, "
+            "or the material merely mentions a word the question contains "
+            "without being about it, answer OUT. That is what OUT is for.\n\n"
+            "Also answer OUT when answering the question would need a field the "
+            "documents listed below are plainly not about — someone holding "
+            "only these documents could not answer it at all.\n\n"
+            "Judge only against the material shown, never against any idea you "
+            "have of what this collection is for. Answer with the single word "
+            "only."
+        )
+
+        def _block(title: str, items: Sequence[str]) -> str:
+            kept = [" ".join(str(i).split())[:200] for i in items if str(i).strip()]
+            if not kept:
+                return f"\n\n{title}: nothing.\n"
+            # Braces are escaped because these strings come from the graph and
+            # the template parses them: a name containing "{" used to raise
+            # KeyError, which the caller swallowed by returning "in domain".
+            body = "\n".join(f"- {k}" for k in kept)
+            return f"\n\n{title}:\n{body}\n".replace("{", "{{").replace("}", "}}")
+
+        system_message += _block("Entries the collection holds", entity_names)
+        system_message += _block("Passages the collection returned", passages)
+        # The documents these came from: the collection describing itself from
+        # its own data, so nothing about the domain has to be written here.
+        system_message += _block("Documents these came from", sources)
+        return ChatPromptTemplate.from_messages(
+            [("system", system_message), ("human", "{question}")]
+        )
+
+    @staticmethod
     def out_of_scope_message(language: str = "en", scope_hint: str = "") -> str:
         """The fixed reply for a question the gate rejected.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -170,6 +171,9 @@ _GATE_EXTRA_STOPWORDS = {
 # gate prompt must not grow into a context of its own.
 _MAX_GATE_ENTITY_TERMS = 6
 _MAX_GATE_ENTITY_NAMES = 8
+# Passages shown to the evidence gate. Three is enough to show what the
+# collection is about without paying for the whole context twice.
+_MAX_GATE_PASSAGES = 3
 
 
 def _proper_noun_terms(question: str) -> list[str]:
@@ -195,6 +199,43 @@ def _proper_noun_terms(question: str) -> list[str]:
         if len(terms) >= _MAX_GATE_ENTITY_TERMS:
             break
     return terms
+
+
+# Content words, not just capitalised ones. `_proper_noun_terms` was built to
+# find names the model could not know, so it reads only capitalised tokens —
+# which means "biochar", "eccedenze alimentari" and every lowercased subject
+# produce no evidence at all, and the gate then decides on the model's world
+# knowledge alone. The same defect was fixed in the retrieval term extractor in
+# July; the gate kept it.
+def _gate_mode() -> str:
+    """Which gate runs: the scope description, or the retrieved evidence.
+
+    Read per call rather than at import, so the two can be compared side by
+    side in one process. Default unchanged until the evidence mode is measured
+    to refuse no more legitimate questions than the scope one, which today
+    refuses none of 53.
+    """
+    mode = os.getenv("GRAPHRAG_GATE_MODE", "scope").strip().lower()
+    return "evidence" if mode == "evidence" else "scope"
+
+
+def _content_terms(retriever, question: str) -> list[str]:
+    """The terms retrieval itself would search for, or the capitalised ones.
+
+    Delegating to the retriever's own builder rather than reimplementing it: it
+    already pairs capitalised candidates with the lowercase content keywords
+    ("biochar", "digestate") and it was corrected once already. A gate that
+    looked for different terms than retrieval would judge evidence the answer
+    is not going to be built from.
+    """
+    if retriever is not None:
+        try:
+            terms = retriever._build_search_terms(query_text=question, configured_entity="")
+        except Exception:  # noqa: BLE001 - the hint is optional, the gate is not
+            terms = []
+        if terms:
+            return terms
+    return _proper_noun_terms(question)
 
 
 def _term_matches(term: str, haystack: str) -> bool:
@@ -294,6 +335,9 @@ class KGRAGAgent:
         if not question:
             return {"in_domain": True}
 
+        if _gate_mode() == "evidence":
+            return self._evidence_gate(question)
+
         # A continuation is exempt: it carries no topic of its own, and refusing
         # it ends the conversation the demo exists to hold. Two tests, because
         # neither covers the other.
@@ -320,6 +364,95 @@ class KGRAGAgent:
                 "Domain gate refused: %s (graph names offered: %s)",
                 question[:100],
                 known or "none",
+            )
+        return {"in_domain": in_domain}
+
+    def _evidence_gate(self, question: str) -> dict:
+        """Judge the question against what the collection returns for it.
+
+        The scope gate above decides from a description of the domain written
+        into the prompt. That description is wrong the day a document about
+        something else is added, and wrong silently: questions about the new
+        material are refused. This one asks the collection instead, so it
+        widens on its own as documents arrive.
+
+        Two exemptions, and only two:
+
+        * A question carrying no search terms of its own is a continuation
+          ("e allora dimmi", "in che senso?"). It has no subject to look up,
+          and refusing it ends the conversation the demo exists to hold.
+        * Anything the lookup itself cannot do — no retriever, index down —
+          leaves the question in, because a gate that fails must not refuse.
+
+        Note what is deliberately *not* an exemption any more: starting with a
+        conjunction. `is_follow_up("e <anything>")` is True, and the scope gate
+        exempts every follow-up, so "e scrivimi una funzione python" was never
+        judged at all. Here the conjunction is irrelevant — what matters is
+        whether the question brings a subject the collection knows.
+        """
+        retriever = self.kg_retriever
+        terms = _content_terms(retriever, question)
+        if not terms:
+            return {"in_domain": True}
+        if retriever is None:
+            return {"in_domain": True}
+
+        names: list[str] = []
+        try:
+            nodes = retriever.kg_store.fulltext_search_nodes(
+                terms, limit=_MAX_GATE_ENTITY_NAMES * 2
+            )
+        except Exception as exc:  # noqa: BLE001 - the gate must not break the demo
+            logger.warning("Evidence lookup failed (%s); leaving the question in", exc)
+            return {"in_domain": True}
+        if nodes is None:
+            # Full-text index unavailable: the caller's fallback is a full scan,
+            # which is not worth paying for a hint. Leave the question in.
+            return {"in_domain": True}
+        seen: set[str] = set()
+        for node in nodes:
+            name = " ".join(str(node.get("text", "") or "").split())
+            key = name.lower()
+            if name and key not in seen:
+                seen.add(key)
+                names.append(name)
+            if len(names) >= _MAX_GATE_ENTITY_NAMES:
+                break
+
+        # Names alone were not enough, measured: shown only node names, the model
+        # refused 21 of 30 gold questions because a name cannot carry the figure
+        # a specific question asks for ("the annual production volume of grape
+        # pomace"), and it read thin evidence as absence. Passages carry the
+        # subject matter, and they are the same channel the answer is built
+        # from, so the gate judges what the answer would actually use.
+        passages: list[str] = []
+        sources: list[str] = []
+        pipeline = getattr(retriever, "text_pipeline", None)
+        if pipeline is not None:
+            try:
+                chunks = pipeline.retrieve(question, top_k=_MAX_GATE_PASSAGES)
+                passages = [
+                    str(getattr(c, "text", "") or getattr(c, "content", "") or "")
+                    for c in chunks
+                ]
+                # The document names are the collection describing itself, from
+                # its own data. It is the one way to tell the model what this
+                # collection is without writing it into the prompt — which is
+                # exactly what goes stale the day a document about something
+                # else is added.
+                for chunk in chunks:
+                    name = str(getattr(chunk, "source", "") or "").split("#", 1)[0].strip()
+                    if name and name not in sources:
+                        sources.append(name)
+            except Exception as exc:  # noqa: BLE001 - the hint is optional
+                logger.warning("Evidence passages unavailable (%s)", exc)
+
+        in_domain = self.llm.classify_answerable(question, names, passages, sources)
+        if not in_domain:
+            logger.info(
+                "Evidence gate refused: %s (collection returned: %s)",
+                question[:100],
+                names or "nothing",
             )
         return {"in_domain": in_domain}
 
