@@ -63,15 +63,17 @@ def test_empty_evidence_still_renders() -> None:
     assert "nothing" in str(prompt.invoke({"question": "x"})).lower()
 
 
-def test_the_evidence_mode_is_off_until_it_is_chosen(monkeypatch) -> None:
+def test_the_evidence_mode_is_the_default(monkeypatch) -> None:
+    """Adopted after measurement: same score as the scope gate, conjunction
+    bypass closed, and it needs no domain written into the prompt."""
     monkeypatch.delenv("GRAPHRAG_GATE_MODE", raising=False)
-    assert _gate_mode() == "scope"
+    assert _gate_mode() == "evidence"
 
 
 @pytest.mark.parametrize(
     "value,expected",
-    [("evidence", "evidence"), ("EVIDENCE", "evidence"), (" evidence ", "evidence"),
-     ("scope", "scope"), ("qualunque", "scope"), ("", "scope")],
+    [("evidence", "evidence"), ("SCOPE", "scope"), (" scope ", "scope"),
+     ("scope", "scope"), ("qualunque", "evidence"), ("", "evidence")],
 )
 def test_the_mode_is_read_per_call(monkeypatch, value: str, expected: str) -> None:
     """Read per call, not at import, so the two can be compared in one process."""

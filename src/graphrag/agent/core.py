@@ -28,7 +28,7 @@ from graphrag.agent.evidence import (
     verify_citations,
     verify_quotes,
 )
-from graphrag.agent.memory import ConversationMemory, is_follow_up
+from graphrag.agent.memory import ConversationMemory
 from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -211,12 +211,16 @@ def _gate_mode() -> str:
     """Which gate runs: the scope description, or the retrieved evidence.
 
     Read per call rather than at import, so the two can be compared side by
-    side in one process. Default unchanged until the evidence mode is measured
-    to refuse no more legitimate questions than the scope one, which today
-    refuses none of 53.
+    side in one process.
+
+    The evidence mode is the default since it was measured against the scope
+    one on 79 labelled questions: the same score (0 wrong refusals of 53, 19
+    correct of 23) with the conjunction bypass closed, and on the regression
+    harness correct refusals went 3/4 to 4/4 with wrong refusals still 0/18.
+    `GRAPHRAG_GATE_MODE=scope` restores the previous gate.
     """
-    mode = os.getenv("GRAPHRAG_GATE_MODE", "scope").strip().lower()
-    return "evidence" if mode == "evidence" else "scope"
+    mode = os.getenv("GRAPHRAG_GATE_MODE", "evidence").strip().lower()
+    return "scope" if mode == "scope" else "evidence"
 
 
 def _content_terms(retriever, question: str) -> list[str]:
@@ -352,8 +356,6 @@ class KGRAGAgent:
         # that `is_follow_up(has_context=True)` is deliberately *not* used here —
         # it reads "Spiegami la relatività generale" as a short imperative
         # request and would wave it through.
-        if state.get("follow_up"):
-            return {"in_domain": True}
         if len(_WORD_RE.findall(question)) <= _MIN_GATED_TOKENS:
             return {"in_domain": True}
 
@@ -1863,7 +1865,14 @@ class KGRAGAgent:
         seed_entities: list[str] = []
         if memory is not None:
             seed_entities = memory.seed_entities()
-            follow_up = is_follow_up(question, has_context=memory.has_context())
+            # Condense whenever the conversation has started, and let the
+            # rewrite prompt decide: it is told to repeat the question
+            # unchanged when it already stands on its own, which is the same
+            # judgement the five heuristics here used to approximate — badly.
+            # They read "Spiegameli meglio" as a fresh question and
+            # "e <anything>" as a continuation, and the second of those
+            # switched the domain gate off entirely.
+            follow_up = memory.has_context()
             # Read by `_scope_gate`, which must not judge a question that only
             # makes sense against the previous turn.
             initial_state["follow_up"] = follow_up

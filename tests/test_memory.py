@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from graphrag.agent.core import KGRAGAgent
-from graphrag.agent.memory import ConversationMemory, is_follow_up
+from graphrag.agent.memory import ConversationMemory
 from graphrag.config import AgentConfig
 
 GOLD_PATH = Path(__file__).resolve().parents[1] / "evaluation/gold/gold_circular_v1.json"
@@ -92,66 +92,11 @@ def _memory_with(*entities: str) -> ConversationMemory:
 # --- follow-up detection --------------------------------------------------
 
 
-def test_no_follow_up_on_the_first_turn():
-    """Nothing to resolve a reference against yet."""
-    assert is_follow_up("approfondisci", has_context=False) is False
 
 
-def test_elliptical_request_is_a_follow_up():
-    """The Q5 case: short imperative, no subject of its own."""
-    assert is_follow_up(Q5) is True
 
 
-def test_continuity_markers_fire_regardless_of_length():
-    for question in (
-        "approfondisci",
-        "dimmi di più",
-        "E invece per il latte?",
-        "puoi approfondire il punto sulle filiere?",
-        "tell me more about it",
-    ):
-        assert is_follow_up(question) is True, question
 
-
-def test_an_imperative_with_the_pronoun_attached_is_a_follow_up():
-    """Italian attaches the pronoun to the imperative, and the word boundary
-    after "spiegami" does not fall inside "spiegameli", so the whole family was
-    invisible: no rewrite, no memory, no answer-language pin."""
-    for question in (
-        "Spiegameli meglio",
-        "Spiegamelo meglio",
-        "Spiegamene uno",
-        "Dammene un esempio",
-        "Dimmelo in modo semplice",
-        "Elencameli tutti",
-        "Mostrameli",
-    ):
-        assert is_follow_up(question) is True, question
-
-
-def test_parlami_was_in_no_list_at_all():
-    """It appears twice in the expert's recorded questions, more often than
-    "spiegameli", and matched neither the openers nor the continuity markers."""
-    assert is_follow_up("Parlami del micelio") is True
-
-
-def test_the_bare_forms_still_work():
-    """Widening to stems must not lose what the exact words already caught."""
-    for question in ("Dimmi di più", "Dammi delle linee guida", "Fammi un esempio",
-                     "Riportami i dati", "Indicami le strategie", "Spiegami meglio"):
-        assert is_follow_up(question) is True, question
-
-
-def test_a_failed_turn_still_starts_the_conversation():
-    """`observe` runs only after a successful invoke, so a turn that raised left
-    no trace: with the failure on the first turn, has_context() stayed false and
-    the follow-up the user asks *because* it failed looked like a fresh
-    question."""
-    memory = ConversationMemory()
-    assert memory.has_context() is False
-    memory.observe_failure("Cosa sono le 3C della Circular Economy for Food?")
-    assert memory.has_context() is True
-    assert is_follow_up("Spiegameli meglio", has_context=memory.has_context()) is True
 
 
 def test_a_failed_turn_does_not_spend_a_turn_of_the_decay_window():
@@ -172,28 +117,6 @@ def test_new_topic_forgets_the_failure_too():
     assert memory.failed_turns == 0
 
 
-def test_self_contained_questions_are_left_alone():
-    for question in (
-        Q3,
-        "Che cos'è SEeD?",
-        "Dammi la definizione delle 3C della circular economy for food",
-        "Mi dai un approfondimento sulle 5 filiere della regione Piemonte in cui "
-        "l'economia circolare per il cibo può trovare una buona espressione?",
-        "Cosa diceva Petrini su materia rinnovabile n. 33?",
-    ):
-        assert is_follow_up(question) is False, question
-
-
-@pytest.mark.skipif(not GOLD_PATH.exists(), reason="gold set not available")
-def test_no_false_positives_on_the_gold_set():
-    """Acceptance criterion of §9.6: 0 hits on 30 self-contained questions."""
-    queries = json.loads(GOLD_PATH.read_text(encoding="utf-8"))["queries"]
-    fired = [q["query"] for q in queries if is_follow_up(q["query"])]
-
-    assert fired == []
-
-
-# --- memory state ---------------------------------------------------------
 
 
 def test_entities_come_from_retrieval_not_from_the_answer_text():
@@ -367,12 +290,25 @@ def test_a_follow_up_reaches_retrieval_rewritten_and_generation_intact():
     assert "Vino" in str(model.prompts[0])
 
 
-def test_a_self_contained_question_never_calls_the_rewriter():
-    model = _FakeModel("non dovrebbe servire")
+def test_a_self_contained_question_is_rewritten_to_itself():
+    """C2 changed the contract here, and the change is deliberate.
+
+    The rewriter used to be skipped for a question the heuristics judged
+    self-contained. Those heuristics are gone — they read "Spiegameli meglio"
+    as a fresh question and "e <anything>" as a continuation — so the rewriter
+    now runs on every turn that has context and the prompt is told to repeat a
+    self-contained question unchanged. What must not change is the outcome: an
+    unchanged question puts nothing in the state, so retrieval sees exactly
+    what the user typed.
+
+    The cost of the new contract is one short LLM call per turn with context,
+    measured at roughly 1-2 s against a turn of about 25 s.
+    """
+    model = _FakeModel(Q3)
     agent = _agent(model)
     agent.invoke(Q3, memory=_memory_with("Vino"))
 
-    assert model.prompts == []
+    assert model.prompts, "the rewriter is expected to run now"
     assert "rewritten_question" not in agent.seen_state
 
 
@@ -454,43 +390,7 @@ def test_an_empty_seed_leaves_the_question_as_typed():
     assert result["memory_entities"] == []
 
 
-def test_a_turn_with_no_graph_entities_still_opens_the_session():
-    """`has_context` counts turns, not entities.
 
-    An answer built entirely from the text channel observes no entity. Keying
-    context on the entity list made every later follow-up look like a fresh
-    question — and with the domain gate on, a terse one was refused outright.
-    """
-    memory = ConversationMemory()
-    assert memory.has_context() is False
-
-    memory.observe(question="q", answer="una risposta tutta testuale", nodes=[], triples=[])
-
-    assert memory.has_context() is True
-    assert memory.seed_entities() == []
-    assert is_follow_up("spiegami meglio", has_context=memory.has_context()) is True
-
-
-def test_a_bare_modal_opens_a_follow_up():
-    """"puoi spiegarmelo..." used to need "mi" in front to be recognised."""
-    for question in (
-        "puoi spiegarmelo in modo più semplice?",
-        "potresti chiarire quel punto?",
-        "can you explain that again?",
-    ):
-        assert is_follow_up(question, has_context=True) is True
-
-
-def test_a_bare_modal_on_a_self_contained_question_is_not_a_follow_up():
-    """The opener alone must not turn a full question into a continuation."""
-    assert is_follow_up(
-        "puoi elencare le strategie della Regione Piemonte?", has_context=True
-    ) is False
-
-
-# --------------------------------------------------------------------------- #
-# the rewrite guard, shared by both rewrite paths
-# --------------------------------------------------------------------------- #
 
 
 def test_a_rewrite_that_explains_itself_is_discarded():
@@ -527,3 +427,40 @@ def test_an_empty_rewrite_keeps_the_question():
     from graphrag.agent.core import _plausible_rewrite
 
     assert _plausible_rewrite("   \n\n  ", "Cosa sono le 3C?") == "Cosa sono le 3C?"
+
+
+def test_a_failed_turn_still_starts_the_conversation():
+    """`observe` runs after a successful invoke, so a turn that raised left no
+    trace. With the failure on the first turn has_context() stayed false, the
+    rewrite step never ran, and the follow-up the user asks *because* the first
+    attempt failed was treated as a fresh question."""
+    memory = ConversationMemory()
+    assert memory.has_context() is False
+    memory.observe_failure("Cosa sono le 3C della Circular Economy for Food?")
+    assert memory.has_context() is True
+    assert memory.turn == 0, "a failed turn must not spend a turn of the window"
+
+
+def test_a_turn_with_no_graph_entities_still_opens_the_session():
+    """Entities come from the KG channel only. On a question answered entirely
+    from text the entity list stays empty, and has_context is a turn count for
+    exactly that reason: otherwise every later follow-up looked fresh."""
+    memory = ConversationMemory()
+    memory.observe(question="Quali sono le 3C?", answer="Capitale, Ciclicita, Coevoluzione.",
+                   nodes=[], triples=[])
+    assert memory.active_entities == []
+    assert memory.has_context() is True
+
+
+def test_the_rewrite_is_driven_by_context_not_by_a_shape_test():
+    """C2: the five heuristics that decided whether a question "looked like" a
+    follow-up are gone. They read "Spiegameli meglio" as a fresh question and
+    "e <anything>" as a continuation — and the second switched the domain gate
+    off entirely. The condition is now simply whether the conversation has
+    started; the rewrite prompt is told to repeat a self-contained question
+    unchanged, which is the judgement the heuristics approximated."""
+    memory = ConversationMemory()
+    assert memory.has_context() is False
+    memory.observe(question="Cosa sono le 3C?", answer="Capitale, Ciclicita, Coevoluzione.",
+                   nodes=[{"text": "Circular Economy for Food"}], triples=[])
+    assert memory.has_context() is True

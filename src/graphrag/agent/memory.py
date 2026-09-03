@@ -29,71 +29,8 @@ from typing import Any, Iterable, Sequence
 __all__ = [
     "ActiveEntity",
     "ConversationMemory",
-    "is_follow_up",
 ]
 
-# Anaphora and continuity markers. These never occur in a self-contained
-# question: they point at something said before.
-_CONTINUITY_MARKERS = re.compile(
-    r"\b("
-    r"approfondisci|approfondiscilo|dimmi di piu|dimmi di più|dammi piu|dammi più|"
-    r"puoi approfondire|espandi|continua|prosegui|vai avanti|"
-    r"lo stesso|la stessa|come sopra|come prima|il precedente|la precedente|"
-    r"di questi|tra questi|fra questi|di queste|tra queste|"
-    r"tell me more|say more|what about|how about|elaborate|expand on|go deeper|"
-    r"the same|the previous|of these|among these"
-    r")\b",
-    re.IGNORECASE,
-)
-
-# Demonstratives. Weaker than the markers above — "questo" appears in
-# self-contained questions too — so they only count on a short question.
-# English "it"/"them" are deliberately absent: they are pervasive in ordinary
-# self-contained questions ("how does it differ from whey?").
-_DEICTICS = re.compile(
-    r"\b(questo|questa|questi|queste|quello|quella|quelli|quelle|ciò|cio|"
-    r"these|those)\b",
-    re.IGNORECASE,
-)
-
-# A question opening with a conjunction is grammatically a continuation.
-_OPENING_CONJUNCTION = re.compile(
-    r"^\s*(e|ed|ma|invece|inoltre|poi|and|but|also|so)\b", re.IGNORECASE
-)
-
-# Second-person request forms: the shape a follow-up takes when the expert stops
-# writing full questions and starts talking to the system.
-_REQUEST_OPENER = re.compile(
-    r"^\s*("
-    r"mi\s+(?:dai|dia|indichi|indica|puoi|potresti|spieghi|spiega|elenchi|elenca|"
-    r"riporti|riporta|fai|fa|mostri|mostra|descrivi|descriva)|"
-    # The bare modal, without the "mi" that used to be required: "puoi
-    # spiegarmelo in modo più semplice?" was read as a fresh question, and with
-    # the domain gate on it was refused outright as out of domain.
-    r"(?:puoi|potresti|riesci\s+a|sai)\s+\w+|"
-    # Stem plus clitic, not the bare "-mi" form. Italian attaches pronouns to
-    # the imperative, and the word boundary after "spiegami" does not fall
-    # inside "spiegameli", so the whole family was invisible: "Spiegameli
-    # meglio" was read as a fresh question, went out without the conversation's
-    # subject and without the answer-language pin, and came back in English
-    # about something else — with citations and a phantom rate of 0.0, so it
-    # looked as trustworthy as any other answer. The suffixes are the paradigm
-    # these verbs actually take: -mi, -melo/-mela/-meli/-mele, -mene.
-    #
-    # `parlam` is new rather than clitic-widened: "parlami" was in no list at
-    # all, and it appears twice in the expert's recorded questions — more often
-    # than "spiegameli". Only verbs that appear in those sessions are here;
-    # guessing at more would widen the follow-up exemption for nothing.
-    r"(?:damm|dimm|famm|spiegam|elencam|indicam|riportam|mostram|parlam)"
-    r"(?:i|e(?:l[oaie]|ne))|"
-    r"give me|show me|list me|(?:can|could)\s+you\s+\w+"
-    r")\b",
-    re.IGNORECASE,
-)
-
-# Above this length a question carries its own context even without proper
-# nouns; the elliptical follow-ups we care about are short.
-_MAX_ELLIPTIC_TOKENS = 16
 
 # Entity names shorter than this, or made only of digits, are noise as retrieval
 # seeds.
@@ -143,61 +80,6 @@ def _contains_span(outer: Sequence[str], inner: Sequence[str]) -> bool:
     )
 
 
-def _looks_self_contained(question: str) -> bool:
-    """True when the question names its own subject.
-
-    A proper noun past the opening word ("Piemonte"), an internal capital
-    ("SEeD") or an alphanumeric code ("3C", "ISO20121") is enough: the
-    retriever's search-term builder will find it, so nothing from the
-    conversation is needed. The first token is skipped because every sentence
-    starts capitalised.
-    """
-    for token in _TOKEN_RE.findall(question)[1:]:
-        if any(char.isupper() for char in token):
-            return True
-        # Alphanumeric codes survive lowercasing in the question ("3c").
-        if any(char.isdigit() for char in token) and any(
-            char.isalpha() for char in token
-        ):
-            return True
-    return False
-
-
-def is_follow_up(question: str, has_context: bool = True) -> bool:
-    """Decide whether `question` depends on what was said earlier.
-
-    Deliberately conservative: when it returns False the question travels
-    unchanged, which is the behaviour of the whole system before WP7. A false
-    positive costs one short LLM call and a rewrite that may add nothing; a
-    false negative just leaves today's behaviour in place.
-
-    Args:
-        question: The raw question typed by the user.
-        has_context: Whether the memory holds any entity yet. On the first turn
-            of a session there is nothing to resolve a reference against.
-
-    Returns:
-        True when the question should be rewritten before retrieval.
-    """
-    text = " ".join(str(question or "").split())
-    if not text or not has_context:
-        return False
-
-    if _CONTINUITY_MARKERS.search(text) or _OPENING_CONJUNCTION.match(text):
-        return True
-
-    tokens = _TOKEN_RE.findall(text)
-    if len(tokens) > _MAX_ELLIPTIC_TOKENS:
-        return False
-
-    if _DEICTICS.search(text):
-        return True
-
-    # Short imperative request with no subject of its own: the Q5 case,
-    # "Mi indichi le strategie nel settore vino individuate dalla ricerca?"
-    return bool(_REQUEST_OPENER.match(text)) and not _looks_self_contained(text)
-
-
 @dataclass
 class ActiveEntity:
     """A KG entity the conversation has touched, with its recency."""
@@ -243,9 +125,9 @@ class ConversationMemory:
         channel, and on a question the graph answers with nothing — measured:
         0 nodes and 0 triples for "Quali sono le 3C e cosa vogliono dire?",
         answered entirely from text — the entity list stays empty and every
-        follow-up looked like a fresh question. `is_follow_up` exits on this
-        flag before it ever reads its markers, so an empty graph turn silently
-        disabled follow-up detection for the rest of the session.
+        follow-up looked like a fresh question. The rewrite step exits on this
+        flag before it runs, so an empty graph turn silently disabled
+        follow-up handling for the rest of the session.
         """
         return self.turn > 0 or self.failed_turns > 0
 
@@ -254,9 +136,8 @@ class ConversationMemory:
 
         `observe` runs only after a successful `graph.invoke`, so a turn that
         raised left no trace: if the failure was the first turn of a session,
-        `has_context()` stayed false, `is_follow_up` exited on that flag before
-        reading any marker, and the next legitimate follow-up was treated as a
-        fresh question.
+        `has_context()` stayed false, the rewrite step never ran, and the next
+        legitimate follow-up was treated as a fresh question.
 
         Deliberately not `observe` with an empty answer: that would increment
         `turn`, and the demo retries the same question after rebuilding onto

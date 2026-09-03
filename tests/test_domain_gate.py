@@ -17,9 +17,22 @@ The scope wording itself is measured, not asserted here — see
 
 from __future__ import annotations
 
+import pytest
+
 from graphrag.agent.core import KGRAGAgent, _proper_noun_terms
 from graphrag.config import AgentConfig
 from graphrag.llm.prompts import PromptLibrary
+
+
+@pytest.fixture(autouse=True)
+def scope_mode(monkeypatch):
+    """These characterise the scope gate, which is no longer the default.
+
+    The evidence gate replaced it after measurement and lives in
+    `test_evidence_gate.py`; the scope one stays reachable with
+    GRAPHRAG_GATE_MODE=scope and keeps the behaviour pinned below.
+    """
+    monkeypatch.setenv("GRAPHRAG_GATE_MODE", "scope")
 
 
 class _StubLLM:
