@@ -2605,7 +2605,13 @@ def main() -> None:
         log_path = log_dir / f"neo4j_postprocess_{timestamp}.log"
     _setup_logging(log_path)
 
-    load_dotenv(args.env_file, override=True)
+    # override=False, like graphrag.cli and product/config: an exported
+    # variable must win. With override=True an operator who pointed this at
+    # staging with NEO4J_URL=bolt://localhost:7689 was silently returned to
+    # whatever the env file names, which is the demo's live Aura instance --
+    # and this is the pass that merges, relabels and deletes. The env file
+    # still supplies everything the operator did not set.
+    load_dotenv(args.env_file, override=False)
 
     config = _load_yaml(Path(args.config))
     allowed_labels = [

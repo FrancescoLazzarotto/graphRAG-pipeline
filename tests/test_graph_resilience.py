@@ -11,6 +11,7 @@ The postprocess pass is the second: every step collects its failures into an
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -239,3 +240,23 @@ def test_a_name_anchor_still_gets_the_fallback(method: str, kwargs: dict) -> Non
     session = _SeedSession()
     getattr(_store(session), method)(**kwargs)
     assert session.fallbacks(), f"{method} lost the fallback for a name anchor"
+
+
+def test_the_destructive_pass_can_be_pointed_somewhere_else(tmp_path, monkeypatch) -> None:
+    """neo4j_postprocess loaded its env file with override=True, so an operator
+    who exported NEO4J_URL to reach staging was silently returned to the file's
+    value -- the demo's live Aura instance -- by the one pass that merges,
+    relabels and deletes. Two Neo4j instances are running on this host, so
+    "localhost" does not identify the target either."""
+    import inspect
+    from kg_pipeline.stages import neo4j_postprocess
+
+    source = inspect.getsource(neo4j_postprocess.main)
+    calls = re.findall(r"load_dotenv\([^)]*\)", source)
+    assert calls, "main no longer loads an env file; this guard needs rewriting"
+    for call in calls:
+        assert "override=True" not in call, (
+            f"{call}: the env file must not override an exported NEO4J_URL — "
+            "that is how a cleanup lands on the wrong graph"
+        )
+        assert "override=False" in call, f"{call}: state the override explicitly"
