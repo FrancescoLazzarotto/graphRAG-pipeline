@@ -318,6 +318,7 @@ def _ask(
     model_id: str,
     question: str,
     turn_id: str = "",
+    turn_index: int = 0,
     base_url: str = "",
     memory: ConversationMemory | None = None,
     chat_id: str = "",
@@ -339,6 +340,11 @@ def _ask(
         # matched to a turn by timestamp and question text, which stops working
         # the moment the same question is asked twice.
         "turn_id": turn_id,
+        # Where this turn sits in its conversation. `turn_id` says which turn,
+        # `chat_id` says which conversation, and neither says whether an answer
+        # was the opening question or the fifth follow-up — which is the first
+        # thing to look at when reading back a session that went wrong.
+        "turn_index": turn_index,
     }
     skips_before = _vector_skips(agent)
     try:
@@ -551,6 +557,7 @@ if question:
                 model_id,
                 question,
                 turn_id=turn_id,
+                turn_index=sum(1 for m in chat["messages"] if m[0] == "assistant"),
                 base_url=base_url,
                 memory=chat["memory"],
                 chat_id=st.session_state.current_chat,
