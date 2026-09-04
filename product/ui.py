@@ -63,11 +63,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Fatti dal grafo",
         "cited_passages": "passaggi citati",
         "not_cited": "recuperato, non citato",
-        "more_passages": "altri {n} passaggi recuperati",
-        "more_passages_one": "un altro passaggio recuperato",
-        "more_facts": "altri {n} fatti recuperati",
-        "more_facts_one": "un altro fatto recuperato",
-        "used_here": "usati in questa risposta",
+        "evidence_box": "Evidenze · {n}",
+        "also_retrieved": "Recuperato e non usato",
         # feedback
         "fb_useful": "Risposta utile",
         "fb_wrong": "Risposta sbagliata o inutile",
@@ -142,11 +139,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Graph facts",
         "cited_passages": "cited passages",
         "not_cited": "retrieved, not cited",
-        "more_passages": "{n} more retrieved passages",
-        "more_passages_one": "one more retrieved passage",
-        "more_facts": "{n} more retrieved facts",
-        "more_facts_one": "one more retrieved fact",
-        "used_here": "used in this answer",
+        "evidence_box": "Evidence · {n}",
+        "also_retrieved": "Retrieved, not used",
         "fb_useful": "Useful answer",
         "fb_wrong": "Wrong or useless answer",
         "fb_thanks": "Thanks, recorded.",
@@ -387,35 +381,30 @@ def evidence_by_document(
 
 @dataclass(slots=True)
 class PanelEvidence:
-    """One answer's evidence, split into what it used and what it did not."""
+    """One answer's evidence, ordered so what it used comes first."""
 
     passages: list[dict[str, Any]] = field(default_factory=list)
     facts: list[dict[str, Any]] = field(default_factory=list)
-    spare_passages: list[dict[str, Any]] = field(default_factory=list)
-    spare_facts: list[dict[str, Any]] = field(default_factory=list)
 
 
 def panel_evidence(
     evidence_index: Sequence[dict[str, Any]],
     cited_refs: Iterable[str] = (),
-    limit: int = 8,
 ) -> PanelEvidence:
-    """Order an answer's evidence so the panel opens on what the answer used.
+    """Order an answer's evidence for the box that holds it.
 
     Measured over 240 gold answers, a turn retrieves a median of 20 triples
     across 19 distinct subjects, so grouping them by entity compacts nothing —
-    it would trade twenty lines for nineteen headings. What does compact is the
-    distinction the panel is there to draw: an answer stands on what it cited,
-    and the rest is the honest remainder. The remainder keeps its place, folded.
+    it would trade twenty lines for nineteen headings. What the reader needs is
+    the distinction the panel exists to draw: an answer stands on what it
+    cited, and the rest is the honest remainder, kept and marked as such.
 
     Args:
         evidence_index: ``result["evidence_index"]``.
         cited_refs: ``result["citation_report"]["cited_refs"]``.
-        limit: How many cited items of each kind stay open before the overflow
-            joins the fold.
 
     Returns:
-        Cited passages and facts, capped, plus everything else in index order.
+        Passages and facts, cited ones first, each row carrying ``cited``.
     """
     wanted = {str(ref).strip().upper() for ref in cited_refs if str(ref).strip()}
     cited: dict[str, list[dict[str, Any]]] = {"text": [], "triple": []}
@@ -435,25 +424,29 @@ def panel_evidence(
         }
         (cited if row["cited"] else spare)[kind].append(row)
 
-    cap = max(1, int(limit))
-    open_rows: dict[str, list[dict[str, Any]]] = {}
-    folded: dict[str, list[dict[str, Any]]] = {}
-    for kind in ("text", "triple"):
-        # An answer that cited nothing has no "used" evidence, and folding all
-        # of it away would empty the panel exactly on the turns where a reader
-        # most needs to see what the collection returned. Retrieval order is
-        # relevance order, so the top of it is the right thing to open instead.
-        source = cited[kind] or spare[kind]
-        rest = spare[kind] if cited[kind] else []
-        open_rows[kind] = source[:cap]
-        folded[kind] = source[cap:] + rest
-
+    # Retrieval order is relevance order, so an answer that cited nothing still
+    # leads with the strongest thing the collection returned for it.
     return PanelEvidence(
-        passages=open_rows["text"],
-        facts=open_rows["triple"],
-        spare_passages=folded["text"],
-        spare_facts=folded["triple"],
+        passages=cited["text"] + spare["text"],
+        facts=cited["triple"] + spare["triple"],
     )
+
+
+def evidence_box_label(lang: str, counts: dict[str, int], prefix: str = "") -> str:
+    """The one line the evidence occupies until someone opens it.
+
+    Closed, the panel should say how much there is and nothing else; the
+    numbers are the same ones the metadata bar under the answer reports, so the
+    two never disagree.
+    """
+    inside = " · ".join(
+        (
+            count_label(lang, "meta_passages", int(counts.get("passages", 0))),
+            count_label(lang, "meta_facts", int(counts.get("facts", 0))),
+        )
+    )
+    label = t(lang, "evidence_box", n=inside)
+    return f"{prefix} · {inside}" if prefix else label
 
 
 def fact_line(row: dict[str, Any]) -> str:

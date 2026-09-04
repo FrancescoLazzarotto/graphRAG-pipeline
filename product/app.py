@@ -520,49 +520,36 @@ def _render_sources(turn: dict[str, Any]) -> None:
         st.caption(line)
 
 
-def _render_evidence(turn: dict[str, Any], container: Any) -> None:
-    """One answer's evidence, opening on what the answer actually used.
+def _evidence_body(turn: dict[str, Any]) -> None:
+    """One answer's evidence, written into whatever box the caller opened.
 
-    Everything retrieved stays reachable — an answer stands on what it cited,
-    and what the collection returned and the answer ignored is what a reader
-    needs in order to judge it. It just stops being the first thing they see:
-    a turn retrieves a median of twenty graph facts, and listed in full beside
-    a ten-line answer the panel explained less than it crowded.
+    No expander of its own: Streamlit refuses to nest them, and this is drawn
+    both inside the panel's box and inside an older turn's own. Plain text, not
+    captions — a caption is grey, and the evidence is the part of the page a
+    reader is squinting at.
     """
     lang = _lang()
-    panel = ui.panel_evidence(
-        turn.get("evidence_index") or [], turn.get("cited_refs") or []
-    )
-    if not any(
-        (panel.passages, panel.facts, panel.spare_passages, panel.spare_facts)
-    ):
-        container.caption(ui.t(lang, "evidence_none"))
+    panel = ui.panel_evidence(turn.get("evidence_index") or [], turn.get("cited_refs") or [])
+    passages, facts = panel.passages, panel.facts
+    if not (passages or facts):
+        st.caption(ui.t(lang, "evidence_none"))
         return
 
-    if panel.passages:
-        container.markdown(f"**{ui.t(lang, 'passages')}**")
-        for passage in panel.passages:
-            with container.expander(ui.passage_label(passage), expanded=False):
+    if passages:
+        st.markdown(f"**{ui.t(lang, 'passages')}**")
+        for passage in passages:
+            st.markdown(f"`{ui.passage_label(passage)}`")
+            if passage["cited"]:
                 st.write(passage["text"])
-    if panel.spare_passages:
-        with container.expander(
-            ui.count_label(lang, "more_passages", len(panel.spare_passages)),
-            expanded=False,
-        ):
-            for passage in panel.spare_passages:
-                st.caption(ui.passage_label(passage))
-                st.write(passage["text"])
-
-    if panel.facts:
-        container.markdown(f"**{ui.t(lang, 'graph_facts')}**")
-        for fact in panel.facts:
-            container.caption(ui.fact_line(fact))
-    if panel.spare_facts:
-        with container.expander(
-            ui.count_label(lang, "more_facts", len(panel.spare_facts)), expanded=False
-        ):
-            for fact in panel.spare_facts:
-                st.caption(ui.fact_line(fact))
+            else:
+                # Identity without the body: an answer did not lean on it, and
+                # eight unused passages in full is the wall this box replaced.
+                st.caption(ui.t(lang, "also_retrieved"))
+    if facts:
+        st.markdown(f"**{ui.t(lang, 'graph_facts')}**")
+        for fact in facts:
+            line = ui.fact_line(fact)
+            st.markdown(line if fact["cited"] else f":gray[{line}]")
 
 
 def _render_out_of_scope(turn_id: str) -> None:
@@ -674,8 +661,13 @@ def _render_turn(turn: dict[str, Any], chat_id: str, *, with_evidence: bool) -> 
         # Only for the answers the reserved panel is not already showing, so
         # the same evidence is never on screen twice.
         if with_evidence and SHOW_FULL_ANSWER:
-            with st.expander(ui.t(lang, "evidence_expander"), expanded=False):
-                _render_evidence(turn, st.container())
+            with st.expander(
+                ui.evidence_box_label(
+                    lang, turn.get("counts") or {}, ui.t(lang, "evidence_expander")
+                ),
+                expanded=False,
+            ):
+                _evidence_body(turn)
         _feedback_row(turn, chat_id)
 
 
@@ -880,8 +872,14 @@ with reading:
 with evidence_panel:
     answered = [m for m in chat["messages"] if not m.get("error") and not m.get("out_of_scope")]
     if answered and SHOW_FULL_ANSWER:
-        st.markdown(f"**{ui.t(LANG, 'evidence_of_last')}**")
-        _render_evidence(answered[-1], st.container())
+        last = answered[-1]
+        with st.expander(
+            ui.evidence_box_label(
+                LANG, last.get("counts") or {}, ui.t(LANG, "evidence_of_last")
+            ),
+            expanded=False,
+        ):
+            _evidence_body(last)
 
 # Last statement in the script, which is what keeps Streamlit pinning it to the
 # bottom of the page and submitting it on Enter. The question is handed to the

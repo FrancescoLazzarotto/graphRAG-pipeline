@@ -253,36 +253,39 @@ def test_evidence_by_document_ignores_malformed_rows():
 # --------------------------------------------------------------------------- #
 
 
-def test_panel_evidence_opens_on_what_the_answer_used():
-    panel = ui.panel_evidence(EVIDENCE, ["S1", "T1"])
-    assert [row["ref_id"] for row in panel.passages] == ["S1"]
-    assert [row["ref_id"] for row in panel.facts] == ["T1"]
-    assert [row["ref_id"] for row in panel.spare_passages] == ["S2"]
-    assert panel.spare_facts == []
-
-
-def test_panel_evidence_folds_the_overflow_of_cited_items():
+def test_panel_evidence_puts_what_the_answer_used_first():
     evidence = [
-        {"ref_id": f"T{i}", "kind": "triple", "text": f"(a{i}, USES, b)", "source_doc": "d.pdf"}
-        for i in range(1, 13)
+        {"ref_id": "S1", "kind": "text", "text": "non citato", "source_doc": "a.pdf", "pages": "p. 1"},
+        {"ref_id": "S2", "kind": "text", "text": "citato", "source_doc": "b.pdf", "pages": "p. 2"},
     ]
-    panel = ui.panel_evidence(evidence, [f"T{i}" for i in range(1, 13)], limit=8)
-    assert len(panel.facts) == 8
-    assert len(panel.spare_facts) == 4
+    panel = ui.panel_evidence(evidence, ["S2"])
+    assert [row["ref_id"] for row in panel.passages] == ["S2", "S1"]
+    assert [row["cited"] for row in panel.passages] == [True, False]
 
 
-def test_panel_evidence_opens_the_top_of_retrieval_when_nothing_was_cited():
-    """The panel must not go blank on the turns that most need it.
-
-    An answer that cited nothing has no "used" evidence at all. Folding
-    everything away then leaves two closed rows where a reader is trying to
-    find out what the collection actually returned.
-    """
-    panel = ui.panel_evidence(EVIDENCE, [])
+def test_panel_evidence_keeps_everything_retrieved():
+    """Nothing is dropped: the remainder is what a reader judges the answer by."""
+    panel = ui.panel_evidence(EVIDENCE, ["S1"])
     assert [row["ref_id"] for row in panel.passages] == ["S1", "S2"]
     assert [row["ref_id"] for row in panel.facts] == ["T1"]
-    assert panel.spare_passages == []
+
+
+def test_panel_evidence_leads_with_retrieval_order_when_nothing_was_cited():
+    """Retrieval order is relevance order, so the box still opens on the best."""
+    panel = ui.panel_evidence(EVIDENCE, [])
+    assert [row["ref_id"] for row in panel.passages] == ["S1", "S2"]
     assert all(row["cited"] is False for row in panel.passages)
+
+
+def test_evidence_box_label_carries_the_counts():
+    counts = {"passages": 8, "facts": 20}
+    assert ui.evidence_box_label("it", counts) == "Evidenze · 8 passaggi · 20 fatti dal grafo"
+    assert ui.evidence_box_label("it", counts, "Evidenze di questa risposta") == (
+        "Evidenze di questa risposta · 8 passaggi · 20 fatti dal grafo"
+    )
+    assert ui.evidence_box_label("en", {"passages": 1, "facts": 0}) == (
+        "Evidence · 1 passage · 0 graph facts"
+    )
 
 
 def test_fact_line_is_one_line_with_its_document():
