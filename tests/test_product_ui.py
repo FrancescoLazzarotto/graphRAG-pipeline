@@ -1,0 +1,345 @@
+"""What the demo tells a reader, tested without starting Streamlit.
+
+`product/ui.py` decides three things that fail quietly: where an answer's own
+sections end, which document each piece of evidence belongs to, and what the
+citation check is allowed to claim. None of the three raises when it goes wrong
+— the page just shows a source list twice, or attributes a passage to the wrong
+PDF, or tells a reader an answer is verified when it is not.
+
+Every function under test is pure, so the whole surface is reachable from here.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from product import ui
+
+# The shape the engine really produces: prose with reader-facing citation
+# labels, the model's own limits section, then the source list appended by
+# graphrag.agent.evidence.render_grouped_reference_list.
+REAL_ANSWER_IT = (
+    "Il biochar è un ammendante ottenuto per pirolisi [MR37, p. 35].\n\n"
+    "Migliora la fertilità del suolo [Kenya Report, p. 79].\n\n"
+    "Limiti e affidabilità\n"
+    "Le evidenze non contengono una definizione formale.\n\n"
+    "Fonti:\n"
+    "- **MR37-ita.pdf**\n"
+    "  - passaggi citati: p. 35\n"
+)
+
+EVIDENCE = [
+    {
+        "ref_id": "S1",
+        "kind": "text",
+        "text": "Il biochar è un ammendante ottenuto per pirolisi.",
+        "source_doc": "MR37-ita.pdf",
+        "pages": "p. 35",
+        "chunk_id": "c1",
+        "metadata": "",
+    },
+    {
+        "ref_id": "S2",
+        "kind": "text",
+        "text": "Passaggio recuperato e mai citato.",
+        "source_doc": "Kenya Report_Full version.pdf",
+        "pages": "p. 79",
+        "chunk_id": "c2",
+        "metadata": "",
+    },
+    {
+        "ref_id": "T1",
+        "kind": "triple",
+        "text": "(biochar, REDUCES, erosione del suolo)",
+        "source_doc": "MR37-ita.pdf",
+        "pages": "78-79",
+        "chunk_id": "",
+        "metadata": "",
+    },
+]
+
+
+# --------------------------------------------------------------------------- #
+# split_answer
+# --------------------------------------------------------------------------- #
+
+
+def test_split_answer_drops_the_engine_source_list():
+    """The page rebuilds the sources from the evidence index.
+
+    Leaving the engine's own list in the prose puts the same documents on
+    screen twice, once as text and once as blocks.
+    """
+    parts = ui.split_answer(REAL_ANSWER_IT)
+    assert "Fonti:" not in parts.body
+    assert "MR37-ita.pdf" not in parts.body
+    assert parts.body.startswith("Il biochar")
+
+
+def test_split_answer_separates_the_limits_section():
+    parts = ui.split_answer(REAL_ANSWER_IT)
+    assert parts.limits == "Le evidenze non contengono una definizione formale."
+    assert "Limiti e affidabilità" not in parts.body
+
+
+def test_split_answer_handles_english_answers():
+    answer = (
+        "Biochar is a soil amendment [MR37, p. 35].\n\n"
+        "Limits and confidence\nThe evidence is thin.\n\n"
+        "Sources:\n- **MR37-ita.pdf**\n"
+    )
+    parts = ui.split_answer(answer)
+    assert parts.body == "Biochar is a soil amendment [MR37, p. 35]."
+    assert parts.limits == "The evidence is thin."
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["Limiti e affidabilità", "**Limiti e affidabilità**", "## Limiti e affidabilità"],
+)
+def test_split_answer_tolerates_a_decorated_heading(heading):
+    """The limits heading is written by the model, not by the renderer.
+
+    It is asked for by name in the prompt, and models deliver it bold, as a
+    heading, or bare. A splitter that only knew the bare form left the section
+    inside the prose on most turns.
+    """
+    parts = ui.split_answer(f"Corpo della risposta.\n\n{heading}\nEvidenza debole.")
+    assert parts.body == "Corpo della risposta."
+    assert parts.limits == "Evidenza debole."
+
+
+def test_split_answer_keeps_an_answer_without_sections_intact():
+    parts = ui.split_answer("Una risposta breve, senza sezioni.")
+    assert parts.body == "Una risposta breve, senza sezioni."
+    assert parts.limits == ""
+
+
+def test_split_answer_cuts_at_the_appended_list_not_at_a_mention():
+    """The engine appends its list last, so the final heading is the real one.
+
+    An answer that discusses its own sources — "le Fonti:" written mid-prose —
+    used to lose everything after that line.
+    """
+    answer = (
+        "Il documento elenca le sue Fonti:\n"
+        "e prosegue con il ragionamento.\n\n"
+        "Fonti:\n- **MR37-ita.pdf**\n"
+    )
+    parts = ui.split_answer(answer)
+    assert "prosegue con il ragionamento" in parts.body
+    assert "MR37-ita.pdf" not in parts.body
+
+
+def test_split_answer_survives_an_empty_answer():
+    parts = ui.split_answer("")
+    assert parts.body == ""
+    assert parts.limits == ""
+
+
+# --------------------------------------------------------------------------- #
+# readable_fact
+# --------------------------------------------------------------------------- #
+
+
+def test_readable_fact_parses_an_object_containing_commas():
+    """The predicate is the anchor, not the comma count.
+
+    Splitting on commas attributed half the object to the predicate whenever a
+    node name carried one, which is common in this graph.
+    """
+    fact = ui.readable_fact("(biochar, REDUCES, erosione, dilavamento e perdita di suolo)")
+    assert fact.subject == "biochar"
+    assert fact.predicate == "reduces"
+    assert fact.obj == "erosione, dilavamento e perdita di suolo"
+
+
+def test_readable_fact_spells_out_an_underscored_relation():
+    assert ui.readable_fact("(lolla, HAS_COMPONENT, silice)").predicate == "has component"
+
+
+def test_readable_fact_falls_back_to_the_raw_form():
+    """Anything that is not a vocabulary triple is shown as it arrived."""
+    assert ui.readable_fact("(a, b, c)").sentence() == "(a, b, c)"
+
+
+# --------------------------------------------------------------------------- #
+# evidence_by_document
+# --------------------------------------------------------------------------- #
+
+
+def test_evidence_by_document_keeps_only_what_was_cited():
+    documents = ui.evidence_by_document(EVIDENCE, ["S1", "T1"], only_cited=True)
+    assert [entry.document for entry in documents] == ["MR37-ita.pdf"]
+    entry = documents[0]
+    assert entry.n_refs == 2
+    assert entry.pages() == ["p. 35"]
+    assert [fact["ref_id"] for fact in entry.facts] == ["T1"]
+
+
+def test_evidence_by_document_can_show_everything_retrieved():
+    """The evidence panel has to show what was left unused.
+
+    An answer stands on what it cited; what the collection returned and the
+    answer ignored is the part a reader needs to judge it.
+    """
+    documents = ui.evidence_by_document(EVIDENCE, ["S1"], only_cited=False)
+    assert {entry.document for entry in documents} == {
+        "MR37-ita.pdf",
+        "Kenya Report_Full version.pdf",
+    }
+    uncited = [
+        passage
+        for entry in documents
+        for passage in entry.passages
+        if not passage["cited"]
+    ]
+    assert [passage["ref_id"] for passage in uncited] == ["S2"]
+
+
+def test_evidence_by_document_matches_reference_ids_case_insensitively():
+    """Models emit lowercase tags, and verify_citations normalises them.
+
+    Comparing raw strings dropped every citation on a turn where the model
+    wrote [s1] instead of [S1], so a correctly sourced answer showed no sources.
+    """
+    documents = ui.evidence_by_document(EVIDENCE, ["s1"], only_cited=True)
+    assert documents and documents[0].n_refs == 1
+
+
+def test_evidence_by_document_labels_evidence_without_a_document():
+    orphan = [{"ref_id": "T9", "kind": "triple", "text": "(a, USES, b)", "source_doc": ""}]
+    documents = ui.evidence_by_document(orphan, ["T9"], unnamed_label="senza documento")
+    assert documents[0].document == "senza documento"
+
+
+def test_evidence_by_document_ignores_malformed_rows():
+    documents = ui.evidence_by_document([None, "S1", {}], ["S1"], only_cited=False)
+    assert documents == [] or all(entry.n_refs >= 0 for entry in documents)
+
+
+# --------------------------------------------------------------------------- #
+# counts and the citation check
+# --------------------------------------------------------------------------- #
+
+
+def test_retrieval_counts_read_the_state_not_the_prose():
+    result = {
+        "retrieved_text_sources": [{"content": "x"}] * 8,
+        "kg_triples": [{"subject": "a"}] * 20,
+        "evidence_index": EVIDENCE,
+    }
+    assert ui.retrieval_counts(result) == {
+        "passages": 8,
+        "facts": 20,
+        "documents": 2,
+    }
+
+
+def test_retrieval_counts_on_an_empty_result():
+    assert ui.retrieval_counts({}) == {"passages": 0, "facts": 0, "documents": 0}
+
+
+def test_citation_summary_reports_a_clean_check():
+    state, text = ui.citation_summary(
+        {"total_citations": 31, "phantom_refs": [], "cited_refs": ["S1"]}, "it"
+    )
+    assert state == "clean"
+    assert "31" in text
+
+
+def test_citation_summary_reports_unverified_references():
+    state, text = ui.citation_summary(
+        {"total_citations": 12, "phantom_refs": ["S9", "T4"]}, "it"
+    )
+    assert state == "phantom"
+    assert "2" in text
+
+
+def test_citation_summary_says_nothing_when_nothing_was_cited():
+    assert ui.citation_summary({}, "it")[0] == "none"
+    assert ui.citation_summary(None, "en")[0] == "none"
+
+
+def test_citation_summary_ignores_insufficient_answer():
+    """`insufficient_answer` must never reach a reliability claim.
+
+    Measured on this repository's own data, it flags invented answers that
+    hedge in the tail — so an answer it marks can be worse than one it does
+    not. The citation check is the only signal allowed to speak here.
+    """
+    report = {"total_citations": 4, "phantom_refs": []}
+    with_flag = ui.citation_summary({**report, "insufficient_answer": True}, "it")
+    without = ui.citation_summary(report, "it")
+    assert with_flag == without
+
+
+# --------------------------------------------------------------------------- #
+# model names and export
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("RedHatAI/Qwen3.8-27B-INT4", "Qwen3.8 27B"),
+        ("Qwen/Qwen2.5-32B-Instruct-AWQ", "Qwen2.5 32B"),
+        ("", ""),
+    ],
+)
+def test_model_display_name_drops_the_vendor_and_the_artifact_suffix(model_id, expected):
+    assert ui.model_display_name(model_id) == expected
+
+
+def test_answer_markdown_carries_the_sources_with_the_text():
+    """A pasted answer that lost its provenance is what the export exists for."""
+    turn = {
+        "question": "Che cos'è il biochar?",
+        "body": "Il biochar è un ammendante [MR37, p. 35].",
+        "limits": "Evidenza parziale.",
+        "evidence_index": EVIDENCE,
+        "cited_refs": ["S1", "T1"],
+    }
+    exported = ui.answer_markdown(turn, "it")
+    assert "Che cos'è il biochar?" in exported
+    assert "Fonti:" in exported
+    assert "MR37-ita.pdf" in exported
+    assert "biochar · reduces · erosione del suolo" in exported
+    # Never cited, so it is not part of what the answer stands on.
+    assert "Kenya Report_Full version.pdf" not in exported
+
+
+def test_conversation_markdown_separates_the_turns():
+    turns = [
+        {"question": "prima", "body": "risposta uno", "evidence_index": [], "cited_refs": []},
+        {"question": "seconda", "body": "risposta due", "evidence_index": [], "cited_refs": []},
+    ]
+    exported = ui.conversation_markdown("Sessione", turns, "it")
+    assert exported.startswith("# Sessione")
+    assert exported.count("---") == 1
+    assert "risposta due" in exported
+
+
+# --------------------------------------------------------------------------- #
+# the language switch
+# --------------------------------------------------------------------------- #
+
+
+def test_both_languages_define_the_same_strings():
+    """A half-translated switch shows English keys on an Italian page.
+
+    The failure is silent: `t()` falls back to Italian, so an untranslated key
+    reads as a working interface in the wrong language.
+    """
+    assert set(ui.STRINGS["it"]) == set(ui.STRINGS["en"])
+
+
+def test_every_string_is_reachable_in_both_languages():
+    for lang in ui.LANGUAGES:
+        for key in ui.STRINGS[lang]:
+            assert ui.t(lang, key, n=1, k=1, q="x", topics="y")
+
+
+def test_t_falls_back_instead_of_raising():
+    assert ui.t("de", "sources_title") == ui.STRINGS["it"]["sources_title"]
+    assert ui.t("it", "chiave_inesistente") == "chiave_inesistente"

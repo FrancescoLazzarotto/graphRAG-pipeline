@@ -126,6 +126,49 @@ TEXT_STAGE0_RUNS = os.environ.get(
     "DEMO_TEXT_STAGE0_RUNS",
     "run_fix2docs_20260710,run_full_circular_20260707",
 )
+# ---------------------------------------------------------------------- #
+# presentation
+# ---------------------------------------------------------------------- #
+# The name and the line under it. Settings rather than literals in the page,
+# because naming the product is the owner's decision and it must be changeable
+# without editing the interface.
+PRODUCT_NAME = os.environ.get("DEMO_PRODUCT_NAME", "Assistente CEFF")
+PRODUCT_TAGLINE = os.environ.get(
+    "DEMO_PRODUCT_TAGLINE",
+    "Risponde sull'economia circolare del cibo citando i documenti da cui prende "
+    "ogni affermazione.",
+)
+# The tagline is a setting, so it does not go through the interface dictionary;
+# the English one is a setting too, or the language switch would leave an
+# Italian sentence under an English page.
+PRODUCT_TAGLINE_EN = os.environ.get(
+    "DEMO_PRODUCT_TAGLINE_EN",
+    "Answers on the circular economy of food, citing the documents every claim "
+    "is taken from.",
+)
+PRODUCT_ICON = os.environ.get("DEMO_PRODUCT_ICON", "\U0001F33E")
+# Interface language. Independent of the answer language, which the engine pins
+# to the language of the question.
+UI_LANGUAGE = os.environ.get("DEMO_UI_LANGUAGE", "it")
+# Serving detail on screen: the model id, the strategy and the graph URL. Off by
+# default — the graph label names the hosted instance, and a reader of the page
+# is not the audience for a connection string.
+DEBUG = _flag("DEMO_DEBUG", "0")
+# Offered when a question is refused as out of domain, so the refusal points
+# somewhere instead of ending the session. Configuration, not a literal in the
+# page: the corpus grows, and the examples have to be able to grow with it
+# without a code change.
+EXAMPLE_QUESTIONS = tuple(
+    q.strip()
+    for q in os.environ.get(
+        "DEMO_EXAMPLE_QUESTIONS",
+        "Che cos'è l'economia circolare applicata al cibo?"
+        "|Quali sottoprodotti agroalimentari possono essere valorizzati, e come?"
+        "|Che cosa dicono i documenti sul recupero degli scarti in una filiera?",
+    ).split("|")
+    if q.strip()
+)
+
 ENV_FILE = os.environ.get("DEMO_ENV_FILE", str(ROOT / "kg_pipeline" / ".env"))
 LOG_DIR = Path(os.environ.get("DEMO_LOG_DIR", str(ROOT / "artifacts" / "demo_sessions")))
 # Comma-separated vLLM endpoints offered in the model selector; each is probed
@@ -307,3 +350,54 @@ def build_demo_agent(
         vllm_base_url=base_url,
     )
     return KGRAGAgent(config=config, kg_retriever=retriever, llm=llm), graph_label
+
+
+# ---------------------------------------------------------------------- #
+# corpus manifest
+# ---------------------------------------------------------------------- #
+
+
+def corpus_manifest() -> dict[str, object]:
+    """What the collection currently holds, read from the indexed stage0 runs.
+
+    The interface has to be able to say how much it has read without a number
+    typed into a sentence: the corpus grows, and a hard-coded count silently
+    becomes a lie. The source of truth is the same manifest the text channel is
+    built from (`TEXT_STAGE0_RUNS`), so the page can never claim documents the
+    retriever cannot reach.
+
+    Returns:
+        ``documents`` (filenames, most authoritative run first, no repeats) and
+        their ``count``. Both are empty when no manifest can be read — the
+        caller then says nothing about the corpus rather than guessing.
+
+    The manifest also carries ``publication_year``, and it is deliberately not
+    returned: measured on the current runs it spans 1943-2026, because the
+    extractor picks up any four-digit number on the cover. A date range shown
+    to a reader has to be right, and this one is not.
+    """
+    documents: list[str] = []
+    artifacts = ROOT / "kg_pipeline" / "artifacts"
+
+    for run in (r.strip() for r in TEXT_STAGE0_RUNS.split(",") if r.strip()):
+        manifest = artifacts / run / "stage0_documents.json"
+        if not manifest.exists():
+            continue
+        try:
+            docs = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:  # noqa: BLE001 - a bad manifest is not fatal
+            logger.warning("Corpus manifest %s unreadable: %s", manifest, exc)
+            continue
+        if not isinstance(docs, list):
+            continue
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            filename = str(doc.get("filename", "") or "").strip()
+            # Runs are listed most authoritative first, exactly as the text
+            # pipeline reads them, so a reprocessed document is not counted twice.
+            if not filename or filename in documents:
+                continue
+            documents.append(filename)
+
+    return {"documents": documents, "count": len(documents)}

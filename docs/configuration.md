@@ -137,6 +137,13 @@ with, so nothing needs editing to try something else.
 | `DEMO_NEO4J_FALLBACK_URL` | `""` | Graph used when the primary one does not answer |
 | `DEMO_ENV_FILE` | `kg_pipeline/.env` | Where the demo reads credentials |
 | `DEMO_LOG_DIR` | `artifacts/demo_sessions` | Session transcripts |
+| `DEMO_PRODUCT_NAME` | `Assistente CEFF` | Name on the page and in the browser tab |
+| `DEMO_PRODUCT_TAGLINE` | (Italian line) | The sentence under the name |
+| `DEMO_PRODUCT_TAGLINE_EN` | (English line) | Same, when the interface is in English |
+| `DEMO_PRODUCT_ICON` | `🌾` | Browser-tab icon |
+| `DEMO_UI_LANGUAGE` | `it` | Interface language at startup; the reader can switch it |
+| `DEMO_DEBUG` | `0` | Show the strategy, the model id and the graph URL on the page |
+| `DEMO_EXAMPLE_QUESTIONS` | 3 questions, separated by `\|` | Offered when a question is refused as out of domain |
 
 ```bash
 DEMO_STRATEGY=default DEMO_COMPLEXITY=medium \
