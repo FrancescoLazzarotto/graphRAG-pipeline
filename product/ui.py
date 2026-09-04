@@ -63,7 +63,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Fatti dal grafo",
         "cited_passages": "passaggi citati",
         "not_cited": "recuperato, non citato",
-        "evidence_box": "Evidenze · {n}",
         "also_retrieved": "Recuperato e non usato",
         # feedback
         "fb_useful": "Risposta utile",
@@ -139,7 +138,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Graph facts",
         "cited_passages": "cited passages",
         "not_cited": "retrieved, not cited",
-        "evidence_box": "Evidence · {n}",
         "also_retrieved": "Retrieved, not used",
         "fb_useful": "Useful answer",
         "fb_wrong": "Wrong or useless answer",
@@ -430,23 +428,6 @@ def panel_evidence(
         passages=cited["text"] + spare["text"],
         facts=cited["triple"] + spare["triple"],
     )
-
-
-def evidence_box_label(lang: str, counts: dict[str, int], prefix: str = "") -> str:
-    """The one line the evidence occupies until someone opens it.
-
-    Closed, the panel should say how much there is and nothing else; the
-    numbers are the same ones the metadata bar under the answer reports, so the
-    two never disagree.
-    """
-    inside = " · ".join(
-        (
-            count_label(lang, "meta_passages", int(counts.get("passages", 0))),
-            count_label(lang, "meta_facts", int(counts.get("facts", 0))),
-        )
-    )
-    label = t(lang, "evidence_box", n=inside)
-    return f"{prefix} · {inside}" if prefix else label
 
 
 def fact_line(row: dict[str, Any]) -> str:

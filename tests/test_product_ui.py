@@ -277,15 +277,6 @@ def test_panel_evidence_leads_with_retrieval_order_when_nothing_was_cited():
     assert all(row["cited"] is False for row in panel.passages)
 
 
-def test_evidence_box_label_carries_the_counts():
-    counts = {"passages": 8, "facts": 20}
-    assert ui.evidence_box_label("it", counts) == "Evidenze · 8 passaggi · 20 fatti dal grafo"
-    assert ui.evidence_box_label("it", counts, "Evidenze di questa risposta") == (
-        "Evidenze di questa risposta · 8 passaggi · 20 fatti dal grafo"
-    )
-    assert ui.evidence_box_label("en", {"passages": 1, "facts": 0}) == (
-        "Evidence · 1 passage · 0 graph facts"
-    )
 
 
 def test_fact_line_is_one_line_with_its_document():
