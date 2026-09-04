@@ -176,6 +176,38 @@ _MAX_GATE_ENTITY_NAMES = 8
 _MAX_GATE_PASSAGES = 3
 
 
+def _gate_question(state: RAGState) -> str:
+    """The form of the question the evidence gate should judge.
+
+    A continuation is judged on its rewritten form, not on the words typed.
+    The gate exempts "a question carrying no search terms of its own", but that
+    test never fires: `_build_search_terms` is a retrieval extractor and keeps
+    common words, so it returns ['capito', 'niente'] for "Non ho capito niente"
+    and ['allora'] for "e allora dimmi" — the two examples its own docstring
+    names. Measured on the live demo 2026-09-03: an expert who said only that
+    they had not understood was refused in two seconds.
+
+    Judging the rewrite is safe in the direction that matters. The rewrite
+    prompt is told to keep the user's intent, so it does not launder an
+    out-of-domain question into the domain: "e scrivimi una funzione python che
+    costruisca una rete neurale" rewrites to "Scrivi una funzione Python che
+    costruisca una rete neurale." and is still refused. What it does supply is
+    the subject a bare continuation left implicit.
+
+    Args:
+        state: The graph state, carrying ``question``, ``follow_up`` and, when
+            memory rewrote it, ``rewritten_question``.
+
+    Returns:
+        The question to judge: the rewrite on a follow-up that has one, the
+        question as typed otherwise.
+    """
+    question = str(state.get("question", "") or "").strip()
+    if not state.get("follow_up"):
+        return question
+    return str(state.get("rewritten_question", "") or "").strip() or question
+
+
 def _proper_noun_terms(question: str) -> list[str]:
     """Capitalised tokens from ``question`` that might name a graph entity.
 
@@ -340,7 +372,7 @@ class KGRAGAgent:
             return {"in_domain": True}
 
         if _gate_mode() == "evidence":
-            return self._evidence_gate(question)
+            return self._evidence_gate(_gate_question(state))
 
         # A continuation is exempt: it carries no topic of its own, and refusing
         # it ends the conversation the demo exists to hold. Two tests, because
@@ -522,7 +554,11 @@ class KGRAGAgent:
         is retrieved, so no evidence index exists and no source list can be
         rendered under it.
         """
-        question = state.get("question", "")
+        # Detected on the form the gate judged, not on the words typed. A bare
+        # continuation is too short to classify: "Non ho capito niente" comes
+        # back as English, and the expert who wrote it in Italian was refused in
+        # English. The rewrite carries the conversation's own language.
+        question = _gate_question(state) or state.get("question", "")
         language = LLMManager._detect_query_language(question)
         # The refusal names what the collection does cover: the expert's next
         # move is to rephrase, and a bare "out of scope" gives them nothing to

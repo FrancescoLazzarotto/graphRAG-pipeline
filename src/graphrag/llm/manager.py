@@ -642,7 +642,7 @@ class LLMManager:
         config: AgentConfig,
         transcript: str = "",
     ) -> dict[str, str]:
-        response_language = self._detect_query_language(query)
+        response_language = self._answer_language(query, transcript)
 
         # PromptLibrary is the single source of truth for prompts: both the
         # vLLM and local HF backends must see the same prompt so their answers
@@ -881,10 +881,35 @@ class LLMManager:
         return LLMManager._detect_query_language(body)
 
     @staticmethod
-    def _detect_query_language(query: str) -> str:
+    def _answer_language(query: str, transcript: str = "") -> str:
+        """The language to answer in, using the conversation when the turn is mute.
+
+        A continuation can carry no marker at all: "Non ho capito niente" scores
+        zero on both sides, and the tie in `_detect_query_language` sends it to
+        English. Measured on the live demo 2026-09-03, that answered an Italian
+        conversation in English on the one turn where the expert said only that
+        they had not understood. The words the user typed stay the first
+        authority — a mid-conversation switch of language is honoured — and the
+        transcript is consulted only when they say nothing.
+        """
+        it_score, en_score = LLMManager._language_scores(query)
+        if it_score or en_score:
+            return "it" if it_score > en_score else "en"
+        if transcript:
+            return LLMManager._detect_query_language(transcript)
+        return "en"
+
+    @staticmethod
+    def _language_scores(query: str) -> tuple[int, int]:
+        """Italian and English marker counts for ``query``.
+
+        Split out of `_detect_query_language` so a caller can tell a decision
+        from the absence of one: both scores zero means the text carried no
+        evidence either way, not that it is English.
+        """
         text = str(query or "").strip().lower()
         if not text:
-            return "en"
+            return 0, 0
 
         italian_markers = {
             # Articulated prepositions are a closed class, and this list held
@@ -1019,5 +1044,15 @@ class LLMManager:
             if _ITALIAN_IMPERATIVE_CLITIC.search(text):
                 it_score += 1
 
+        return it_score, en_score
+
+    @staticmethod
+    def _detect_query_language(query: str) -> str:
+        """The language to answer ``query`` in.
+
+        A tie goes to English, which is right for a lone question — but wrong
+        for a turn that carries no signal at all; see `_answer_language`.
+        """
+        it_score, en_score = LLMManager._language_scores(query)
         return "it" if it_score > en_score else "en"
 
