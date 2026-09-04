@@ -60,3 +60,28 @@ jobs:
       - name: Tests
         # Paths come from [tool.pytest.ini_options] testpaths in pyproject.toml.
         run: python -m pytest -q
+
+  # A `.ruff_cache/` existed for a long time with no `[tool.ruff]` section and no
+  # ruff in any extra: someone ran it by hand once and nothing kept it running.
+  # Scoped to `src` and `product` — see the comment on [tool.ruff] in
+  # pyproject.toml for why the script trees are out — and green from the first
+  # run, so a red gate here means a new defect, not a backlog.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Only the linter: it reads pyproject.toml for its configuration and needs
+      # none of the project's dependencies, so this job reports in seconds
+      # instead of waiting on the torch download the test job pays for.
+      - name: Install ruff
+        run: python -m pip install "ruff>=0.6,<1.0"
+
+      - name: Lint
+        run: ruff check src product
