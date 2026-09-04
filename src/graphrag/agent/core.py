@@ -34,7 +34,7 @@ from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
 from graphrag.llm.prompts import PromptLibrary
 from graphrag.llm.refusal import looks_like_refusal
-from graphrag.types import RAGState
+from graphrag.types import RAGState, triple_key
 
 logger = logging.getLogger("graphrag")
 
@@ -975,16 +975,7 @@ class KGRAGAgent:
 
     @staticmethod
     def _triple_key(triple: dict[str, Any]) -> tuple[str, str, str]:
-        subject_id = str(triple.get("subject_id", "")).strip()
-        object_id = str(triple.get("object_id", "")).strip()
-        predicate = str(triple.get("predicate", "")).strip().lower()
-
-        if subject_id and object_id:
-            return (f"id:{subject_id}", predicate, f"id:{object_id}")
-
-        subject = str(triple.get("subject", "")).strip().lower()
-        obj = str(triple.get("object", "")).strip().lower()
-        return (subject, predicate, obj)
+        return triple_key(triple)
 
     def _merge_nodes(
         self,

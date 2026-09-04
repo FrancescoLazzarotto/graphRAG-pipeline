@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from graphrag.llm.refusal import is_insufficient
+from graphrag.types import triple_key
 
 
 class SupportsInvoke(Protocol):
@@ -165,16 +166,7 @@ class ExperimentRunner:
 
     @staticmethod
     def _triple_key(triple: dict[str, Any]) -> tuple[str, str, str]:
-        subject_id = str(triple.get("subject_id", "")).strip()
-        object_id = str(triple.get("object_id", "")).strip()
-        predicate = str(triple.get("predicate", "")).strip().lower()
-
-        if subject_id and object_id:
-            return (f"id:{subject_id}", predicate, f"id:{object_id}")
-
-        subject = str(triple.get("subject", "")).strip().lower()
-        obj = str(triple.get("object", "")).strip().lower()
-        return (subject, predicate, obj)
+        return triple_key(triple)
 
     def _extract_retrieved_triples(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         triples: list[dict[str, Any]] = []

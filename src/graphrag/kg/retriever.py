@@ -10,7 +10,7 @@ from graphrag import embeddings, questions
 from graphrag.config import AgentConfig
 from graphrag.kg.manager import KnowledgeGraphManager
 from graphrag.text_rag.pipeline import StandardTextRAGPipeline
-from graphrag.types import KGNode, KGTriple
+from graphrag.types import KGNode, KGTriple, triple_key
 
 logger = logging.getLogger("graphrag")
 
@@ -1159,13 +1159,4 @@ class KGRetriever:
 
     @staticmethod
     def _triple_key(triple: KGTriple) -> tuple[str, str, str]:
-        subject_id = str(triple.get("subject_id", "")).strip()
-        object_id = str(triple.get("object_id", "")).strip()
-        predicate = str(triple.get("predicate", "")).strip().lower()
-
-        if subject_id and object_id:
-            return (f"id:{subject_id}", predicate, f"id:{object_id}")
-
-        subject = str(triple.get("subject", "")).strip().lower()
-        obj = str(triple.get("object", "")).strip().lower()
-        return (subject, predicate, obj)
+        return triple_key(triple)

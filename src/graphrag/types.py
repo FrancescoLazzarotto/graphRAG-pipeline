@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal, TypedDict
 
 
@@ -97,3 +98,33 @@ class KGTriple(TypedDict, total=False):
     subject_properties: dict[str, Any]
     object_properties: dict[str, Any]
     relationship_properties: dict[str, Any]
+
+def triple_key(triple: Mapping[str, Any]) -> tuple[str, str, str]:
+    """Identity of a triple for de-duplication.
+
+    Element ids when both endpoints carry one, surface forms otherwise: the
+    same fact retrieved by two queries must collapse onto one entry, and two
+    nodes that happen to share a name must not.
+
+    Written once here because it was written three times identically -- in the
+    agent, the retriever and the experiment runner -- differing only in the type
+    annotation. Three copies of a key function is three chances for de-duplication
+    to mean something different in the same turn.
+
+    Args:
+        triple: A retrieved triple, with ``subject``/``predicate``/``object``
+            and optionally ``subject_id``/``object_id``.
+
+    Returns:
+        The key, id-based when both ids are present.
+    """
+    subject_id = str(triple.get("subject_id", "")).strip()
+    object_id = str(triple.get("object_id", "")).strip()
+    predicate = str(triple.get("predicate", "")).strip().lower()
+
+    if subject_id and object_id:
+        return (f"id:{subject_id}", predicate, f"id:{object_id}")
+
+    subject = str(triple.get("subject", "")).strip().lower()
+    obj = str(triple.get("object", "")).strip().lower()
+    return (subject, predicate, obj)
