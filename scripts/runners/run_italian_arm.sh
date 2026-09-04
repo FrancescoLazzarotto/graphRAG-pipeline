@@ -43,7 +43,6 @@ conda run --no-capture-output -n graphllm python -m graphrag.cli --experiment \
   --profile thesis_campaign \
   --max-new-tokens 1024 \
   --text-docs-dir artifacts/corpus_circular22 \
-  --text-retriever-backend dense \
   --evidence-max-triple-items "${EVIDENCE_CAP:-30}" \
   --output-dir "${OUT_ROOT}/it_questions" \
   --experiment-tag "crosslingual_it"

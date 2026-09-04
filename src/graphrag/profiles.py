@@ -79,6 +79,15 @@ DEMO: dict[str, Any] = {
     "text_retriever_top_k": 8,
     "text_retriever_mmr": True,
     "text_retriever_max_per_doc": 2,
+    # `product/config.py` has run this since the demo existed, while the
+    # library default is "tfidf" — so this profile, which claims to describe
+    # the demo, described a retriever the demo does not use (MNT-7). Measured
+    # 2026-09-04 on the 30 EN gold questions: dense 0.625 concept recall
+    # against 0.580, and 22 of 30 questions reaching one of the 9 Italian
+    # documents against 7 of 30. Declared here so the drift cannot recur
+    # silently; `test_demo_profile_matches_the_product` holds it to
+    # product/config.py.
+    "text_retriever_backend": "dense",
 }
 
 # The control arm: library defaults, every optional channel and prompt change

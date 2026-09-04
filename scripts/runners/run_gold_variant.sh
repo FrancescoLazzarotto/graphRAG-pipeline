@@ -54,7 +54,6 @@ conda run --no-capture-output -n graphllm python -m graphrag.cli --experiment \
   --profile thesis_campaign \
   --max-new-tokens 1024 \
   --text-docs-dir artifacts/corpus_circular22 \
-  --text-retriever-backend dense \
   --evidence-max-triple-items "${EVIDENCE_CAP:-30}" \
   ${EXTRA_ARGS} \
   --output-dir "${OUT_ROOT}/${VARIANT}" \

@@ -124,3 +124,43 @@ def test_overrides_win_over_profile_and_strategy() -> None:
     # text_only switches include_nodes off; the explicit override comes last.
     assert config.include_nodes is True
     assert build_config("thesis_campaign", strategy="text_only").include_nodes is False
+
+
+def test_demo_profile_matches_the_product() -> None:
+    """The profile that claims to describe the demo has to describe it.
+
+    It did not: `text_retriever_backend` was absent, so the profile resolved to
+    the library default `tfidf` while `product/config.py` has always built the
+    text pipeline with `dense`. Nothing caught it, because nothing compared the
+    two — this is that comparison (MNT-7).
+    """
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from product import config as product_config
+
+    # Every field the profile declares, against the constant the demo runs on.
+    declared_by_the_demo = {
+        "complexity": product_config.COMPLEXITY,
+        "always_include_limits": product_config.ALWAYS_LIMITS,
+        "cite_evidence": product_config.CITE_EVIDENCE,
+        "citation_display": product_config.CITATION_DISPLAY,
+        "enforce_language": product_config.ENFORCE_LANGUAGE,
+        "prefer_verbatim_definitions": product_config.VERBATIM_DEFINITIONS,
+        "vector_retrieval": product_config.VECTOR_RETRIEVAL,
+        "enable_domain_gate": product_config.DOMAIN_GATE,
+        "allow_parametric_fallback": product_config.PARAMETRIC_FALLBACK,
+        "text_retriever_top_k": product_config.TEXT_TOP_K,
+        "text_retriever_mmr": product_config.TEXT_MMR,
+        "text_retriever_max_per_doc": product_config.TEXT_MAX_PER_DOC,
+        "text_retriever_backend": product_config.TEXT_RETRIEVER_BACKEND,
+    }
+    differing = {
+        field: {"profile": DEMO.get(field, "<assente>"), "demo": value}
+        for field, value in declared_by_the_demo.items()
+        if DEMO.get(field) != value
+    }
+
+    assert not differing, f"the demo profile diverges from product/config.py: {differing}"
