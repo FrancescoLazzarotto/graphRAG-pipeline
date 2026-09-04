@@ -492,9 +492,9 @@ def _render_metadata(turn: dict[str, Any]) -> None:
     lang = _lang()
     counts = turn.get("counts") or {}
     bits = [
-        ui.t(lang, "meta_passages", n=int(counts.get("passages", 0))),
-        ui.t(lang, "meta_facts", n=int(counts.get("facts", 0))),
-        ui.t(lang, "meta_documents", n=int(counts.get("documents", 0))),
+        ui.count_label(lang, "meta_passages", int(counts.get("passages", 0))),
+        ui.count_label(lang, "meta_facts", int(counts.get("facts", 0))),
+        ui.count_label(lang, "meta_documents", int(counts.get("documents", 0))),
         ui.t(lang, "meta_seconds", n=f"{float(turn.get('latency_s', 0.0)):.0f}"),
     ]
     state, text = ui.citation_summary(turn.get("citation_report"), lang)
@@ -503,38 +503,21 @@ def _render_metadata(turn: dict[str, Any]) -> None:
 
 
 def _render_sources(turn: dict[str, Any]) -> None:
-    """The documents this answer cited, one block per document.
+    """Where this answer came from, in one line.
 
-    Rebuilt from the evidence index and the verified reference ids, which is
-    why a passage can be opened and read here: the text of every retrieved
-    chunk travels in `result`, and until now it was thrown away.
+    The first version gave every cited document a heading, a page caption and a
+    row of buttons. Under a seven-paragraph answer that was longer than some of
+    the answers, and it repeated the evidence panel, which holds every passage
+    in full. What belongs under an answer is the short statement of its
+    provenance; the evidence itself has its own place.
     """
-    lang = _lang()
-    documents = ui.evidence_by_document(
+    line = ui.compact_sources_line(
         turn.get("evidence_index") or [],
         turn.get("cited_refs") or [],
-        only_cited=True,
-        unnamed_label=ui.t(lang, "sources_title"),
+        _lang(),
     )
-    if not documents:
-        return
-
-    st.markdown(f"**{ui.t(lang, 'sources_title')}**")
-    for entry in documents:
-        st.markdown(f"- **{entry.document}** — {ui.t(lang, 'refs_in_answer', n=entry.n_refs)}")
-        pages = entry.pages()
-        if pages:
-            st.caption(f"{ui.t(lang, 'cited_passages')}: {', '.join(pages)}")
-        columns = st.columns(min(3, max(1, len(entry.passages)))) if entry.passages else []
-        for index, passage in enumerate(entry.passages):
-            # `pages` already arrives reader-ready ("p. 35"): the engine formats
-            # it in parse_chunk_source, and prefixing it again produced "p. p. 35".
-            label = passage["pages"] or ui.t(lang, "open_passage")
-            with columns[index % len(columns)].popover(label):
-                st.caption(f"{entry.document} · {label}")
-                st.write(passage["text"])
-        for fact in entry.facts:
-            st.caption(f"· {ui.readable_fact(fact['text']).sentence()}")
+    if line:
+        st.caption(line)
 
 
 def _render_evidence(turn: dict[str, Any], container: Any) -> None:
@@ -795,13 +778,16 @@ with st.sidebar:
                 st.rerun()
 
     st.divider()
-    st.session_state.ui_lang = st.segmented_control(
+    # A select, bound to the state key it sets, rather than a segmented control:
+    # clicking the language already in use deselected it and returned None, and
+    # a focused button group answers the Enter key that belongs to the question
+    # box. A select does neither.
+    st.selectbox(
         ui.t(LANG, "interface_language"),
         list(ui.LANGUAGES),
         format_func=lambda code: ui.LANGUAGES[code],
-        default=LANG,
-        key="lang_picker",
-    ) or LANG
+        key="ui_lang",
+    )
 
     # One reachable model is not a choice, and a list of served model ids with
     # their ports is not a question a student or a public-sector reader can
@@ -838,10 +824,9 @@ except Exception as exc:  # noqa: BLE001 - the browser must not receive a traceb
     )
     st.stop()
 
-# Called before the columns so Streamlit keeps it pinned to the bottom of the
-# page rather than rendering it inside one of them.
-typed = st.chat_input(ui.t(LANG, "ask_placeholder"))
-question = typed or st.session_state.pop("pending_question", None)
+# The question being answered on this run. It is put here by the box at the end
+# of the script, or by one of the example questions offered on a refusal.
+question = st.session_state.pop("pending_question", None)
 
 reading, evidence_panel = st.columns([2, 1], gap="large")
 
@@ -890,3 +875,13 @@ with evidence_panel:
     if answered and SHOW_FULL_ANSWER:
         st.markdown(f"**{ui.t(LANG, 'evidence_of_last')}**")
         _render_evidence(answered[-1], st.container())
+
+# Last statement in the script, which is what keeps Streamlit pinning it to the
+# bottom of the page and submitting it on Enter. The question is handed to the
+# next run rather than answered here: the transcript above has already been
+# drawn, and the example questions on a refusal reach the agent by the same
+# route, so there is one way in and not two.
+typed = st.chat_input(ui.t(LANG, "ask_placeholder"))
+if typed:
+    st.session_state.pending_question = typed
+    st.rerun()

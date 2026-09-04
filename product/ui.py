@@ -18,6 +18,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
+# Read-only use of the engine's own filename shortener, so a document is named
+# on screen the way it is named inside an answer's citations.
+from graphrag.agent.evidence import short_doc_label
+
 # --------------------------------------------------------------------------- #
 # interface strings
 # --------------------------------------------------------------------------- #
@@ -36,8 +40,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "status_degraded_why": "La ricerca cross-lingua non era disponibile per questa risposta.",
         # metadata bar
         "meta_passages": "{n} passaggi",
+        "meta_passages_one": "1 passaggio",
         "meta_facts": "{n} fatti dal grafo",
+        "meta_facts_one": "1 fatto dal grafo",
         "meta_documents": "{n} documenti",
+        "meta_documents_one": "1 documento",
         "meta_seconds": "{n} s",
         # citations
         "cit_clean": "{n} citazioni, tutte verificate",
@@ -55,8 +62,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "passages": "Passaggi",
         "graph_facts": "Fatti dal grafo",
         "cited_passages": "passaggi citati",
-        "open_passage": "Leggi il passaggio",
-        "refs_in_answer": "{n} riferimenti in questa risposta",
         "not_cited": "recuperato, non citato",
         # feedback
         "fb_useful": "Risposta utile",
@@ -73,7 +78,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "conversations": "Conversazioni",
         "new_chat": "+ Nuova conversazione",
         "empty_chat": "Nuova conversazione",
-        "delete": "Elimina",
+        "delete": "Elimina conversazione",
         "delete_confirm": "Elimina definitivamente questa conversazione?",
         "delete_yes": "Sì, elimina",
         "delete_no": "Annulla",
@@ -111,8 +116,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "status_reduced_why": "The primary graph is not answering: using the local copy.",
         "status_degraded_why": "Cross-lingual search was unavailable for this answer.",
         "meta_passages": "{n} passages",
+        "meta_passages_one": "1 passage",
         "meta_facts": "{n} graph facts",
+        "meta_facts_one": "1 graph fact",
         "meta_documents": "{n} documents",
+        "meta_documents_one": "1 document",
         "meta_seconds": "{n} s",
         "cit_clean": "{n} citations, all verified",
         "cit_phantom": "{n} citations, {k} unverified",
@@ -128,8 +136,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "passages": "Passages",
         "graph_facts": "Graph facts",
         "cited_passages": "cited passages",
-        "open_passage": "Read the passage",
-        "refs_in_answer": "{n} references in this answer",
         "not_cited": "retrieved, not cited",
         "fb_useful": "Useful answer",
         "fb_wrong": "Wrong or useless answer",
@@ -144,7 +150,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "conversations": "Conversations",
         "new_chat": "+ New conversation",
         "empty_chat": "New conversation",
-        "delete": "Delete",
+        "delete": "Delete conversation",
         "delete_confirm": "Delete this conversation for good?",
         "delete_yes": "Yes, delete",
         "delete_no": "Cancel",
@@ -169,6 +175,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "rewrite_literal": "Redo with the literal question",
     },
 }
+
+
+def count_label(lang: str, key: str, n: int) -> str:
+    """A counted noun that reads right at one.
+
+    "1 passaggi · 1 fatti dal grafo · 1 documenti" is the sort of detail that
+    makes an interface look unfinished, and every count on this page can be one.
+    """
+    singular = f"{key}_one"
+    if int(n) == 1 and singular in (STRINGS.get(lang) or STRINGS["it"]):
+        return t(lang, singular)
+    return t(lang, key, n=n)
 
 
 def t(lang: str, key: str, **kwargs: Any) -> str:
@@ -355,6 +373,38 @@ def evidence_by_document(
             entry.passages.append(row)
 
     return list(grouped.values())
+
+
+def compact_sources_line(
+    evidence_index: Sequence[dict[str, Any]],
+    cited_refs: Iterable[str] = (),
+    lang: str = "it",
+) -> str:
+    """The answer's sources as one line: documents, their cited pages, a count.
+
+    The first version gave every document a heading, a page caption and a row
+    of buttons, which under a seven-paragraph answer was longer than some of
+    the answers. The passages themselves stayed reachable — the evidence panel
+    holds every one of them — so what belongs under the answer is the short
+    statement of where it came from, not a second copy of the evidence.
+
+    Returns:
+        The line, or an empty string when the answer cited nothing.
+    """
+    documents = evidence_by_document(evidence_index, cited_refs, only_cited=True)
+    if not documents:
+        return ""
+
+    bits: list[str] = []
+    facts = 0
+    for entry in documents:
+        facts += len(entry.facts)
+        label = short_doc_label(entry.document) or entry.document
+        pages = entry.pages()
+        bits.append(f"{label} ({', '.join(pages)})" if pages else label)
+    if facts:
+        bits.append(count_label(lang, "meta_facts", facts))
+    return f"{t(lang, 'sources_title')}: " + " · ".join(bits)
 
 
 def retrieval_counts(result: dict[str, Any]) -> dict[str, int]:

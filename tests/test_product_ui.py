@@ -249,6 +249,49 @@ def test_evidence_by_document_ignores_malformed_rows():
 
 
 # --------------------------------------------------------------------------- #
+# the compact source line
+# --------------------------------------------------------------------------- #
+
+
+def test_compact_sources_line_names_documents_and_their_pages():
+    line = ui.compact_sources_line(EVIDENCE, ["S1", "T1"], "it")
+    assert line.startswith("Fonti: ")
+    # The engine's own shortener, so a document is named here the way an
+    # in-text citation names it.
+    assert "MR37 (p. 35)" in line
+    assert "1 fatto dal grafo" in line
+    # Retrieved and never cited, so it is not part of the provenance.
+    assert "Kenya" not in line
+
+
+def test_compact_sources_line_is_empty_when_nothing_was_cited():
+    assert ui.compact_sources_line(EVIDENCE, [], "it") == ""
+    assert ui.compact_sources_line([], ["S1"], "en") == ""
+
+
+def test_compact_sources_line_collects_the_pages_of_one_document():
+    evidence = [
+        {"ref_id": "S1", "kind": "text", "text": "a", "source_doc": "MR37-ita.pdf", "pages": "p. 35"},
+        {"ref_id": "S2", "kind": "text", "text": "b", "source_doc": "MR37-ita.pdf", "pages": "p. 37"},
+    ]
+    assert "MR37 (p. 35, p. 37)" in ui.compact_sources_line(evidence, ["S1", "S2"], "it")
+
+
+@pytest.mark.parametrize(
+    ("lang", "key", "n", "expected"),
+    [
+        ("it", "meta_passages", 1, "1 passaggio"),
+        ("it", "meta_passages", 8, "8 passaggi"),
+        ("it", "meta_facts", 1, "1 fatto dal grafo"),
+        ("en", "meta_documents", 1, "1 document"),
+        ("en", "meta_documents", 4, "4 documents"),
+    ],
+)
+def test_count_label_reads_right_at_one(lang, key, n, expected):
+    assert ui.count_label(lang, key, n) == expected
+
+
+# --------------------------------------------------------------------------- #
 # counts and the citation check
 # --------------------------------------------------------------------------- #
 
