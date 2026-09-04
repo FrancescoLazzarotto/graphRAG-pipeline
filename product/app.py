@@ -521,41 +521,48 @@ def _render_sources(turn: dict[str, Any]) -> None:
 
 
 def _render_evidence(turn: dict[str, Any], container: Any) -> None:
-    """Everything retrieved for one answer, cited or not.
+    """One answer's evidence, opening on what the answer actually used.
 
-    The distinction is kept visible: an answer stands on what it cited, and
-    what was retrieved and left unused is the honest part of the picture — it
-    is what a reader needs to see to judge whether the collection had more to
-    say than the answer used.
+    Everything retrieved stays reachable — an answer stands on what it cited,
+    and what the collection returned and the answer ignored is what a reader
+    needs in order to judge it. It just stops being the first thing they see:
+    a turn retrieves a median of twenty graph facts, and listed in full beside
+    a ten-line answer the panel explained less than it crowded.
     """
     lang = _lang()
-    documents = ui.evidence_by_document(
-        turn.get("evidence_index") or [],
-        turn.get("cited_refs") or [],
-        only_cited=False,
-        unnamed_label=ui.t(lang, "sources_title"),
+    panel = ui.panel_evidence(
+        turn.get("evidence_index") or [], turn.get("cited_refs") or []
     )
-    if not documents:
+    if not any(
+        (panel.passages, panel.facts, panel.spare_passages, panel.spare_facts)
+    ):
         container.caption(ui.t(lang, "evidence_none"))
         return
 
-    passages = [(d.document, p) for d in documents for p in d.passages]
-    facts = [(d.document, f) for d in documents for f in d.facts]
-
-    if passages:
+    if panel.passages:
         container.markdown(f"**{ui.t(lang, 'passages')}**")
-        for document, passage in passages:
-            head = f"{document} · {passage['pages']}" if passage["pages"] else document
-            with container.expander(head, expanded=False):
-                if not passage["cited"]:
-                    st.caption(ui.t(lang, "not_cited"))
+        for passage in panel.passages:
+            with container.expander(ui.passage_label(passage), expanded=False):
                 st.write(passage["text"])
-    if facts:
+    if panel.spare_passages:
+        with container.expander(
+            ui.count_label(lang, "more_passages", len(panel.spare_passages)),
+            expanded=False,
+        ):
+            for passage in panel.spare_passages:
+                st.caption(ui.passage_label(passage))
+                st.write(passage["text"])
+
+    if panel.facts:
         container.markdown(f"**{ui.t(lang, 'graph_facts')}**")
-        for document, fact in facts:
-            sentence = ui.readable_fact(fact["text"]).sentence()
-            suffix = "" if fact["cited"] else f" — _{ui.t(lang, 'not_cited')}_"
-            container.markdown(f"- {sentence}  \n  <small>{document}</small>{suffix}", unsafe_allow_html=True)
+        for fact in panel.facts:
+            container.caption(ui.fact_line(fact))
+    if panel.spare_facts:
+        with container.expander(
+            ui.count_label(lang, "more_facts", len(panel.spare_facts)), expanded=False
+        ):
+            for fact in panel.spare_facts:
+                st.caption(ui.fact_line(fact))
 
 
 def _render_out_of_scope(turn_id: str) -> None:

@@ -249,6 +249,61 @@ def test_evidence_by_document_ignores_malformed_rows():
 
 
 # --------------------------------------------------------------------------- #
+# the evidence panel
+# --------------------------------------------------------------------------- #
+
+
+def test_panel_evidence_opens_on_what_the_answer_used():
+    panel = ui.panel_evidence(EVIDENCE, ["S1", "T1"])
+    assert [row["ref_id"] for row in panel.passages] == ["S1"]
+    assert [row["ref_id"] for row in panel.facts] == ["T1"]
+    assert [row["ref_id"] for row in panel.spare_passages] == ["S2"]
+    assert panel.spare_facts == []
+
+
+def test_panel_evidence_folds_the_overflow_of_cited_items():
+    evidence = [
+        {"ref_id": f"T{i}", "kind": "triple", "text": f"(a{i}, USES, b)", "source_doc": "d.pdf"}
+        for i in range(1, 13)
+    ]
+    panel = ui.panel_evidence(evidence, [f"T{i}" for i in range(1, 13)], limit=8)
+    assert len(panel.facts) == 8
+    assert len(panel.spare_facts) == 4
+
+
+def test_panel_evidence_opens_the_top_of_retrieval_when_nothing_was_cited():
+    """The panel must not go blank on the turns that most need it.
+
+    An answer that cited nothing has no "used" evidence at all. Folding
+    everything away then leaves two closed rows where a reader is trying to
+    find out what the collection actually returned.
+    """
+    panel = ui.panel_evidence(EVIDENCE, [])
+    assert [row["ref_id"] for row in panel.passages] == ["S1", "S2"]
+    assert [row["ref_id"] for row in panel.facts] == ["T1"]
+    assert panel.spare_passages == []
+    assert all(row["cited"] is False for row in panel.passages)
+
+
+def test_fact_line_is_one_line_with_its_document():
+    """Two lines per fact is what made the panel outgrow the answer."""
+    line = ui.fact_line(
+        {"text": "(biochar, REDUCES, erosione del suolo)", "document": "MR37-ita.pdf"}
+    )
+    assert line == "biochar · reduces · erosione del suolo · MR37"
+    assert "\n" not in line
+
+
+def test_fact_line_without_a_document():
+    assert ui.fact_line({"text": "(a, USES, b)", "document": ""}) == "a · uses · b"
+
+
+def test_passage_label_names_the_document_and_the_pages():
+    assert ui.passage_label({"document": "MR37-ita.pdf", "pages": "p. 35"}) == "MR37-ita.pdf · p. 35"
+    assert ui.passage_label({"document": "MR37-ita.pdf", "pages": ""}) == "MR37-ita.pdf"
+
+
+# --------------------------------------------------------------------------- #
 # the compact source line
 # --------------------------------------------------------------------------- #
 

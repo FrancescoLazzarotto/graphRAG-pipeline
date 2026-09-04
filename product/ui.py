@@ -63,6 +63,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Fatti dal grafo",
         "cited_passages": "passaggi citati",
         "not_cited": "recuperato, non citato",
+        "more_passages": "altri {n} passaggi recuperati",
+        "more_passages_one": "un altro passaggio recuperato",
+        "more_facts": "altri {n} fatti recuperati",
+        "more_facts_one": "un altro fatto recuperato",
+        "used_here": "usati in questa risposta",
         # feedback
         "fb_useful": "Risposta utile",
         "fb_wrong": "Risposta sbagliata o inutile",
@@ -137,6 +142,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "graph_facts": "Graph facts",
         "cited_passages": "cited passages",
         "not_cited": "retrieved, not cited",
+        "more_passages": "{n} more retrieved passages",
+        "more_passages_one": "one more retrieved passage",
+        "more_facts": "{n} more retrieved facts",
+        "more_facts_one": "one more retrieved fact",
+        "used_here": "used in this answer",
         "fb_useful": "Useful answer",
         "fb_wrong": "Wrong or useless answer",
         "fb_thanks": "Thanks, recorded.",
@@ -373,6 +383,96 @@ def evidence_by_document(
             entry.passages.append(row)
 
     return list(grouped.values())
+
+
+@dataclass(slots=True)
+class PanelEvidence:
+    """One answer's evidence, split into what it used and what it did not."""
+
+    passages: list[dict[str, Any]] = field(default_factory=list)
+    facts: list[dict[str, Any]] = field(default_factory=list)
+    spare_passages: list[dict[str, Any]] = field(default_factory=list)
+    spare_facts: list[dict[str, Any]] = field(default_factory=list)
+
+
+def panel_evidence(
+    evidence_index: Sequence[dict[str, Any]],
+    cited_refs: Iterable[str] = (),
+    limit: int = 8,
+) -> PanelEvidence:
+    """Order an answer's evidence so the panel opens on what the answer used.
+
+    Measured over 240 gold answers, a turn retrieves a median of 20 triples
+    across 19 distinct subjects, so grouping them by entity compacts nothing —
+    it would trade twenty lines for nineteen headings. What does compact is the
+    distinction the panel is there to draw: an answer stands on what it cited,
+    and the rest is the honest remainder. The remainder keeps its place, folded.
+
+    Args:
+        evidence_index: ``result["evidence_index"]``.
+        cited_refs: ``result["citation_report"]["cited_refs"]``.
+        limit: How many cited items of each kind stay open before the overflow
+            joins the fold.
+
+    Returns:
+        Cited passages and facts, capped, plus everything else in index order.
+    """
+    wanted = {str(ref).strip().upper() for ref in cited_refs if str(ref).strip()}
+    cited: dict[str, list[dict[str, Any]]] = {"text": [], "triple": []}
+    spare: dict[str, list[dict[str, Any]]] = {"text": [], "triple": []}
+
+    for item in evidence_index:
+        if not isinstance(item, dict):
+            continue
+        ref_id = str(item.get("ref_id", "") or "").strip().upper()
+        kind = "triple" if str(item.get("kind", "")) == "triple" else "text"
+        row = {
+            "ref_id": ref_id,
+            "text": str(item.get("text", "") or "").strip(),
+            "pages": str(item.get("pages", "") or "").strip(),
+            "document": str(item.get("source_doc", "") or "").strip(),
+            "cited": ref_id in wanted,
+        }
+        (cited if row["cited"] else spare)[kind].append(row)
+
+    cap = max(1, int(limit))
+    open_rows: dict[str, list[dict[str, Any]]] = {}
+    folded: dict[str, list[dict[str, Any]]] = {}
+    for kind in ("text", "triple"):
+        # An answer that cited nothing has no "used" evidence, and folding all
+        # of it away would empty the panel exactly on the turns where a reader
+        # most needs to see what the collection returned. Retrieval order is
+        # relevance order, so the top of it is the right thing to open instead.
+        source = cited[kind] or spare[kind]
+        rest = spare[kind] if cited[kind] else []
+        open_rows[kind] = source[:cap]
+        folded[kind] = source[cap:] + rest
+
+    return PanelEvidence(
+        passages=open_rows["text"],
+        facts=open_rows["triple"],
+        spare_passages=folded["text"],
+        spare_facts=folded["triple"],
+    )
+
+
+def fact_line(row: dict[str, Any]) -> str:
+    """One graph fact on one line, document included.
+
+    The panel used to spend two lines on each: the fact, then its document
+    underneath. On a turn with twenty facts that is forty lines beside an answer
+    of ten, which is what made the column outgrow the thing it was explaining.
+    """
+    sentence = readable_fact(row.get("text", "")).sentence()
+    document = short_doc_label(str(row.get("document", "") or ""))
+    return f"{sentence} · {document}" if document else sentence
+
+
+def passage_label(row: dict[str, Any]) -> str:
+    """The heading a passage is folded under: its document and its pages."""
+    document = str(row.get("document", "") or "") or "?"
+    pages = str(row.get("pages", "") or "")
+    return f"{document} · {pages}" if pages else document
 
 
 def compact_sources_line(
