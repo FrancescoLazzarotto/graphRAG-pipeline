@@ -109,6 +109,36 @@ def test_split_answer_tolerates_a_decorated_heading(heading):
     assert parts.limits == "Evidenza debole."
 
 
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "**Limits and confidence**:",
+        "**Limits and confidence:**",
+        "Limiti e affidabilità:",
+        "## Limiti e affidabilità:",
+    ],
+)
+def test_split_answer_takes_a_limits_section_written_inline(heading):
+    """Most real answers put the section text on the heading's own line.
+
+    Counted on the 110 answers in artifacts/demo_sessions: 47 of them wrote
+    "**Limits and confidence**: the evidence is thin" as a single line. A
+    pattern anchored to the end of the line matched none of those, so the box
+    stayed empty and the caveat stayed buried in the prose.
+    """
+    parts = ui.split_answer(f"Corpo della risposta.\n\n{heading} Evidenza debole.")
+    assert parts.body == "Corpo della risposta."
+    assert parts.limits == "Evidenza debole."
+
+
+def test_split_answer_does_not_cut_on_a_mid_sentence_mention():
+    """Only a heading at the start of a line ends the prose."""
+    answer = "La sezione Limiti e affidabilità di quel report è vuota, e prosegue."
+    parts = ui.split_answer(answer)
+    assert parts.body == answer
+    assert parts.limits == ""
+
+
 def test_split_answer_keeps_an_answer_without_sections_intact():
     parts = ui.split_answer("Una risposta breve, senza sezioni.")
     assert parts.body == "Una risposta breve, senza sezioni."

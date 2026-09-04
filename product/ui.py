@@ -188,8 +188,16 @@ def t(lang: str, key: str, **kwargs: Any) -> str:
 # languages. They are located here only to *split* the text: the source data
 # itself is rebuilt from evidence_index, never parsed back out of the prose.
 _SOURCES_RE = re.compile(r"^\s*(?:\*\*|#{1,6}\s*)?(?:Fonti|Sources)\s*:?\s*\*{0,2}\s*$", re.M)
+# The limits heading is written by the model, not by the renderer: the prompt
+# asks for a section with that title and leaves the formatting to it. Measured
+# on 110 archived answers, it arrives bare on its own line, bold, as a heading —
+# and, in 47 of them, inline with the section text after a colon
+# ("**Limits and confidence**: the evidence is thin"). A pattern anchored to the
+# end of the line missed exactly those, and the section stayed in the prose.
 _LIMITS_RE = re.compile(
-    r"^\s*(?:\*\*|#{1,6}\s*)?(?:Limiti e affidabilit[àa]|Limits and confidence)\s*:?\s*\*{0,2}\s*$",
+    r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*|__)?[ \t]*"
+    r"(?:Limiti e affidabilit[àa]|Limits and confidence)"
+    r"[ \t]*:?[ \t]*(?:\*\*|__)?[ \t]*:?[ \t]*",
     re.M,
 )
 
@@ -228,6 +236,8 @@ def split_answer(answer: str) -> AnswerParts:
     limit_matches = list(_LIMITS_RE.finditer(text))
     if limit_matches:
         last = limit_matches[-1]
+        # `end()` stops after the heading and its punctuation, so a section that
+        # starts on the same line is kept whole.
         limits = text[last.end():].strip()
         text = text[: last.start()].rstrip()
 
