@@ -31,7 +31,7 @@ LANGUAGES: dict[str, str] = {"it": "Italiano", "en": "English"}
 STRINGS: dict[str, dict[str, str]] = {
     "it": {
         "ask_placeholder": "Scrivi qui la tua domanda...",
-        "thinking": "Sto cercando nel grafo e nei documenti...",
+        "thinking": "Sto pensando...",
         "answer_language_note": "Rispondo nella lingua della domanda.",
         # status
         "status_ok": "Sistema operativo",
@@ -110,7 +110,7 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "en": {
         "ask_placeholder": "Type your question here...",
-        "thinking": "Searching the graph and the documents...",
+        "thinking": "Thinking...",
         "answer_language_note": "I answer in the language of the question.",
         "status_ok": "System operational",
         "status_reduced": "Reduced mode",
