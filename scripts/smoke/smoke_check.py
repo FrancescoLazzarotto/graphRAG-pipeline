@@ -180,10 +180,17 @@ def _check_generators(args: argparse.Namespace) -> tuple[bool, str]:
         Whether every endpoint answered, and one detail line per endpoint.
     """
     urls = args.llm_base_url or [os.getenv("VLLM_BASE_URL")]
-    # The identity assertion belongs to the environment-configured single
-    # generator. A caller that passed its own URLs started those servers itself
-    # and knows what is on them.
-    expected = None if args.llm_base_url else (args.llm_model or os.getenv("VLLM_MODEL_NAME"))
+    # The identity assertion belongs to a caller who states which model they
+    # expect. It used to fall back to VLLM_MODEL_NAME, which does not mean
+    # that: in kg_pipeline/.env that variable pins the model the *ingestion*
+    # pipeline extracts with — the one the current graph was built by — while
+    # the demo probes its endpoints and answers with whatever is served. The two
+    # diverged when serving moved to Qwen3.8-27B on 2026-08-26 and the ingestion
+    # pin stayed, so this check reported FAILED on a healthy demo. Reading the
+    # ingestion pin as a serving requirement made the documented health check
+    # lie, and the fix is not to edit that pin: changing it would silently
+    # change which model a future rebuild extracts with.
+    expected = None if args.llm_base_url else args.llm_model
 
     results = [
         _check_openai_endpoint(url, expected, "generator", args.timeout_sec)
@@ -226,8 +233,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--llm-model",
         default=None,
         help=(
-            "Model id required at the endpoint. Defaults to VLLM_MODEL_NAME, and "
-            "only applies when --llm-base-url is not given"
+            "Model id required at the endpoint. Unset, any served model passes: "
+            "the demo probes its endpoints and answers with whatever is up. Only "
+            "applies when --llm-base-url is not given"
         ),
     )
     parser.add_argument("--timeout-sec", type=float, default=5.0)
