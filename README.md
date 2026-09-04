@@ -149,12 +149,15 @@ graphrag-demo --llm --vllm --strategies hybrid \
   --question "What are the three C's of the Circular Economy for Food framework?" \
   --cite-evidence --citation-display label --enforce-language
 
-# 3. the full reference campaign, 30 questions x 8 strategies
-bash scripts/runners/run_abstention_arms.sh
+# 3. the reference campaign: three abstention arms, each 30 questions x 8
+#    strategies, so 720 answers in one server session. Writes under $OUT_ROOT,
+#    which defaults to a path outside the clone — set it to keep runs local.
+OUT_ROOT=exp_results_abstention bash scripts/runners/run_abstention_arms.sh
 
-# 4. score it — two channels, two levels
+# 4. score one arm — two channels, two levels. Each arm is its own directory:
+#    a0_legacy_prompt, a1_repaired_prompt, a2_repaired_plus_gate.
 python evaluation/scripts/score_gold_run.py \
-  --run-dir exp_results/<run_dir>/ \
+  --run-dir exp_results_abstention/a1_repaired_prompt/<timestamp>_abst_a1_repaired_prompt/ \
   --gold evaluation/gold/gold_v3.json \
   --out-prefix artifacts/evaluation/<name>
 ```
@@ -259,7 +262,7 @@ and the fully resolved per-strategy config is serialised into every run's
 ## Testing
 
 ```bash
-pytest -q     # 550 tests: 276 agent/retrieval, 31 KG pipeline, 243 evaluation
+pytest -q     # 762 tests: 488 agent/retrieval, 31 KG pipeline, 243 evaluation
 ```
 
 The paths come from `[tool.pytest.ini_options]` in `pyproject.toml`, so the bare

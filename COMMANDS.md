@@ -387,7 +387,7 @@ python scripts/smoke/smoke_text_rag.py docs/ --query "Summarize the cluster setu
 python scripts/smoke/smoke_dense_rag.py
 python scripts/smoke/run_pipeline_smoke_full.py
 
-pytest -q                                            # 526 tests, any working directory
+pytest -q                                            # 762 tests, any working directory
 pytest kg_pipeline/tests/test_pipeline.py -v
 pytest evaluation/tests/test_metrics.py -v
 ```

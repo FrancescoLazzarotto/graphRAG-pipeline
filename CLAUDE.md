@@ -119,7 +119,7 @@ bash scripts/serving/stop_demo.sh
 conda run -n graphllm python -m graphrag.cli --question "What is X?" --entity "Y"
 
 # the full suite, from any working directory
-pytest -q                          # 550 tests: 276 agent/retrieval, 31 KG pipeline, 243 evaluation
+pytest -q                          # 762 tests: 488 agent/retrieval, 31 KG pipeline, 243 evaluation
 pytest evaluation/tests/test_metrics.py -v
 pytest kg_pipeline/tests/test_pipeline.py::test_schema_validation_accepts_valid_triple -v
 ```

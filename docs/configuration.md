@@ -143,7 +143,27 @@ with, so nothing needs editing to try something else.
 | `DEMO_PRODUCT_ICON` | `🌾` | Browser-tab icon |
 | `DEMO_UI_LANGUAGE` | `it` | Interface language at startup; the reader can switch it |
 | `DEMO_DEBUG` | `0` | Show the strategy, the model id and the graph URL on the page |
+| `DEMO_DOMAIN_GATE` | `1` | Judge a question against the collection before retrieving. `0` answers everything |
+| `DEMO_MEMORY` | `1` | Intra-session memory: follow-up rewriting and the conversation transcript |
+| `DEMO_VECTOR_RETRIEVAL` | `1` | The embedding channel. `0` leaves retrieval lexical only |
+| `DEMO_CITE_EVIDENCE` | `1` | Numbered evidence and reference tags on specific claims |
+| `DEMO_ENFORCE_LANGUAGE` | `1` | Answer in the question's language, with one retry |
+| `DEMO_PARAMETRIC_FALLBACK` | `1` | May answer from model knowledge when the context does not cover the question, marked as such |
+| `DEMO_VERBATIM_DEFINITIONS` | `1` | A definitional question opens with the source's own wording |
+| `DEMO_ALWAYS_LIMITS` | `1` | Close every answer with a limits section, not only sparse ones |
+| `DEMO_SHOW_FULL_ANSWER` | `1` | Show the whole answer including the graph-evidence block |
+| `DEMO_TEXT_STAGE0_RUNS` | two run names | Which `kg_pipeline/artifacts` runs feed the text index, most authoritative first |
+| `DEMO_TEXT_MMR` | `1` | Diversify text chunks across documents instead of taking the top scores |
+| `DEMO_NEO4J_FALLBACK_USERNAME` | — | Credentials for the fallback graph, used with `DEMO_NEO4J_FALLBACK_URL` |
+| `DEMO_NEO4J_FALLBACK_PASSWORD` | — | idem |
+| `DEMO_NEO4J_FALLBACK_DATABASE` | — | idem |
+| `DEMO_VLLM_ENDPOINTS` | `:8000,:8001,:8003` | Endpoints probed for the model selector; unreachable ones disappear |
 | `DEMO_EXAMPLE_QUESTIONS` | 3 questions, separated by `\|` | Offered when a question is refused as out of domain |
+
+Every `DEMO_*` boolean above is read the same way: **`1` is on, anything
+else is off** (`product/config.py`, `_flag`). They default to on, so the
+demo's behaviour is the full configuration unless a variable turns a piece
+of it off.
 
 ```bash
 DEMO_STRATEGY=default DEMO_COMPLEXITY=medium \
