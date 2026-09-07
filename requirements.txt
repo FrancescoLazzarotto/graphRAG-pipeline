@@ -1,6 +1,11 @@
 # Base dependencies (CPU-friendly, loose bounds for development).
-# For pinned installs use requirements-cpu.txt (CPU nodes) or
-# requirements-gpu.txt (GPU nodes, CUDA 12.4); see README "Installation".
+#
+# requirements-cpu.txt (CPU nodes) and requirements-gpu.txt (GPU nodes, CUDA
+# 12.4) select the right torch build; see README "Installation". None of the
+# three is pinned — they carry the same compatible-range bounds as this file,
+# so two installs a month apart are not the same environment. This comment used
+# to call them "pinned installs", which is what an operator would have relied
+# on when a campaign stopped reproducing. There is no lockfile yet.
 torch>=2.3,<3.0
 langchain-community>=0.3,<0.4
 langchain-neo4j

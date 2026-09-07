@@ -6,7 +6,11 @@
 ragas>=0.1.10
 pandas>=2.0
 datasets>=2.14
-sentence-transformers>=2.2.2
+# Same bound as requirements.txt: this file asked for >=2.2.2, which allows a
+# 2.x the rest of the repo forbids. Installing from here alone could quietly
+# swap the encoder for one that embeds differently, and no scored run would say
+# so.
+sentence-transformers>=3.0,<4.0
 
 # LLM backends
 langchain-huggingface>=0.1,<0.2
