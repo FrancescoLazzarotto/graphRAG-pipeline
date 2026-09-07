@@ -74,6 +74,13 @@ All optional. Each is read from the environment at call time.
 | `GRAPHRAG_VECTOR_ALLOW_DEGRADED` | `""` (off) for the CLI, `1` for the demo | `1` lets a failed encoder degrade to lexical-only instead of raising. `product/config.py` sets it with `setdefault`, so both demos degrade and say so on the affected answer; the CLI keeps raising, because a campaign scored under two retrieval methods is not recoverable — see [Reproducibility](../README.md#reproducibility-notes) |
 | `GRAPHRAG_TEXT_STAGE0_RUNS` | `""` | Default for `--text-stage0-runs` |
 
+### Logging
+
+| Variable | Default | Effect |
+|---|---|---|
+| `GRAPHRAG_LOG_FILE` | `""` (console only) | Path to a campaign log file, added beside the console handler by the CLI. An environment variable rather than a flag: every campaign flag is part of the experiment's identity and recorded in `config.json`, while where the log is written is not |
+| `GRAPHRAG_LOG_PROMPT_TEXT` | `""` (off) | `1` puts the rendered prompt and the raw answer back at INFO. They are at DEBUG by default: those two lines were ~26 % of a campaign log, and the answer is written from the retrieved passages, verbatim when `--prefer-verbatim-definitions` is on, so a world-readable log carried third-party PDF text |
+
 ### Retries and timeouts
 
 | Variable | Default | Effect |
@@ -108,6 +115,8 @@ All optional. Each is read from the environment at call time.
 |---|---|---|
 | `GRAPHRAG_LLM_CONCURRENT_REQUESTS` | `8` | Concurrency in stage-3 extraction and stage-4 merge confirmation |
 | `KG_EXTRACTION_MAX_TOKENS` | `4096` | Output cap per extraction call |
+| `KG_EXTRACTION_MAX_TOKENS_CEILING` | `4 x KG_EXTRACTION_MAX_TOKENS` | How far the cap may be raised for one chunk that came back truncated. A chunk cut off at the cap is retried with a doubled budget up to this ceiling, then reported as lost rather than dropped in silence |
+| `KG_EXTRACTION_RETRY_TEMPERATURE` | `0.3` | Temperature from the second attempt on. At temperature 0 vLLM decodes greedily and ignores the seed, so a retry that varied only the seed re-sent an identical request; the first attempt still runs at the configured temperature, so a chunk that succeeds first time stays deterministic |
 | `KG_NER_BATCH_SIZE` | `16` | Chunks per GLiNER forward pass. `gliner.batch_size` in `config.yaml` wins over it |
 | `KG_NER_DEVICE` | `""` | Device placement for GLiNER |
 | `KG_EMBED_DEVICE` | — | Device placement for the resolution encoder |

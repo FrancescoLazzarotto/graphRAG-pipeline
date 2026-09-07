@@ -189,6 +189,11 @@ def main() -> None:
         started = time.perf_counter()
         record: dict[str, object] = {
             "ts": dt.datetime.now().isoformat(timespec="seconds"),
+            # The console and the Streamlit demo write different shapes into
+            # files that look alike. These two fields are what lets a reader
+            # tell them apart instead of inferring it from which keys exist.
+            "surface": "console",
+            "kind": "turn",
             "question": question,
             "strategy": settings.STRATEGY,
             "model_id": model_id,

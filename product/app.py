@@ -199,6 +199,12 @@ def _record_feedback(
     """
     row: dict[str, object] = {
         "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        # Which surface wrote the line and what kind of line it is. The two
+        # frontends and the two record shapes used to be told apart by guessing
+        # from the keys present, which stops working the moment either grows a
+        # field. See docs/configuration.md.
+        "surface": "streamlit",
+        "kind": "feedback",
         "chat_id": chat_id,
         "turn_id": turn_id,
     }
@@ -353,6 +359,9 @@ def _ask(
     started = time.perf_counter()
     record: dict[str, object] = {
         "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        # See the feedback row above: a line has to say where it came from.
+        "surface": "streamlit",
+        "kind": "turn",
         "question": question,
         "strategy": STRATEGY,
         "model_id": model_id,

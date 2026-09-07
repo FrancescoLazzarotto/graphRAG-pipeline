@@ -979,6 +979,43 @@ def _run_experiments(
     logger.info("Summary:\n%s", summary_text)
 
 
+def _configure_logging() -> None:
+    """Give a campaign log a timestamp and, on request, a file of its own.
+
+    The format was `LEVELNAME name: message`, so a four-hour campaign produced
+    a wall of undated lines: there was no way to tell how long a turn took, when
+    a retry happened, or which of several arms in one nohup file a warning
+    belonged to. The demo has had a dated file log since August; this is the
+    same treatment for the command line.
+
+    GRAPHRAG_LOG_FILE adds a file handler beside the console one. It is an
+    environment variable rather than a flag because every campaign flag is part
+    of the experiment's identity, recorded in config.json and compared across
+    arms — where the log is written is not.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+    log_file = os.getenv("GRAPHRAG_LOG_FILE", "").strip()
+    if not log_file:
+        return
+
+    root = logging.getLogger()
+    if any(getattr(h, "_graphrag_file_handler", False) for h in root.handlers):
+        return
+    path = Path(log_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+    )
+    handler._graphrag_file_handler = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    logger.info("Logging to %s", path)
+
+
 def main() -> None:
     parser = _build_arg_parser()
     args = _parse_args(parser)
@@ -999,9 +1036,7 @@ def main() -> None:
     if args.gpu_memory_fraction <= 0 or args.gpu_memory_fraction > 1:
         parser.error("--gpu-memory-fraction must be in (0, 1]")
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
-    )
+    _configure_logging()
 
     kg_config = build_kg_config_from_env()
     kg_manager = KnowledgeGraphManager(kg_config)

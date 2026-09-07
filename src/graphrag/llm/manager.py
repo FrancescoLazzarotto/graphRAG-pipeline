@@ -23,6 +23,32 @@ from graphrag.llm.refusal import looks_like_refusal
 
 logger = logging.getLogger("graphrag")
 
+
+def _content_log_level() -> int:
+    """Where the two chatty per-generation lines belong.
+
+    Both used to be INFO, which is what filled the operational log with roughly
+    1.3 MB per model per campaign. Measured, they are not the same problem:
+
+    * the rendered-prompt line slices the first 500 characters, and the context
+      begins around character 830, so it never carried a word of the corpus —
+      it repeated the identical system prompt on every single call. Volume with
+      no information.
+    * the raw-output line is the one that matters. The answer is written from
+      the retrieved passages, and with ``prefer_verbatim_definitions`` it opens
+      with a quotation lifted from a third-party PDF. That is the line that made
+      the log unshareable.
+
+    Both stay useful when a bad answer needs explaining, so they move to DEBUG
+    rather than disappearing; ``GRAPHRAG_LOG_PROMPT_TEXT=1`` puts them back at
+    INFO for one session.
+    """
+    return (
+        logging.INFO
+        if os.getenv("GRAPHRAG_LOG_PROMPT_TEXT", "") == "1"
+        else logging.DEBUG
+    )
+
 # Orthographic markers of Italian used to break ties on short questions, where
 # function words alone are too thin a signal (WP5).
 _ITALIAN_ACCENTED = re.compile(r"[àèéìòù]")
@@ -666,14 +692,23 @@ class LLMManager:
             slots["transcript"] = transcript
         rendered = prompt.invoke(slots)
 
-        logger.info("Rendered prompt (first 500 chars): %s", str(rendered)[:500])
+        logger.log(
+            _content_log_level(),
+            "Rendered prompt (first 500 chars): %s",
+            str(rendered)[:500],
+        )
         logger.info("Context length (chars): %d", len(context))
 
         model = self.load_llm()
         output = self._invoke_with_retry(model, rendered)
 
         answer = str(output.content if hasattr(output, "content") else output).strip()
-        logger.info("LLM raw output (first 800 chars): %s", answer[:800])
+        logger.log(
+            _content_log_level(), "LLM raw output (first 800 chars): %s", answer[:800]
+        )
+        # The shape of the turn stays at INFO: it is what an operator reads to
+        # tell a truncated answer from an empty one, and it carries no text.
+        logger.info("Answer length (chars): %d", len(answer))
 
         # Kept so abstention can be measured on what the model said before any
         # rescue retry rewrote it (audit §1.5).
@@ -711,7 +746,11 @@ class LLMManager:
                     output2.content if hasattr(output2, "content") else output2
                 ).strip()
                 if answer2 and not looks_like_refusal(answer2):
-                    logger.info("Fallback retry succeeded: %s", answer2[:500])
+                    logger.log(
+                        _content_log_level(),
+                        "Fallback retry succeeded: %s",
+                        answer2[:500],
+                    )
                     # Keep the pre-retry answer: any abstention measured on the
                     # final answer is measuring post-retry behaviour, which is
                     # why abstention was unmeasurable on runs without the

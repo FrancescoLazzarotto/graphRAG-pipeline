@@ -3,11 +3,14 @@ from __future__ import annotations
 import csv
 import dataclasses
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from graphrag.llm.refusal import is_insufficient
 from graphrag.types import triple_key
+
+logger = logging.getLogger("graphrag")
 
 
 class SupportsInvoke(Protocol):
@@ -133,12 +136,18 @@ class ExperimentRunner:
                 metadata=metadata,
             )
             batch.append(result)
-            print(
-                f"[{label}] q{idx}/{total} "
-                f"latency_ms={result.latency_ms:.0f} "
-                f"insufficient={result.insufficient_answer} "
-                f"kg_triples={result.kg_triples_used}",
-                flush=True,
+            # Through the logger, not print: this is the only line that says
+            # which arm and which question the surrounding INFO lines belong
+            # to, and on stdout it carried no timestamp and never reached a log
+            # file. Still shown live on the console by the root handler.
+            logger.info(
+                "[%s] q%d/%d latency_ms=%.0f insufficient=%s kg_triples=%d",
+                label,
+                idx,
+                total,
+                result.latency_ms,
+                result.insufficient_answer,
+                result.kg_triples_used,
             )
 
         self.results.extend(batch)
