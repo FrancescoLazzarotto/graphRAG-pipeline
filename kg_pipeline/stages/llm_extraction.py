@@ -33,6 +33,17 @@ class _EmptyExtraction(ValueError):
     """The model returned a well-formed but empty triple array for a chunk."""
 
 
+class _TruncatedExtraction(ValueError):
+    """Generation stopped at the token cap, so the JSON array is cut in half.
+
+    Raised as its own type because it is the one failure a retry can actually
+    repair, and only by raising the budget: the model did not answer badly, it
+    was not allowed to finish. Without it the truncated text reaches
+    ``parse_json_array`` and surfaces as an unterminated-string decode error,
+    which reads like a model that emits broken JSON.
+    """
+
+
 _GENERIC_SECTION_TITLES = {
     "abstract",
     "acknowledgements",
@@ -187,35 +198,21 @@ def _enforce_labels(
 # override with KG_EXTRACTION_MAX_TOKENS if a corpus needs more.
 _MAX_OUTPUT_TOKENS = int(os.getenv("KG_EXTRACTION_MAX_TOKENS", "4096"))
 
+# A chunk that hits the cap comes back as a JSON array cut mid-value: the parse
+# raises and the chunk is dropped. Raising the budget for that chunk alone is
+# the only retry that can succeed, since the request is otherwise identical.
+# Bounded, because the cap is there to stop a runaway generation.
+_MAX_OUTPUT_TOKENS_CEILING = int(
+    os.getenv("KG_EXTRACTION_MAX_TOKENS_CEILING", str(_MAX_OUTPUT_TOKENS * 4))
+)
 
-def _llm_call(
-    client: OpenAI,
-    model_name: str,
-    prompt: str,
-    temperature: float,
-    seed: int,
-    use_structured_output: bool,
-) -> str:
-    kwargs: dict[str, Any] = {
-        "model": model_name,
-        "temperature": temperature,
-        "seed": seed,
-        "max_tokens": _MAX_OUTPUT_TOKENS,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-
-    if use_structured_output:
-        kwargs["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "kg_triples",
-                "schema": kg_triple_array_schema(),
-            },
-        }
-
-    response = client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content or ""
-
+# vLLM decodes greedily at temperature 0 and never consults the seed, so a
+# retry that varies only the seed re-sends a byte-identical request and gets the
+# identical failure back — `max_retries` bought latency and nothing else.
+# Sampling is what makes a second attempt a second attempt. Applied only from
+# the second attempt on, so a chunk that succeeds first time (nearly all of
+# them) is still extracted deterministically.
+_RETRY_TEMPERATURE = float(os.getenv("KG_EXTRACTION_RETRY_TEMPERATURE", "0.3"))
 
 _DEFAULT_CONCURRENT_REQUESTS = 8
 
@@ -228,12 +225,19 @@ async def _llm_call_async(
     seed: int,
     use_structured_output: bool,
     semaphore: asyncio.Semaphore,
-) -> str:
+    max_tokens: int = _MAX_OUTPUT_TOKENS,
+) -> tuple[str, str]:
+    """Return the generated text *and* why generation stopped.
+
+    The finish reason used to be discarded. It is the difference between a
+    model that answered badly and a model that was cut off at the cap, and only
+    the caller can tell those apart into different retries.
+    """
     kwargs: dict[str, Any] = {
         "model": model_name,
         "temperature": temperature,
         "seed": seed,
-        "max_tokens": _MAX_OUTPUT_TOKENS,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     if use_structured_output:
@@ -246,7 +250,9 @@ async def _llm_call_async(
         }
     async with semaphore:
         response = await client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content or ""
+    choice = response.choices[0]
+    finish_reason = str(getattr(choice, "finish_reason", "") or "")
+    return choice.message.content or "", finish_reason
 
 
 async def _extract_chunk_async(
@@ -266,22 +272,33 @@ async def _extract_chunk_async(
     allowed_predicates: list[str] | None,
 ) -> tuple[int, list[KGTriple], bool]:
     raw = ""
+    max_tokens = _MAX_OUTPUT_TOKENS
     for attempt in range(1, max_retries + 1):
         try:
-            # Vary the seed per attempt. At temperature 0 with a fixed seed the
-            # retries re-sent a byte-identical request and got a byte-identical
-            # failure back, so `max_retries` bought nothing but latency. See
-            # docs/code_audit_2026-08-15.md §3.5.
+            # Make the retry differ from the call that failed. Varying the seed
+            # is not enough: at temperature 0 vLLM decodes greedily and ignores
+            # it, so the retries re-sent a byte-identical request and got a
+            # byte-identical failure back. See docs/code_audit_2026-08-15.md
+            # §3.5.
             attempt_seed = seed if attempt == 1 else seed + attempt
-            raw = await _llm_call_async(
+            attempt_temperature = (
+                temperature if attempt == 1 else max(temperature, _RETRY_TEMPERATURE)
+            )
+            raw, finish_reason = await _llm_call_async(
                 client=client,
                 model_name=model_name,
                 prompt=prompt,
-                temperature=temperature,
+                temperature=attempt_temperature,
                 seed=attempt_seed,
                 use_structured_output=use_structured_output,
                 semaphore=semaphore,
+                max_tokens=max_tokens,
             )
+            if finish_reason == "length":
+                raise _TruncatedExtraction(
+                    f"generation stopped at the {max_tokens}-token cap; "
+                    "the triple array is cut mid-value"
+                )
             parsed = parse_json_array(raw)
             validated = _validate_raw_triples(
                 raw_items=parsed,
@@ -306,6 +323,34 @@ async def _extract_chunk_async(
                 triple.relationship_properties = rel
                 cleaned.append(triple)
             return chunk_idx, cleaned, True
+        except _TruncatedExtraction as exc:
+            # Sampling cannot repair this one and neither can another identical
+            # call: the answer was too long for the budget. Raise the budget for
+            # this chunk only, up to the ceiling, then give up loudly.
+            if max_tokens >= _MAX_OUTPUT_TOKENS_CEILING or attempt >= max_retries:
+                LOGGER.warning(
+                    "chunk %s from %s lost: %s (ceiling %d reached); "
+                    "raise KG_EXTRACTION_MAX_TOKENS_CEILING or chunk smaller",
+                    chunk.chunk_id,
+                    chunk.filename,
+                    exc,
+                    _MAX_OUTPUT_TOKENS_CEILING,
+                )
+                write_failed_chunk(
+                    failed_path=failed_chunks_path,
+                    chunk_metadata=chunk.model_dump(),
+                    attempt=attempt,
+                    error=f"truncated: {exc}",
+                    raw_response=raw,
+                )
+                return chunk_idx, [], False
+            max_tokens = min(max_tokens * 2, _MAX_OUTPUT_TOKENS_CEILING)
+            LOGGER.info(
+                "chunk %s hit the %d-token cap; retrying with max_tokens=%d",
+                chunk.chunk_id,
+                max_tokens // 2,
+                max_tokens,
+            )
         except _EmptyExtraction:
             # A well-formed empty array is a real answer: some chunks are a
             # figure caption or a column of numbers and carry no triple. Retry
@@ -394,8 +439,9 @@ async def _extract_all_batches_async(
     total_chunks: int,
     failed_chunks_path: Path,
     new_label_log_path: Path,
-) -> tuple[list[KGTriple], dict[str, str]]:
+) -> tuple[list[KGTriple], dict[str, str], list[str]]:
     _log = logging.getLogger("kg_pipeline")
+    failed_chunk_ids: list[str] = []
     async with AsyncOpenAI(
         base_url=base_url.rstrip("/"),
         api_key=api_key or "EMPTY",
@@ -435,9 +481,17 @@ async def _extract_all_batches_async(
                     allowed_predicates=relation_vocab,
                 )
 
+                chunk_id_by_idx = {idx: ch.chunk_id for idx, ch, _ in batch_tasks}
                 for _chunk_idx, triples, success in results:
                     if success:
                         all_triples.extend(triples)
+                    else:
+                        # A chunk that exhausted its retries used to be dropped
+                        # here without a word: the run ended "successfully"
+                        # having silently skipped part of the corpus.
+                        failed_chunk_ids.append(
+                            chunk_id_by_idx.get(_chunk_idx, str(_chunk_idx))
+                        )
 
                 progress.update(len(batch))
 
@@ -462,7 +516,7 @@ async def _extract_all_batches_async(
                     except Exception as e:
                         _log.warning(f"Failed to save checkpoint: {e}")
 
-    return all_triples, acronym_map
+    return all_triples, acronym_map, failed_chunk_ids
 
 
 def _validate_raw_triples(
@@ -586,7 +640,7 @@ def extract_triples(
     batch_size = checkpoint_every if checkpoint_every > 0 else max(1, len(chunks))
     chunks_remaining = chunks[start_chunk_idx:]
 
-    all_triples, acronym_map = asyncio.run(
+    all_triples, acronym_map, failed_chunk_ids = asyncio.run(
         _extract_all_batches_async(
             chunks_remaining=chunks_remaining,
             start_chunk_idx=start_chunk_idx,
@@ -614,6 +668,22 @@ def extract_triples(
             new_label_log_path=new_label_log_path,
         )
     )
+
+    if failed_chunk_ids:
+        # Stage 3 used to finish quietly whatever it had lost. A rebuild that
+        # drops chunks is still a rebuild that drops documents, so say how many
+        # and where to look.
+        _log.warning(
+            "%d of %d chunks produced no triples after %d attempts each "
+            "(first: %s). Details in %s",
+            len(failed_chunk_ids),
+            len(chunks_remaining),
+            max_retries_per_chunk,
+            ", ".join(failed_chunk_ids[:5]),
+            failed_chunks_path,
+        )
+    else:
+        _log.info("Stage 3: every chunk extracted, no chunk lost")
 
     return all_triples, acronym_map
 

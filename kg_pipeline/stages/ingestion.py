@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from tqdm import tqdm
 
 from kg_pipeline.models.types import DocumentRecord, PageChunkRecord, SectionRecord
 
+
+LOGGER = logging.getLogger("kg_pipeline")
 
 _HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
@@ -142,7 +145,16 @@ def ingest_documents(
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
     if single_doc:
+        # A misspelled --single-doc used to pass every check: the list was
+        # non-empty, the loop skipped the missing file, and stage 0 returned an
+        # empty document set that the later stages happily processed. The
+        # operator asked for one named document; not finding it is an error,
+        # not a document count of zero.
         pdf_paths = [input_dir / single_doc]
+        if not pdf_paths[0].exists():
+            raise FileNotFoundError(
+                f"--single-doc {single_doc!r} not found in {input_dir}"
+            )
     else:
         pdf_paths = sorted(input_dir.glob("*.pdf"))
 
@@ -150,9 +162,13 @@ def ingest_documents(
         raise ValueError(f"No PDF files found in {input_dir}")
 
     docs: list[DocumentRecord] = []
+    empty_docs: list[str] = []
 
     for pdf_path in tqdm(pdf_paths, desc="Stage 0 Ingestion", unit="doc"):
         if not pdf_path.exists():
+            # Only reachable now if the file disappears between the glob and
+            # the open. Say so instead of skipping in silence.
+            LOGGER.warning("Skipping %s: it vanished during ingestion", pdf_path)
             continue
 
         with fitz.open(pdf_path) as doc:
@@ -165,6 +181,27 @@ def ingest_documents(
             page_chunks, fallback_title=pdf_path.stem
         )
 
+        # A PDF whose pages carry no text layer (a scan, an image-only report)
+        # parses without error and yields nothing to extract from. It is not
+        # fatal — a growing corpus will contain some — but it must not pass for
+        # an ingested document.
+        if not markdown_text.strip():
+            empty_docs.append(pdf_path.name)
+            LOGGER.warning(
+                "%s parsed to no text at all over %d pages: no text layer? "
+                "It will contribute nothing to the graph",
+                pdf_path.name,
+                page_count,
+            )
+        else:
+            LOGGER.debug(
+                "%s: %d pages, %d characters (%.0f per page)",
+                pdf_path.name,
+                page_count,
+                len(markdown_text),
+                len(markdown_text) / max(1, page_count),
+            )
+
         docs.append(
             DocumentRecord(
                 doc_id=_doc_id_from_filename(pdf_path.name),
@@ -176,6 +213,23 @@ def ingest_documents(
                 title=title,
                 publication_year=publication_year,
             )
+        )
+
+    if empty_docs:
+        LOGGER.warning(
+            "%d of %d documents parsed to no text: %s",
+            len(empty_docs),
+            len(pdf_paths),
+            ", ".join(empty_docs),
+        )
+    # A record per file is not a corpus if none of them carries text. One
+    # unreadable document among many is the operator's call; all of them
+    # unreadable means the later stages would run on nothing at all.
+    if not docs or len(empty_docs) == len(docs):
+        raise ValueError(
+            f"No readable document in {input_dir}: "
+            f"{len(pdf_paths)} candidate file(s) yielded no text. "
+            "Check the PDFs have a text layer (scans need OCR first)"
         )
 
     return docs
