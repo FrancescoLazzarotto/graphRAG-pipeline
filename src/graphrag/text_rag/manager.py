@@ -41,6 +41,17 @@ class TextRAGManager:
     def size(self) -> int:
         return len(self._chunks)
 
+    @property
+    def chunks(self) -> list[TextChunk]:
+        """Every indexed chunk, for lookups that are not a ranking.
+
+        Following a citation back to the passage it names is a lookup by
+        document and page, not a search: the words of a follow-up question are
+        not the words of the source, so no amount of ranking is guaranteed to
+        surface it.
+        """
+        return list(self._chunks)
+
     def clear(self) -> None:
         self._chunks.clear()
         self._chunk_tokens.clear()

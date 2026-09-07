@@ -27,6 +27,12 @@ class RAGState(TypedDict, total=False):
     # by the generate node; declared here because LangGraph drops keys the state
     # does not name, which would leave the answer node blind to it.
     transcript: str
+    # Documents cited by the sentences the current question quotes back from an
+    # earlier answer. Read by the retrieve node, which floats those documents to
+    # the top of the text channel; empty on a turn that quotes nothing, which is
+    # nearly all of them. Declared here for the same reason as `transcript`:
+    # LangGraph drops keys the state does not name.
+    quoted_sources: list[str]
     text_context: str
     kg_triples: list[Triple]
     # Retrieved evidence lists. Declared as state channels so LangGraph

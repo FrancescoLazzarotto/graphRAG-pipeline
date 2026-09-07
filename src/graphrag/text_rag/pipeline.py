@@ -125,6 +125,46 @@ class StandardTextRAGPipeline:
     ) -> int:
         return self.index_paths([root], discovery_patterns=discovery_patterns)
 
+    def chunks_from(self, document_label: str, page: str = "") -> list[Any]:
+        """The indexed chunks of one document, the cited page first.
+
+        A citation names a document and a page; this returns the passage it
+        points at. It is deliberately not a search — the question that quotes a
+        claim is phrased in the reader's words, not the source's, so ranking
+        cannot be relied on to surface the document the claim came from, and on
+        a corpus of any size it usually does not.
+
+        Args:
+            document_label: The short label as it appears in an answer, e.g.
+                ``REPORT MATTM``.
+            page: Page label such as ``p. 70``; when given, chunks from that
+                page come first.
+
+        Returns:
+            Matching chunks, cited page first, empty when the label matches no
+            indexed document.
+        """
+        from graphrag.agent.evidence import parse_chunk_source, short_doc_label
+
+        wanted = document_label.strip().lower()
+        if not wanted:
+            return []
+        indexed = getattr(self.retriever, "chunks", None)
+        if indexed is None:
+            return []
+
+        on_page: list[Any] = []
+        elsewhere: list[Any] = []
+        for chunk in indexed:
+            document, chunk_page = parse_chunk_source(str(getattr(chunk, "source", "")))
+            if short_doc_label(document).strip().lower() != wanted:
+                continue
+            if page and chunk_page.strip() == page.strip():
+                on_page.append(chunk)
+            else:
+                elsewhere.append(chunk)
+        return on_page + elsewhere
+
     def retrieve(
         self,
         query: str,

@@ -109,6 +109,90 @@ _TOKEN_RE = re.compile(r"[\wÀ-ÿ'’-]+")
 _WORD_RE = re.compile(r"[\wÀ-ÿ]+")
 
 
+# Sentence boundaries, kept crude on purpose: the point is to attach a citation
+# to the claim it follows, and a split that occasionally keeps two sentences
+# together attaches one citation too many — a retrieval preference, not a wrong
+# answer. Boundaries inside a bracket are skipped: a citation label ends in
+# "p. 70", whose full stop is not the end of anything.
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+")
+
+# What the model is told to leave beside a claim once citations are rendered as
+# labels: "REPORT MATTM, p. 70". The bare-id form "[S3]" is excluded because it
+# names an evidence block of a turn that is over, not a document.
+_SOURCE_LABEL_RE = re.compile(r"\[([^\[\]\n]{3,120})\]")
+_BARE_REF_RE = re.compile(r"^[STst]\s?\d{1,3}(?:\s*[,;]\s*[STst]\s?\d{1,3})*$")
+
+# A run this long, in words, is a quotation rather than a shared turn of
+# phrase. Measured on the 41 recorded demo sessions: five follow-ups quote a
+# previous answer, the shortest run is six words, and no unrelated pair of
+# question and answer shares five.
+_QUOTE_MIN_WORDS = 5
+
+
+def _is_source_label(label: str) -> bool:
+    """Whether a bracketed group names a document rather than an evidence id."""
+    text = label.strip()
+    if not text or _BARE_REF_RE.match(text):
+        return False
+    # `verify_citations` writes these in place of a reference it could not
+    # confirm. Following one back to a document is exactly what must not happen.
+    return "non verificato" not in text.lower() and "unverified" not in text.lower()
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split on sentence boundaries that fall outside a bracketed citation."""
+    if not text:
+        return []
+    protected = [match.span() for match in _SOURCE_LABEL_RE.finditer(text)]
+    cuts = [0]
+    for match in _SENTENCE_BOUNDARY_RE.finditer(text):
+        position = match.start()
+        if any(start < position < end for start, end in protected):
+            continue
+        cuts.append(match.end())
+    cuts.append(len(text))
+    return [text[cuts[i] : cuts[i + 1]].strip() for i in range(len(cuts) - 1)]
+
+
+def _sentence_sources(answer: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Pair each sentence of a raw answer with the sources cited inside it.
+
+    The answer stored for the transcript has its tags stripped, which is right
+    for the prompt and useless here: the tags are the only record of which
+    document a sentence came from. Parsed once, when the turn is observed.
+    """
+    rows: list[tuple[str, tuple[str, ...]]] = []
+    for sentence in _split_sentences(str(answer or "")):
+        labels = tuple(
+            dict.fromkeys(
+                label.strip()
+                for label in _SOURCE_LABEL_RE.findall(sentence)
+                if _is_source_label(label)
+            )
+        )
+        if not labels:
+            continue
+        rows.append((_strip_references(sentence), labels))
+    return tuple(rows)
+
+
+def _longest_common_run(outer: Sequence[str], inner: Sequence[str]) -> int:
+    """Length of the longest run of words the two share, in order."""
+    if not outer or not inner:
+        return 0
+    previous = [0] * (len(inner) + 1)
+    best = 0
+    for i in range(1, len(outer) + 1):
+        current = [0] * (len(inner) + 1)
+        for j in range(1, len(inner) + 1):
+            if outer[i - 1] == inner[j - 1]:
+                current[j] = previous[j - 1] + 1
+                if current[j] > best:
+                    best = current[j]
+        previous = current
+    return best
+
+
 def _words(text: str) -> tuple[str, ...]:
     """Lowercased word units of `text`."""
     return tuple(match.lower() for match in _WORD_RE.findall(str(text or "")))
@@ -152,6 +236,11 @@ class Exchange:
 
     question: str
     answer: str
+    # (sentence, source labels cited in it) for the sentences that carry a
+    # citation. Not part of the transcript: it exists so a later question that
+    # quotes this answer can be retrieved against the document the quoted
+    # sentence came from, instead of against the words of the question.
+    citations: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
@@ -335,11 +424,49 @@ class ConversationMemory:
         prose = _strip_references(answer)
         if not question and not prose:
             return
-        self.exchanges.append(Exchange(question=question, answer=prose))
+        self.exchanges.append(
+            Exchange(
+                question=question,
+                answer=prose,
+                citations=_sentence_sources(answer),
+            )
+        )
 
         budget = self.max_transcript_chars
         while len(self.exchanges) > 1 and self._transcript_size() > budget:
             self.exchanges.pop(0)
+
+    def sources_for_quote(self, question: str) -> list[str]:
+        """Documents cited by the sentences this question quotes back.
+
+        When an expert repeats a sentence the assistant wrote and asks about
+        it, the words of the question are a poor retrieval query: they describe
+        the claim, they do not come from the document that supports it. The
+        claim's own citation does. Observed in the demo logs, a follow-up
+        quoting a sentence backed by REPORT MATTM p. 70 retrieved three
+        unrelated documents instead.
+
+        Args:
+            question: The question as typed.
+
+        Returns:
+            Source labels, most recent turn first, without repeats. Empty when
+            nothing is quoted — which is nearly every turn, and leaves
+            retrieval exactly as it was.
+        """
+        asked = _words(question)
+        if len(asked) < _QUOTE_MIN_WORDS:
+            return []
+
+        found: list[str] = []
+        for exchange in reversed(self.exchanges):
+            for sentence, labels in exchange.citations:
+                if _longest_common_run(asked, _words(sentence)) < _QUOTE_MIN_WORDS:
+                    continue
+                for label in labels:
+                    if label not in found:
+                        found.append(label)
+        return found
 
     def _transcript_size(self) -> int:
         return sum(len(item.question) + len(item.answer) for item in self.exchanges)

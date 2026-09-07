@@ -141,6 +141,16 @@ class DenseTextRAGManager:
     def size(self) -> int:
         return len(self._chunks)
 
+    @property
+    def chunks(self) -> list[TextChunk]:
+        """Every indexed chunk, for lookups that are not a ranking.
+
+        Same contract as the lexical backend: following a citation back to the
+        passage it names is a lookup by document and page, and a vector search
+        on the question's words cannot guarantee to reach it.
+        """
+        return list(self._chunks)
+
     def clear(self) -> None:
         self._chunks.clear()
         self._store = None

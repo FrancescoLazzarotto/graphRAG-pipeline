@@ -163,7 +163,21 @@ class KGRetriever:
         """
         return self._vector_skips
 
-    def retrieve(self, query: str | None = None) -> dict[str, Any]:
+    def retrieve(
+        self, query: str | None = None, prefer_documents: Sequence[str] = ()
+    ) -> dict[str, Any]:
+        """Retrieve for one query.
+
+        Args:
+            query: The retrieval query.
+            prefer_documents: Short document labels — the form
+                ``EvidenceItem.display_label`` puts inside an answer — to float
+                to the top of the text channel. Set when the question quotes a
+                sentence from an earlier answer: the document that backed the
+                claim is better provenance for it than the words of the
+                question. Empty on every other turn, which leaves ranking
+                untouched.
+        """
         query_text = (query or self.config.query or self.config.entity or "").strip()
         configured_entity = self._sanitize_entity_name(self.config.entity or "")
         search_terms = self._build_search_terms(
@@ -282,7 +296,7 @@ class KGRetriever:
         text_sources: list[dict[str, str]] = []
         text_units: list[dict[str, str]] = []
         if self.config.use_text_retriever and self.text_pipeline is not None:
-            retrieved = self._retrieve_text_chunks(query_text)
+            retrieved = self._retrieve_text_chunks(query_text, prefer_documents)
             for chunk in retrieved:
                 if not chunk.content.strip():
                     continue
@@ -330,7 +344,9 @@ class KGRetriever:
             ),
         }
 
-    def _retrieve_text_chunks(self, query_text: str) -> list[Any]:
+    def _retrieve_text_chunks(
+        self, query_text: str, prefer_documents: Sequence[str] = ()
+    ) -> list[Any]:
         """Retrieve the text channel, diversified (WP4) and re-ranked (WP3).
 
         Three steps, in this order and for a reason:
@@ -359,7 +375,7 @@ class KGRetriever:
         )
         # A pool is only worth fetching when something downstream can reorder
         # it; otherwise the extra candidates are dead weight on the index.
-        needs_pool = bool(cap or term)
+        needs_pool = bool(cap or term or prefer_documents)
         pool_size = top_k
         if needs_pool:
             pool_size = max(top_k, int(self.config.text_retriever_fetch_k) or top_k * 4)
@@ -387,7 +403,104 @@ class KGRetriever:
         if term:
             retrieved = self._promote_definitions(retrieved, term)
 
+        # Last, so it outranks the other two: when the question quotes a
+        # sentence the assistant wrote, the document behind that sentence is
+        # the one the follow-up is actually about.
+        if prefer_documents:
+            retrieved = self._with_quoted_document(
+                retrieved=retrieved,
+                query_text=query_text,
+                documents=prefer_documents,
+                cap=max(1, int(self.config.text_retriever_max_per_doc or 2)),
+                mmr_lambda=(
+                    self.config.text_retriever_mmr_lambda
+                    if self.config.text_retriever_mmr
+                    else None
+                ),
+            )
+
         return retrieved[:top_k]
+
+    def _with_quoted_document(
+        self,
+        retrieved: list[Any],
+        query_text: str,
+        documents: Sequence[str],
+        cap: int,
+        mmr_lambda: float | None,
+    ) -> list[Any]:
+        """Put the quoted passage at the head of the ranking, fetching it if absent.
+
+        Promoting what the question already found is not enough, and neither is
+        a deeper pass over the same ranking: measured against the live index, a
+        pool four times larger still did not contain the cited document, because
+        the question is phrased in the reader's words and not the source's. The
+        citation, though, names the document *and* the page — so the passage is
+        a lookup, not a search. Only that lookup guarantees the claim's own
+        source reaches the answer, and it keeps working as the corpus grows.
+
+        Bounded by ``cap``, the same per-document limit that governs the rest of
+        the ranking: a quoted document gets the top slots, never the context.
+        """
+        already = self._promote_documents(retrieved, documents, max_promoted=cap)
+        head = self._matching_documents(already[:cap], documents)
+        if len(head) >= cap or self.text_pipeline is None:
+            return already
+        if not hasattr(self.text_pipeline, "chunks_from"):
+            return already
+
+        keys = {self._chunk_identity(chunk) for chunk in already}
+        extra: list[Any] = []
+        for label in documents:
+            if len(head) + len(extra) >= cap:
+                break
+            document, _, page = str(label).partition(",")
+            try:
+                candidates = self.text_pipeline.chunks_from(
+                    document.strip(), page.strip()
+                )
+            except Exception as exc:  # the preference is a bonus, never a failure
+                logger.warning("could not follow the citation %r: %s", label, exc)
+                continue
+            for chunk in candidates:
+                if len(head) + len(extra) >= cap:
+                    break
+                if self._chunk_identity(chunk) in keys:
+                    continue
+                keys.add(self._chunk_identity(chunk))
+                extra.append(chunk)
+
+        if not extra:
+            return already
+        logger.info(
+            "quoted document absent from the ranking; followed the citation to "
+            "%d passage(s) of %s",
+            len(extra),
+            ", ".join(documents),
+        )
+        return extra + already
+
+    @staticmethod
+    def _chunk_identity(chunk: Any) -> str:
+        return str(getattr(chunk, "chunk_id", "") or getattr(chunk, "source", "") or "")
+
+    @staticmethod
+    def _matching_documents(
+        chunks: Sequence[Any], documents: Sequence[str]
+    ) -> list[Any]:
+        """The chunks whose source document is one of ``documents``."""
+        from graphrag.agent.evidence import parse_chunk_source, short_doc_label
+
+        wanted = {label.split(",")[0].strip().lower() for label in documents if label}
+        wanted.discard("")
+        if not wanted:
+            return []
+        out: list[Any] = []
+        for chunk in chunks:
+            document, _ = parse_chunk_source(str(getattr(chunk, "source", "") or ""))
+            if short_doc_label(document).strip().lower() in wanted:
+                out.append(chunk)
+        return out
 
     @staticmethod
     def _document_key(source: str | None) -> str:
@@ -421,6 +534,46 @@ class KGRetriever:
         else:
             kept.extend(overflow)
         return kept
+
+    @staticmethod
+    def _promote_documents(
+        chunks: Sequence[Any], documents: Sequence[str], max_promoted: int = 2
+    ) -> list[Any]:
+        """Float the first ``max_promoted`` chunks of ``documents`` to the top.
+
+        Matching goes through ``short_doc_label``, the same function that wrote
+        the label into the answer, so the comparison is exact rather than
+        fuzzy: a label can only match the document it was made from.
+
+        Nothing is dropped and the promotion is bounded. Measured against the
+        live index, an unbounded version filled all eight context slots with one
+        PDF: `_cap_per_document` demotes a document's overflow rather than
+        discarding it, so promoting every match pulled the whole tail back to
+        the top and the answer lost every other source. The bound is the same
+        per-document cap that governs the rest of the ranking, so the quoted
+        document gets the top slots it deserves and no more.
+        """
+        # Imported here, not at module scope: `graphrag.agent` imports the
+        # agent, which imports this module, so a top-level import would close
+        # the cycle. By the time this runs the module is loaded and the import
+        # is a dictionary lookup.
+        from graphrag.agent.evidence import parse_chunk_source, short_doc_label
+
+        wanted = {label.split(",")[0].strip().lower() for label in documents if label}
+        wanted.discard("")
+        if not wanted:
+            return list(chunks)
+
+        preferred: list[Any] = []
+        rest: list[Any] = []
+        for chunk in chunks:
+            document, _ = parse_chunk_source(str(getattr(chunk, "source", "") or ""))
+            label = short_doc_label(document).strip().lower()
+            if label and label in wanted and len(preferred) < max(1, max_promoted):
+                preferred.append(chunk)
+            else:
+                rest.append(chunk)
+        return preferred + rest
 
     @staticmethod
     def _promote_definitions(chunks: Sequence[Any], term: str) -> list[Any]:

@@ -684,12 +684,23 @@ class KGRAGAgent:
             query=query,
             sub_questions=sub_questions if isinstance(sub_questions, list) else [],
         )
+        raw_preferred = state.get("quoted_sources", []) or []
+        preferred_documents = [
+            str(item).strip() for item in raw_preferred if str(item).strip()
+        ]
         cache_query = " || ".join(retrieval_queries) if retrieval_queries else query
         # The key already contains the (possibly rewritten) query text, and
         # retrieval is deterministic for a fixed query and graph. Adding the
         # rewrite counter here would only force a re-retrieval when a rewrite
         # produces the exact same text — pure wasted Neo4j round-trips.
+        #
+        # The preferred documents do belong in the key: they reorder the text
+        # channel, so a cached entry from a turn that quoted nothing would be
+        # served for a turn that quotes, and the preference would vanish
+        # without a trace.
         cache_mode = str(mode)
+        if preferred_documents:
+            cache_mode = f"{cache_mode}|docs={'~'.join(sorted(preferred_documents))}"
 
         if self.cache:
             hit = self.cache.get(cache_query, cache_mode)
@@ -716,7 +727,9 @@ class KGRAGAgent:
                 for candidate_query in retrieval_queries:
                     # retrieve() (not retrieve_context()) so the text chunks'
                     # provenance tags travel with the context for later analysis.
-                    batch = self.kg_retriever.retrieve(candidate_query)
+                    batch = self.kg_retriever.retrieve(
+                        candidate_query, prefer_documents=preferred_documents
+                    )
                     value = str(batch.get("context_text", "")).strip()
                     if value:
                         text_sections.append(value)
@@ -745,7 +758,9 @@ class KGRAGAgent:
                 shortest_path_seen: set[tuple[str, str, str]] = set()
 
                 for candidate_query in retrieval_queries:
-                    batch = self.kg_retriever.retrieve(candidate_query)
+                    batch = self.kg_retriever.retrieve(
+                        candidate_query, prefer_documents=preferred_documents
+                    )
 
                     nodes = self._merge_nodes(
                         existing=nodes,
@@ -848,7 +863,9 @@ class KGRAGAgent:
                 }
 
             else:
-                retrieved_data = self.kg_retriever.retrieve(query)
+                retrieved_data = self.kg_retriever.retrieve(
+                    query, prefer_documents=preferred_documents
+                )
                 context = str(retrieved_data.get("context_text", ""))
 
         # WP1: renumber the merged evidence and re-render the context so every
@@ -1912,6 +1929,19 @@ class KGRAGAgent:
             transcript = memory.transcript()
             if transcript:
                 initial_state["transcript"] = transcript
+            # When the question repeats a sentence the assistant wrote, the
+            # document that backed that sentence is better provenance for the
+            # follow-up than the words of the question. Observed in the demo
+            # logs: a question quoting a claim sourced from REPORT MATTM p. 70
+            # retrieved three unrelated documents. Empty unless something is
+            # actually quoted, so no other turn changes.
+            quoted_sources = memory.sources_for_quote(question)
+            if quoted_sources:
+                initial_state["quoted_sources"] = quoted_sources
+                logger.info(
+                    "Question quotes an earlier answer; preferring %s",
+                    ", ".join(quoted_sources),
+                )
             if follow_up:
                 retrieval_question = self._rewrite_with_memory(question, memory)
                 if retrieval_question != question:
