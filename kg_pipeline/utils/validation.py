@@ -39,6 +39,18 @@ def validate_triples(
 
     Off-vocabulary predicates are remapped to RELATED_TO and logged rather than
     discarded, so no triple is silently lost due to an unexpected predicate name.
+    The predicate the model actually produced is kept on the relationship, under
+    ``predicate``: the remapping is what turned RELATED_TO into the most common
+    edge in the graph — 2 224 of 13 186 triples on the production run, 16.9 % —
+    and an edge that says only "related" tells the model nothing when it is
+    retrieved. Every triple-returning query in the retriever already reads
+    ``coalesce(properties(r)['predicate'], type(r))``; nothing had ever written
+    that property.
+
+    The relationship *type* stays RELATED_TO on purpose. It is the structural
+    part — indexes, type filters and the repair passes all key off it — and
+    letting 704 distinct model-invented predicate names become 704 relationship
+    types is the reason the vocabulary is enforced in the first place.
     """
     triples: list[KGTriple] = []
     allowed_set = None
@@ -54,6 +66,9 @@ def validate_triples(
                 triple.subject,
                 triple.object,
             )
+            rel_props = dict(triple.relationship_properties)
+            rel_props["predicate"] = triple.predicate
+            triple.relationship_properties = rel_props
             triple.predicate = "RELATED_TO"
         triples.append(triple)
     return triples
