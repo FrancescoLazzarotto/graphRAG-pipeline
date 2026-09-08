@@ -217,6 +217,41 @@ _RETRY_TEMPERATURE = float(os.getenv("KG_EXTRACTION_RETRY_TEMPERATURE", "0.3"))
 _DEFAULT_CONCURRENT_REQUESTS = 8
 
 
+def _record_failed_chunk(
+    *,
+    failed_path: Path,
+    chunk_metadata: dict[str, Any],
+    attempt: int,
+    error: str,
+    raw_response: str,
+) -> None:
+    """Write one failure row, and never raise while doing it.
+
+    Every call site is already on the failure path, inside an ``except``. If
+    appending the row raises in turn — a full disk, a read-only run directory —
+    the new exception escapes the handler, leaves ``_extract_chunk_async``, and
+    reaches ``asyncio.gather``, which drops the results of the other 49 chunks
+    in the batch and lets the exception end stage 3 outright. Losing the log
+    line is bad; losing seven hours of extraction because the log line could not
+    be written is worse.
+    """
+    try:
+        write_failed_chunk(
+            failed_path=failed_path,
+            chunk_metadata=chunk_metadata,
+            attempt=attempt,
+            error=error,
+            raw_response=raw_response,
+        )
+    except Exception as exc:  # noqa: BLE001 - deliberately last-resort
+        LOGGER.warning(
+            "could not record the failure of chunk %s in %s: %s",
+            chunk_metadata.get("chunk_id", "<unknown>"),
+            failed_path,
+            exc,
+        )
+
+
 async def _llm_call_async(
     client: AsyncOpenAI,
     model_name: str,
@@ -336,7 +371,7 @@ async def _extract_chunk_async(
                     exc,
                     _MAX_OUTPUT_TOKENS_CEILING,
                 )
-                write_failed_chunk(
+                _record_failed_chunk(
                     failed_path=failed_chunks_path,
                     chunk_metadata=chunk.model_dump(),
                     attempt=attempt,
@@ -366,7 +401,7 @@ async def _extract_chunk_async(
                 )
                 return chunk_idx, [], True
         except Exception as exc:
-            write_failed_chunk(
+            _record_failed_chunk(
                 failed_path=failed_chunks_path,
                 chunk_metadata=chunk.model_dump(),
                 attempt=attempt,
@@ -410,7 +445,40 @@ async def _run_batch_async(
         )
         for idx, ch, pr in batch_tasks
     ]
-    return list(await asyncio.gather(*coros))
+    # `return_exceptions=True` is the difference between losing one chunk and
+    # losing the batch. Without it the first exception is handed straight to
+    # this awaiter: the other coroutines are *not* cancelled — they run on,
+    # spend their LLM calls and finish — but nobody collects their results, and
+    # the exception then travels up out of `_extract_all_batches_async`, where
+    # nothing catches it, and ends stage 3. With it, an unexpected failure costs
+    # the chunk that raised it and is recorded like any other lost chunk.
+    settled = await asyncio.gather(*coros, return_exceptions=True)
+
+    results: list[tuple[int, list[KGTriple], bool]] = []
+    for (chunk_idx, chunk, _prompt), outcome in zip(batch_tasks, settled):
+        if isinstance(outcome, asyncio.CancelledError):
+            # A real cancellation is a shutdown, not a chunk that failed: it
+            # must not be filed as one, and it must not be swallowed.
+            raise outcome
+        if isinstance(outcome, BaseException):
+            LOGGER.warning(
+                "chunk %s from %s lost to an unhandled %s: %s",
+                chunk.chunk_id,
+                chunk.filename,
+                type(outcome).__name__,
+                outcome,
+            )
+            _record_failed_chunk(
+                failed_path=failed_chunks_path,
+                chunk_metadata=chunk.model_dump(),
+                attempt=max_retries,
+                error=f"unhandled {type(outcome).__name__}: {outcome}",
+                raw_response="",
+            )
+            results.append((chunk_idx, [], False))
+        else:
+            results.append(outcome)
+    return results
 
 
 async def _extract_all_batches_async(
@@ -540,7 +608,7 @@ def _validate_raw_triples(
                 validate_triples([item], allowed_predicates=allowed_predicates)
             )
         except Exception as exc:
-            write_failed_chunk(
+            _record_failed_chunk(
                 failed_path=failed_chunks_path,
                 chunk_metadata=chunk.model_dump(),
                 attempt=0,

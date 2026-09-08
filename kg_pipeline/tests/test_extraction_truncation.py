@@ -259,3 +259,104 @@ def test_stage_three_says_so_when_nothing_was_lost(tmp_path, monkeypatch, caplog
 
     assert len(triples) == 1
     assert "no chunk lost" in caplog.text
+
+
+# --- ING-12: one bad chunk must not cost the batch -------------------------
+#
+# `_run_batch_async` gathered 50 coroutines without `return_exceptions=True`.
+# Every `write_failed_chunk` call sits inside an `except` handler, so an I/O
+# error there (full disk, read-only run directory) raised *out* of the handler
+# and reached the gather, which handed it to the awaiter and dropped the other
+# 49 results. Nothing above catches it, so stage 3 — seven hours at production
+# size — ended on a failed log write.
+
+
+def _batch_of(n: int) -> list[ChunkRecord]:
+    return [_chunk(f"c{i}") for i in range(n)]
+
+
+def _run_batch(client: _FakeClient, tmp_path: Path, chunks: list[ChunkRecord]):
+    tasks = [(i, ch, "extract") for i, ch in enumerate(chunks)]
+    return asyncio.run(
+        llm_extraction._run_batch_async(
+            batch_tasks=tasks,
+            client=client,
+            concurrent_requests=4,
+            model_name="test-model",
+            temperature=0.0,
+            seed=42,
+            use_structured_output=True,
+            max_retries=1,
+            allowed_label_set={"Material"},
+            failed_chunks_path=tmp_path / "failed_chunks.jsonl",
+            new_label_log_path=tmp_path / "new_labels.log",
+            allowed_predicates=["USED_AS"],
+        )
+    )
+
+
+def test_a_failing_failure_log_does_not_lose_the_batch(tmp_path, monkeypatch, caplog):
+    # The exact production trigger: the append that records a lost chunk fails.
+    def _no_space(**_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(llm_extraction, "write_failed_chunk", _no_space)
+    # c0 fails and tries to log it; c1..c3 are ordinary successes.
+    client = _FakeClient([("not json at all", "stop"), (_COMPLETE, "stop")])
+
+    with caplog.at_level(logging.WARNING, logger="kg_pipeline"):
+        results = _run_batch(client, tmp_path, _batch_of(4))
+
+    # Every chunk still comes back, in order, with its own verdict.
+    assert [idx for idx, _, _ in results] == [0, 1, 2, 3]
+    assert sum(1 for _, _, success in results if success) == 3
+    # The row could not be written, and the run says so instead of dying.
+    assert "could not record the failure of chunk" in caplog.text
+
+
+def test_an_unexpected_exception_costs_one_chunk_not_the_others(tmp_path, caplog):
+    boom = OSError("connection reset by peer")
+    calls = {"n": 0}
+
+    async def _flaky(**kwargs):
+        calls["n"] += 1
+        if kwargs["chunk"].chunk_id == "c1":
+            raise boom
+        return kwargs["chunk_idx"], [], True
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(llm_extraction, "_extract_chunk_async", _flaky)
+        with caplog.at_level(logging.WARNING, logger="kg_pipeline"):
+            results = _run_batch(_FakeClient([(_COMPLETE, "stop")]), tmp_path, _batch_of(4))
+
+    assert calls["n"] == 4, "the siblings must still be run, not cancelled"
+    assert [(idx, success) for idx, _, success in results] == [
+        (0, True),
+        (1, False),
+        (2, True),
+        (3, True),
+    ]
+    assert "lost to an unhandled OSError" in caplog.text
+
+    # A chunk lost this way is filed like any other lost chunk, not vanished.
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "failed_chunks.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [r["chunk_metadata"]["chunk_id"] for r in rows] == ["c1"]
+    assert rows[0]["error"] == "unhandled OSError: connection reset by peer"
+
+
+def test_a_cancellation_is_not_filed_as_a_failed_chunk(tmp_path):
+    async def _cancelled(**kwargs):
+        if kwargs["chunk"].chunk_id == "c1":
+            raise asyncio.CancelledError()
+        return kwargs["chunk_idx"], [], True
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(llm_extraction, "_extract_chunk_async", _cancelled)
+        with pytest.raises(asyncio.CancelledError):
+            _run_batch(_FakeClient([(_COMPLETE, "stop")]), tmp_path, _batch_of(3))
+
+    # Shutting the run down is not a corpus defect: nothing is written.
+    assert not (tmp_path / "failed_chunks.jsonl").exists()
