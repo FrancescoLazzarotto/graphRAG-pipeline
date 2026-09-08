@@ -87,17 +87,65 @@ _SECTION_PREFIX_RE = re.compile(
 
 # Chunks whose section is pure front/back matter are skipped before extraction:
 # citation lists, acknowledgements, tables of contents and editorial boilerplate
-# yield publishing metadata, not domain facts.
+# yield publishing metadata, not domain facts. 18.6 % of the triples in the
+# production graph are AUTHORED_BY or PUBLISHED, and :Document is the fourth
+# label by node count in a knowledge graph about food.
+#
+# Matched anywhere in the section title, because these are unambiguous: no
+# section about circular food is called "acknowledgements".
 _SKIP_SECTION_RE = re.compile(
     r"(references|bibliograph|acknowledg|table of contents|list of (figures|tables|acronyms)"
     r"|copyright|colophon|editorial board|scientific (board|committee)"
-    r"|bibliografia|sommario|ringraziament|colofone|comitato scientifico|indice delle)",
+    r"|conflicts? of interest|author contributions|data availability"
+    r"|supplementary (material|data)"
+    r"|bibliografia|sitografia|sommario|ringraziament|colofone|comitato scientifico"
+    r"|indice delle|conflitto di interess|contributi degli autori)",
     re.IGNORECASE,
 )
 
+# Matched only against the *whole* title. These words are back matter when they
+# are the heading and content when they are part of one: a corpus about circular
+# food will sooner or later have a section called "Fonti rinnovabili", and a
+# substring rule would drop it in silence. The corpus is an early phase and will
+# grow, so an ambiguous word gets the narrow rule.
+_SKIP_SECTION_EXACT = frozenset(
+    {
+        "abbreviations",
+        "abbreviazioni",
+        "acronimi",
+        "acronyms",
+        "credits",
+        "crediti",
+        "fonti",
+        "funding",
+        "funding information",
+        "glossario",
+        "glossary",
+        "index",
+        "indice",
+        "note",
+        "notes",
+        "riferimenti",
+        "sources",
+    }
+)
+
+# Leading section numbering: "5.", "5.1", "A.", "IV -".
+_SECTION_NUMBER_RE = re.compile(r"^[\s\-—–]*(?:[0-9]+(?:\.[0-9]+)*|[A-Z]|[IVXLC]+)[.)\-—–\s]+")
+
+
+def _normalise_section_title(title: str) -> str:
+    """The heading with its numbering and punctuation removed, lower-cased."""
+    cleaned = _SECTION_NUMBER_RE.sub("", title.strip())
+    cleaned = cleaned.strip(" \t:.-—–_*#|")
+    return " ".join(cleaned.lower().split())
+
 
 def _should_skip_chunk(chunk: ChunkRecord) -> bool:
-    return bool(_SKIP_SECTION_RE.search(chunk.section_title or ""))
+    title = chunk.section_title or ""
+    if _SKIP_SECTION_RE.search(title):
+        return True
+    return _normalise_section_title(title) in _SKIP_SECTION_EXACT
 
 
 def _build_client(base_url: str, api_key: str) -> OpenAI:
