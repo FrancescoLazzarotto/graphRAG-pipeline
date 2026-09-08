@@ -94,7 +94,7 @@ def test_the_artifact_names_are_the_ones_the_analysers_open(tmp_path: Path):
 # --- resume: an artifact stands in for the stage ---------------------------
 
 
-def test_an_existing_document_artifact_is_not_re_ingested(paths, monkeypatch):
+def test_an_existing_document_artifact_is_not_re_ingested(paths, tmp_path, monkeypatch):
     from kg_pipeline.stages import ingestion
 
     ingestion.save_documents(paths["documents"], [_doc()])
@@ -102,18 +102,20 @@ def test_an_existing_document_artifact_is_not_re_ingested(paths, monkeypatch):
         ingestion, "ingest_documents", lambda **_: pytest.fail("stage 0 re-ran")
     )
 
-    docs = pipeline_main._load_or_run_documents(paths, {}, None)
+    docs, _ = pipeline_main._load_or_run_documents(
+        paths, {"paths": {"input_dir": str(tmp_path)}}, None, tmp_path
+    )
 
     assert [d.filename for d in docs] == ["a.pdf"]
 
 
-def test_a_missing_document_artifact_is_ingested_and_saved(paths, monkeypatch):
+def test_a_missing_document_artifact_is_ingested_and_saved(paths, tmp_path, monkeypatch):
     from kg_pipeline.stages import ingestion
 
     monkeypatch.setattr(ingestion, "ingest_documents", lambda **_: [_doc("b.pdf")])
 
-    docs = pipeline_main._load_or_run_documents(
-        paths, {"paths": {"input_dir": "unused"}}, None
+    docs, _ = pipeline_main._load_or_run_documents(
+        paths, {"paths": {"input_dir": str(tmp_path)}}, None, tmp_path
     )
 
     assert [d.filename for d in docs] == ["b.pdf"]
@@ -122,7 +124,7 @@ def test_a_missing_document_artifact_is_ingested_and_saved(paths, monkeypatch):
     assert [d.filename for d in ingestion.load_documents(paths["documents"])] == ["b.pdf"]
 
 
-def test_an_existing_chunk_artifact_is_not_re_chunked(paths, monkeypatch):
+def test_an_existing_chunk_artifact_is_not_re_chunked(paths, tmp_path, monkeypatch):
     from kg_pipeline.stages import chunking
 
     chunking.save_chunks(paths["chunks"], [_chunk()])
@@ -130,21 +132,22 @@ def test_an_existing_chunk_artifact_is_not_re_chunked(paths, monkeypatch):
         chunking, "chunk_documents", lambda *a, **k: pytest.fail("stage 1 re-ran")
     )
 
-    assert [c.chunk_id for c in pipeline_main._load_or_run_chunks(paths, {}, [_doc()])] == ["c1"]
+    chunks, _ = pipeline_main._load_or_run_chunks(paths, {}, [_doc()], tmp_path, "up")
+    assert [c.chunk_id for c in chunks] == ["c1"]
 
 
-def test_a_missing_chunk_artifact_is_chunked_and_saved(paths, monkeypatch):
+def test_a_missing_chunk_artifact_is_chunked_and_saved(paths, tmp_path, monkeypatch):
     from kg_pipeline.stages import chunking
 
     monkeypatch.setattr(chunking, "chunk_documents", lambda *a, **k: [_chunk("c7")])
 
-    chunks = pipeline_main._load_or_run_chunks(paths, {}, [_doc()])
+    chunks, _ = pipeline_main._load_or_run_chunks(paths, {}, [_doc()], tmp_path, "up")
 
     assert [c.chunk_id for c in chunks] == ["c7"]
     assert paths["chunks"].exists()
 
 
-def test_stage_three_resumes_only_when_both_its_artifacts_are_there(paths, monkeypatch):
+def test_stage_three_resumes_only_when_both_its_artifacts_are_there(paths, tmp_path, monkeypatch):
     # Triples and acronyms are written by two separate calls. A crash between
     # them leaves triples without acronyms, and that is not a finished stage.
     from kg_pipeline.stages import llm_extraction
@@ -159,21 +162,18 @@ def test_stage_three_resumes_only_when_both_its_artifacts_are_there(paths, monke
     monkeypatch.setattr(llm_extraction, "extract_triples", _extract)
     monkeypatch.setenv("VLLM_BASE_URL", "http://localhost:9/v1")
 
-    pipeline_main._load_or_run_raw_triples(
-        paths,
-        {
-            "llm": {
-                "temperature": 0.0,
-                "max_retries_per_chunk": 1,
-                "use_structured_output": True,
-                "checkpoint_every": 0,
-            },
-            "ontology": {"labels": ["Material"]},
+    config = {
+        "llm": {
+            "temperature": 0.0,
+            "max_retries_per_chunk": 1,
+            "use_structured_output": True,
+            "checkpoint_every": 0,
         },
-        [_chunk()],
-        {},
-        seed=42,
-        relation_vocab=None,
+        "ontology": {"labels": ["Material"]},
+    }
+    pipeline_main._load_or_run_raw_triples(
+        paths, config, [_chunk()], {}, seed=42, relation_vocab=None,
+        run_dir=tmp_path, upstream="up",
     )
 
     assert ran["n"] == 1, "a half-written stage 3 must be redone, not resumed"
@@ -183,8 +183,9 @@ def test_stage_three_resumes_only_when_both_its_artifacts_are_there(paths, monke
     monkeypatch.setattr(
         llm_extraction, "extract_triples", lambda **_: pytest.fail("stage 3 re-ran")
     )
-    triples, acronyms = pipeline_main._load_or_run_raw_triples(
-        paths, {}, [_chunk()], {}, seed=42, relation_vocab=None
+    triples, acronyms, _ = pipeline_main._load_or_run_raw_triples(
+        paths, config, [_chunk()], {}, seed=42, relation_vocab=None,
+        run_dir=tmp_path, upstream="up",
     )
     assert [t.object for t in triples] == ["substrate"]
     assert acronyms == {"RH": "Rice husk"}
@@ -288,3 +289,133 @@ def test_the_run_snapshots_the_config_it_ran_with(tmp_path: Path):
     assert metadata["seed"] == 42
     assert metadata["config_path"] == str(config_path.resolve())
     assert metadata["gliner_model"] == "g"
+
+
+# --- the fingerprint that says an artifact still means what it meant ---------
+#
+# Resume was keyed on the file existing. Nothing tied a stage's output to the
+# settings and the upstream artifacts that produced it, so re-running stage 1
+# with a different window left stage 3 resuming against chunk indices that no
+# longer meant the same thing — and the run reported success.
+
+
+_CHUNK_CFG_A = {"chunking": {"medium_window_tokens": 512}}
+_CHUNK_CFG_B = {"chunking": {"medium_window_tokens": 1024}}
+
+
+def _run_chunks(paths, tmp_path, config, upstream="up"):
+    return pipeline_main._load_or_run_chunks(paths, config, [_doc()], tmp_path, upstream)
+
+
+def test_the_same_settings_resume_normally(paths, tmp_path, monkeypatch):
+    from kg_pipeline.stages import chunking
+
+    monkeypatch.setattr(chunking, "chunk_documents", lambda *a, **k: [_chunk("c1")])
+    _run_chunks(paths, tmp_path, _CHUNK_CFG_A)
+
+    monkeypatch.setattr(
+        chunking, "chunk_documents", lambda *a, **k: pytest.fail("stage 1 re-ran")
+    )
+    chunks, _ = _run_chunks(paths, tmp_path, _CHUNK_CFG_A)
+
+    assert [c.chunk_id for c in chunks] == ["c1"]
+
+
+def test_changed_settings_stop_the_run_instead_of_reusing_the_artifact(
+    paths, tmp_path, monkeypatch
+):
+    from kg_pipeline.stages import chunking
+
+    monkeypatch.setattr(chunking, "chunk_documents", lambda *a, **k: [_chunk("c1")])
+    _run_chunks(paths, tmp_path, _CHUNK_CFG_A)
+
+    with pytest.raises(SystemExit) as exit_info:
+        _run_chunks(paths, tmp_path, _CHUNK_CFG_B)
+
+    message = str(exit_info.value)
+    # Silently redoing seven hours is as surprising as silently skipping it, so
+    # the message has to say what to do rather than pick for the operator.
+    assert "stage1_chunks.json" in message
+    assert "delete" in message and "--run-dir" in message
+
+
+def test_a_changed_corpus_invalidates_everything_downstream(paths, tmp_path, monkeypatch):
+    from kg_pipeline.stages import chunking
+
+    monkeypatch.setattr(chunking, "chunk_documents", lambda *a, **k: [_chunk("c1")])
+    _run_chunks(paths, tmp_path, _CHUNK_CFG_A, upstream="corpus-v1")
+
+    # The stage's own settings are unchanged; its input is not.
+    with pytest.raises(SystemExit):
+        _run_chunks(paths, tmp_path, _CHUNK_CFG_A, upstream="corpus-v2")
+
+
+def test_the_corpus_fingerprint_follows_the_files(tmp_path):
+    (tmp_path / "a.pdf").write_bytes(b"one")
+    first = pipeline_main._corpus_fingerprint(tmp_path, None)
+
+    (tmp_path / "b.pdf").write_bytes(b"two")
+    assert pipeline_main._corpus_fingerprint(tmp_path, None) != first
+
+    (tmp_path / "b.pdf").unlink()
+    assert pipeline_main._corpus_fingerprint(tmp_path, None) == first
+
+    # A different --single-doc is a different corpus.
+    assert pipeline_main._corpus_fingerprint(tmp_path, "a.pdf") != first
+
+
+def test_an_artifact_from_before_fingerprints_is_taken_once_and_stamped(
+    paths, tmp_path, monkeypatch, caplog
+):
+    from kg_pipeline.stages import chunking
+
+    chunking.save_chunks(paths["chunks"], [_chunk("old")])
+    monkeypatch.setattr(
+        chunking, "chunk_documents", lambda *a, **k: pytest.fail("stage 1 re-ran")
+    )
+
+    with caplog.at_level("INFO", logger="kg_pipeline"):
+        chunks, _ = _run_chunks(paths, tmp_path, _CHUNK_CFG_A)
+
+    assert [c.chunk_id for c in chunks] == ["old"]
+    assert "no recorded fingerprint" in caplog.text
+    # Stamped, so the next run is checked like any other.
+    assert "chunks" in pipeline_main._load_fingerprints(tmp_path)
+
+
+def test_an_operational_knob_does_not_invalidate_seven_hours_of_work():
+    # `checkpoint_every` and `batch_size` change how the work is done, not what
+    # comes out of it.
+    base = {"llm": {"temperature": 0.0, "use_structured_output": True, "checkpoint_every": 50},
+            "ontology": {"labels": ["Material"]}}
+    other = {"llm": {"temperature": 0.0, "use_structured_output": True, "checkpoint_every": 10},
+             "ontology": {"labels": ["Material"]}}
+
+    inputs = pipeline_main._STAGE_INPUTS["triples_raw"]
+    assert inputs(base) == inputs(other)
+
+    warmer = {"llm": {"temperature": 0.7, "use_structured_output": True, "checkpoint_every": 50},
+              "ontology": {"labels": ["Material"]}}
+    assert inputs(base) != inputs(warmer)
+
+
+# --- run metadata -----------------------------------------------------------
+
+
+def test_a_resume_does_not_rewrite_when_the_run_started(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("seed: 42\n", encoding="utf-8")
+
+    pipeline_main._write_run_metadata(run_dir, config_path, {}, seed=42)
+    first = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+
+    pipeline_main._write_run_metadata(run_dir, config_path, {}, seed=42)
+    second = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+
+    # The production run claimed to have started two days after its extraction
+    # finished, because every invocation overwrote the date.
+    assert second["started_at"] == first["started_at"]
+    assert second["invocations"] == 2
+    assert second["last_run_at"] >= first["last_run_at"]
