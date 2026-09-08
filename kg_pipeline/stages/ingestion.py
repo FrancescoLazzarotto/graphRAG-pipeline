@@ -72,11 +72,15 @@ def _read_page_chunks(pdf_path: Path) -> list[PageChunkRecord]:
 
 
 def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]:
-    starts: list[tuple[int, int, str]] = []
+    # (page, level, title, where the heading line starts, where its body starts)
+    starts: list[tuple[int, int, str, int, int]] = []
 
     for page in page_chunks:
-        for line in page.text.splitlines():
-            match = _HEADER_RE.match(line.strip())
+        offset = 0
+        for raw_line in page.text.splitlines(keepends=True):
+            line_start = offset
+            offset += len(raw_line)
+            match = _HEADER_RE.match(raw_line.strip())
             if not match:
                 continue
             level = len(match.group(1))
@@ -84,12 +88,20 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
             if not title:
                 continue
             # Running headers (magazines repeat the issue title on every page)
-            # must not open a new section per page: keep only the first
-            # occurrence of a consecutive run of identical titles.
+            # must not open a section per page: skip a title identical to the
+            # one that opened the previous section. Only consecutive repeats —
+            # a title that recurs with other sections in between is a real
+            # recurring heading, and this corpus is full of them: one catalogue
+            # repeats "Descrizione dell'iniziativa" for each of its 56 cases.
             if starts and starts[-1][2].strip().lower() == title.lower():
-                break
-            starts.append((page.page_number, level, title))
-            break
+                continue
+            # Two offsets, because they answer different questions: the section
+            # *ends* where the next heading line begins, and *begins* after its
+            # own heading line. Starting a section at its own heading put the
+            # raw `## **Title**` into the chunk text, and a heading with no body
+            # under it became a chunk that was nothing but that line — 115 of
+            # them, 33 characters each, on the production corpus.
+            starts.append((page.page_number, level, title, line_start, offset))
 
     if not starts:
         return [
@@ -102,17 +114,26 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
         ]
 
     sections: list[SectionRecord] = []
-    for idx, (start_page, level, title) in enumerate(starts):
+    last_page = max(1, page_chunks[-1].page_number if page_chunks else 1)
+    for idx, (start_page, level, title, _heading_start, start_offset) in enumerate(starts):
         if idx < len(starts) - 1:
-            end_page = max(start_page, starts[idx + 1][0] - 1)
+            # A section ends exactly where the next one begins, which may be
+            # part-way down a page it shares with it. The old rule ended it on
+            # the previous page, so the text above a mid-page heading was
+            # attributed to whichever section happened to start that page.
+            end_page = max(start_page, starts[idx + 1][0])
+            end_offset: int | None = starts[idx + 1][3]
         else:
-            end_page = max(start_page, page_chunks[-1].page_number)
+            end_page = max(start_page, last_page)
+            end_offset = None
         sections.append(
             SectionRecord(
                 title=title,
                 level=level,
                 start_page=start_page,
                 end_page=end_page,
+                start_offset=start_offset,
+                end_offset=end_offset,
             )
         )
     return sections

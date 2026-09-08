@@ -12,6 +12,13 @@ from kg_pipeline.models.types import ChunkRecord, DocumentRecord
 
 
 _TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
+# A word, for the purpose of asking whether there is anything here to extract:
+# at least two letters, digits excluded.
+_WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+# Extraction produces triples. A subject, a predicate and an object cannot be
+# stated in fewer than three words, so a chunk below that is a page footer, a
+# table's "Cont." marker or a stray number — and it costs a full LLM call.
+_MIN_WORDS_PER_CHUNK = 3
 
 
 class ParagraphUnit(NamedTuple):
@@ -24,6 +31,27 @@ def _token_count(text: str) -> int:
     return len(_TOKEN_RE.findall(text))
 
 
+def _window_text(window: list[ParagraphUnit]) -> str:
+    return "\n\n".join(p.text for p in window)
+
+
+def _has_extractable_content(window: list[ParagraphUnit]) -> bool:
+    return len(_WORD_RE.findall(_window_text(window))) >= _MIN_WORDS_PER_CHUNK
+
+
+def _drop_empty_windows(
+    windows: list[tuple[str, list[ParagraphUnit]]],
+) -> list[tuple[str, list[ParagraphUnit]]]:
+    """Drop what cannot hold a triple, unless that would empty the document.
+
+    The guard is per document, not per section: a section whose only window is a
+    page footer should lose it, and only a document that would otherwise vanish
+    from the graph keeps its noise.
+    """
+    kept = [(title, win) for title, win in windows if _has_extractable_content(win)]
+    return kept if kept else windows
+
+
 def _split_paragraphs(text: str) -> list[str]:
     parts = [part.strip() for part in text.split("\n\n")]
     return [part for part in parts if part]
@@ -34,12 +62,31 @@ def _paragraphs_for_range(
     start_page: int,
     end_page: int,
     section_title: str,
+    start_offset: int = 0,
+    end_offset: int | None = None,
 ) -> list[ParagraphUnit]:
+    """Paragraphs between two points, each given as a page and an offset in it.
+
+    The offsets are what keeps two sections that share a page from both claiming
+    all of it. Without them, recovering the headings stage 0 used to drop would
+    have chunked 34 % of the corpus's pages more than once — up to 17 times on
+    one catalogue — inflating the graph with duplicate triples and, with it, the
+    mention counts the retriever ranks on.
+    """
     units: list[ParagraphUnit] = []
     for page in doc.page_chunks:
         if page.page_number < start_page or page.page_number > end_page:
             continue
-        for paragraph in _split_paragraphs(page.text):
+        text = page.text
+        lo = start_offset if page.page_number == start_page else 0
+        hi = (
+            end_offset
+            if page.page_number == end_page and end_offset is not None
+            else len(text)
+        )
+        if hi <= lo:
+            continue
+        for paragraph in _split_paragraphs(text[lo:hi]):
             units.append(ParagraphUnit(paragraph, page.page_number, section_title))
     return units
 
@@ -101,7 +148,7 @@ def _build_chunk(
     page_numbers = [p.page_number for p in paragraphs]
     start_page = min(page_numbers)
     end_page = max(page_numbers)
-    text = "\n\n".join(p.text for p in paragraphs)
+    text = _window_text(paragraphs)
 
     return ChunkRecord(
         doc_id=doc.doc_id,
@@ -130,6 +177,9 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
 
     for doc in tqdm(docs, desc="Stage 1 Chunking", unit="doc"):
         next_chunk_idx = 1
+        # (section_title, window) for the whole document, so the "never empty a
+        # document" guard can be applied once, at the end, over all of them.
+        pending: list[tuple[str, list[ParagraphUnit]]] = []
 
         if doc.page_count <= small_max_pages:
             paragraphs = _paragraphs_for_range(
@@ -150,58 +200,62 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
             kept = [
                 win
                 for win in windows
-                if _token_count("\n\n".join(p.text for p in win)) >= small_min_tokens
+                if _token_count(_window_text(win)) >= small_min_tokens
             ]
             # Never drop an entire document: if no window clears the noise floor
             # but there is text, keep the packed windows so the doc still enters
             # the KG.
             if not kept and windows:
                 kept = windows
-            for win in kept:
-                chunks.append(
-                    _build_chunk(doc, next_chunk_idx, win[0].section_title, win)
-                )
-                next_chunk_idx += 1
-            continue
+            pending = [(win[0].section_title, win) for win in kept]
 
-        if doc.page_count <= medium_max_pages:
+        elif doc.page_count <= medium_max_pages:
             for section in doc.sections:
                 paragraphs = _paragraphs_for_range(
                     doc=doc,
                     start_page=section.start_page,
                     end_page=section.end_page,
                     section_title=section.title,
+                    start_offset=section.start_offset,
+                    end_offset=section.end_offset,
                 )
                 windows = _window_paragraphs(
                     paragraphs, max_tokens=medium_window, overlap_tokens=medium_overlap
                 )
-                for win in windows:
-                    chunks.append(_build_chunk(doc, next_chunk_idx, section.title, win))
-                    next_chunk_idx += 1
-            continue
+                pending.extend((section.title, win) for win in windows)
 
-        top_sections = [s for s in doc.sections if s.level == 1] or doc.sections
-        # Some PDFs expose heading-only level-1 metadata (start_page ==
-        # end_page for every section), so windowing those ranges would drop
-        # nearly the whole document. If level-1 ranges cover less than half
-        # of the pages, fall back to all sections — the same path used by
-        # documents that have no level-1 sections at all.
-        coverage = sum(s.end_page - s.start_page + 1 for s in top_sections)
-        if coverage < 0.5 * doc.page_count:
-            top_sections = doc.sections
-        for section in top_sections:
-            paragraphs = _paragraphs_for_range(
-                doc=doc,
-                start_page=section.start_page,
-                end_page=section.end_page,
-                section_title=section.title,
-            )
-            windows = _window_paragraphs(
-                paragraphs, max_tokens=large_window, overlap_tokens=large_overlap
-            )
-            for win in windows:
-                chunks.append(_build_chunk(doc, next_chunk_idx, section.title, win))
-                next_chunk_idx += 1
+        else:
+            top_sections = [s for s in doc.sections if s.level == 1] or doc.sections
+            # Some PDFs expose heading-only level-1 metadata (start_page ==
+            # end_page for every section), so windowing those ranges would drop
+            # nearly the whole document. If level-1 ranges cover less than half
+            # of the pages, fall back to all sections — the same path used by
+            # documents that have no level-1 sections at all.
+            covered_pages = {
+                page
+                for s in top_sections
+                for page in range(s.start_page, s.end_page + 1)
+            }
+            if len(covered_pages) < 0.5 * doc.page_count:
+                top_sections = doc.sections
+            for section in top_sections:
+                paragraphs = _paragraphs_for_range(
+                    doc=doc,
+                    start_page=section.start_page,
+                    end_page=section.end_page,
+                    section_title=section.title,
+                    start_offset=section.start_offset,
+                    end_offset=section.end_offset,
+                )
+                windows = _window_paragraphs(
+                    paragraphs, max_tokens=large_window, overlap_tokens=large_overlap
+                )
+                pending.extend((section.title, win) for win in windows)
+
+
+        for section_title, win in _drop_empty_windows(pending):
+            chunks.append(_build_chunk(doc, next_chunk_idx, section_title, win))
+            next_chunk_idx += 1
 
     return chunks
 

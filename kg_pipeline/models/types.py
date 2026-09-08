@@ -32,6 +32,13 @@ class SectionRecord(BaseModel):
     level: int = Field(ge=1, le=6)
     start_page: int = Field(ge=1)
     end_page: int = Field(ge=1)
+    # Where the section begins and ends *within* its first and last page, in
+    # characters. Sections used to be page-granular, so a page carrying three
+    # headings could only be one section and the other two were dropped. The
+    # defaults reproduce whole-page behaviour, which is what artifacts written
+    # before these fields existed mean.
+    start_offset: int = Field(default=0, ge=0)
+    end_offset: int | None = Field(default=None, ge=0)
 
 
 class PageChunkRecord(BaseModel):
