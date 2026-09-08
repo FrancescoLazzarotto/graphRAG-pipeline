@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import fitz
@@ -17,6 +18,23 @@ LOGGER = logging.getLogger("kg_pipeline")
 
 _HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
+# pymupdf4llm renders a bold heading as `## **Title**`, so the markup travels
+# inside the captured heading text. It reached the `:Document` nodes verbatim —
+# 16 of 22 titles in the production corpus carry `**` or `_` — and from there
+# into the citations the expert reads. Section titles carry it too, and those
+# are pasted into the extraction prompt.
+_EMPHASIS_RE = re.compile(r"\*\*|__|[*_`]")
+# A publication year outside this window is a parse artifact, not a date: the
+# text scan takes the first `19xx|20xx` it meets in the first three pages, which
+# on one paper was a line number and produced 1943.
+_MIN_PUBLICATION_YEAR = 1900
+# PDF metadata dates look like `D:20240517103000+02'00'`.
+_PDF_DATE_RE = re.compile(r"D:(\d{4})")
+
+
+def _strip_markup(text: str) -> str:
+    """Remove markdown emphasis from a heading, leaving the words alone."""
+    return " ".join(_EMPHASIS_RE.sub("", text).split()).strip()
 
 
 def _doc_id_from_filename(filename: str) -> str:
@@ -62,7 +80,9 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
             if not match:
                 continue
             level = len(match.group(1))
-            title = match.group(2).strip()
+            title = _strip_markup(match.group(2))
+            if not title:
+                continue
             # Running headers (magazines repeat the issue title on every page)
             # must not open a new section per page: keep only the first
             # occurrence of a consecutive run of identical titles.
@@ -98,8 +118,26 @@ def _extract_sections(page_chunks: list[PageChunkRecord]) -> list[SectionRecord]
     return sections
 
 
+def _year_from_pdf_metadata(metadata: dict[str, str] | None) -> int | None:
+    """The publication year the file declares, if it declares a plausible one."""
+    for key in ("creationDate", "modDate"):
+        match = _PDF_DATE_RE.match(str((metadata or {}).get(key, "") or ""))
+        if not match:
+            continue
+        year = int(match.group(1))
+        if _MIN_PUBLICATION_YEAR <= year <= _now_year() + 1:
+            return year
+    return None
+
+
+def _now_year() -> int:
+    return time.localtime().tm_year
+
+
 def _extract_title_and_year(
-    page_chunks: list[PageChunkRecord], fallback_title: str
+    page_chunks: list[PageChunkRecord],
+    fallback_title: str,
+    metadata: dict[str, str] | None = None,
 ) -> tuple[str, int | None]:
     title = fallback_title
     publication_year: int | None = None
@@ -127,15 +165,44 @@ def _extract_title_and_year(
     if level1:
         title = level1[0]
     elif headers:
+        # The longest heading, not the most prominent one. Measured against the
+        # alternative on the production corpus: heading levels come from font
+        # size, so the largest text on a first page is the journal masthead or
+        # the word "Article", and picking by level replaced 17 of 22 titles with
+        # those. Length is the cruder rule and the better one.
         title = max((text for _, text in headers), key=len)
     elif first_line:
         title = first_line
 
-    year_match = _YEAR_RE.search(head_text)
-    if year_match:
-        publication_year = int(year_match.group(0))
+    # A declared date beats a date scraped out of running text. Every file in
+    # the corpus carries one (63 of 63), while the text scan takes the first
+    # `19xx|20xx` in the first three pages — a line number, an ISSN, a cited
+    # work — and got 1943 for a 2019 paper and nothing at all for a 2022 report.
+    declared_year = _year_from_pdf_metadata(metadata)
+    scanned_year: int | None = None
+    for candidate in _YEAR_RE.finditer(head_text):
+        year = int(candidate.group(0))
+        if _MIN_PUBLICATION_YEAR <= year <= _now_year() + 1:
+            scanned_year = year
+            break
 
-    return title, publication_year
+    publication_year = declared_year if declared_year is not None else scanned_year
+    if (
+        declared_year is not None
+        and scanned_year is not None
+        and abs(declared_year - scanned_year) > 1
+    ):
+        # Not an error: a re-saved PDF declares the day it was re-saved. Worth
+        # seeing, because it is the number that ends up in a citation.
+        LOGGER.debug(
+            "%s: file declares %d, first year in the text is %d; using %d",
+            fallback_title,
+            declared_year,
+            scanned_year,
+            declared_year,
+        )
+
+    return _strip_markup(title) or fallback_title, publication_year
 
 
 def ingest_documents(
@@ -173,12 +240,13 @@ def ingest_documents(
 
         with fitz.open(pdf_path) as doc:
             page_count = len(doc)
+            pdf_metadata = dict(doc.metadata or {})
 
         page_chunks = _read_page_chunks(pdf_path)
         markdown_text = "\n\n".join(chunk.text for chunk in page_chunks)
         sections = _extract_sections(page_chunks)
         title, publication_year = _extract_title_and_year(
-            page_chunks, fallback_title=pdf_path.stem
+            page_chunks, fallback_title=pdf_path.stem, metadata=pdf_metadata
         )
 
         # A PDF whose pages carry no text layer (a scan, an image-only report)
