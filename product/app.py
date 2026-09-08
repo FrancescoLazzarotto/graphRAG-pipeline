@@ -667,8 +667,10 @@ def _render_turn(turn: dict[str, Any], chat_id: str, *, with_evidence: bool) -> 
             _render_out_of_scope(str(turn.get("turn_id") or ""))
             return
         if turn.get("limits"):
-            with st.container(border=True):
-                st.caption(ui.t(lang, "limits_title"))
+            # Folded, like the evidence: it qualifies the answer, it is not part
+            # of reading it, and open on every turn it doubled the block a
+            # reader has to scroll past to reach the next question.
+            with st.expander(ui.t(lang, "limits_title"), expanded=False):
                 st.write(turn["limits"])
         _render_metadata(turn)
         _render_sources(turn)
