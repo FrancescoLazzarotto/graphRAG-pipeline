@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[2]
 # make it importable when this script is run directly (python scripts/kg/kg_wipe.py).
 sys.path.insert(0, str(ROOT))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import require_hosted_target_named  # noqa: E402
+
 from kg_pipeline.stages import neo4j_ingestion  # noqa: E402
 
 logging.basicConfig(
@@ -68,6 +71,12 @@ def main() -> None:
 
     uri, user, password, env_db = neo4j_ingestion._resolve_neo4j_env()
     db = config.get("neo4j", {}).get("database") or env_db
+
+    # `--env-file` defaults to kg_pipeline/.env, which points at the hosted
+    # graph the demo serves. `--yes` says "do it"; on a remote instance it does
+    # not say "to that one".
+    if args.yes:
+        require_hosted_target_named("KG Wipe", uri, db)
 
     with GraphDatabase.driver(uri, auth=(user, password)) as driver:
         with driver.session(database=db) as session:
