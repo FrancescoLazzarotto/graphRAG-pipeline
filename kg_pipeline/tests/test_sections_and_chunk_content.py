@@ -277,3 +277,32 @@ def test_a_table_is_recognised_and_prose_is_not():
     assert chunking._is_table("Just a sentence.\nAnd another one.\nAnd a third.") is False
     # Two lines are not enough to call it a table.
     assert chunking._is_table("|a|b|\n|---|---|") is False
+
+
+# --- stage 1 says what it produced -----------------------------------------
+
+
+def test_stage_one_names_a_document_that_produced_nothing(caplog):
+    # `chunking.py` had no logger at all: a document that yielded no chunk was
+    # simply absent from the graph, and nothing in the run said so.
+    empty = DocumentRecord(
+        doc_id="empty", filename="empty.pdf", page_count=1, markdown_text="",
+        page_chunks=_pages(""), sections=[],
+    )
+    ok = _doc(_pages("## Section\n\nRice husk is used as a substrate."))
+
+    with caplog.at_level("WARNING", logger="kg_pipeline"):
+        chunks = chunking.chunk_documents([empty, ok], _CFG)
+
+    assert [c.doc_id for c in chunks] == ["d"]
+    assert "empty.pdf produced no chunks at all" in caplog.text
+    assert "1 of 2 documents produced no chunks" in caplog.text
+
+
+def test_stage_one_says_so_when_nothing_was_lost(caplog):
+    doc = _doc(_pages("## Section\n\nRice husk is used as a substrate."))
+
+    with caplog.at_level("INFO", logger="kg_pipeline"):
+        chunking.chunk_documents([doc], _CFG)
+
+    assert "no document lost" in caplog.text

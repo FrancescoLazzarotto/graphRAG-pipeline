@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 from pathlib import Path
 from typing import NamedTuple
@@ -9,6 +10,8 @@ from typing import NamedTuple
 from tqdm import tqdm
 
 from kg_pipeline.models.types import ChunkRecord, DocumentRecord
+
+LOGGER = logging.getLogger("kg_pipeline")
 
 
 _TOKEN_RE = re.compile(r"\w+|[^\w\s]", re.UNICODE)
@@ -276,6 +279,7 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
     large_overlap = int(chunk_cfg["large_overlap_tokens"])
 
     chunks: list[ChunkRecord] = []
+    empty_docs: list[str] = []
 
     for doc in tqdm(docs, desc="Stage 1 Chunking", unit="doc"):
         next_chunk_idx = 1
@@ -358,6 +362,35 @@ def chunk_documents(docs: list[DocumentRecord], config: dict) -> list[ChunkRecor
         for section_title, win in _drop_empty_windows(pending):
             chunks.append(_build_chunk(doc, next_chunk_idx, section_title, win))
             next_chunk_idx += 1
+
+        if next_chunk_idx == 1:
+            # Stage 1 had no logger at all, so a document that produced nothing
+            # went through in silence and was simply absent from the graph. The
+            # guards above stop it happening for a document that has text; this
+            # is what says so when it happens anyway.
+            empty_docs.append(doc.filename)
+            LOGGER.warning(
+                "%s produced no chunks at all (%d pages, %d sections, "
+                "%d characters of text): it will not be in the graph",
+                doc.filename,
+                doc.page_count,
+                len(doc.sections),
+                len(doc.markdown_text),
+            )
+
+    if empty_docs:
+        LOGGER.warning(
+            "Stage 1: %d of %d documents produced no chunks: %s",
+            len(empty_docs),
+            len(docs),
+            ", ".join(empty_docs),
+        )
+    else:
+        LOGGER.info(
+            "Stage 1: %d chunks from %d documents, no document lost",
+            len(chunks),
+            len(docs),
+        )
 
     return chunks
 
