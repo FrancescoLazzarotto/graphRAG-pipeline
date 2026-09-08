@@ -150,6 +150,8 @@ with, so nothing needs editing to try something else.
 | `DEMO_PRODUCT_TAGLINE` | (Italian line) | The sentence under the name |
 | `DEMO_PRODUCT_TAGLINE_EN` | (English line) | Same, when the interface is in English |
 | `DEMO_PRODUCT_ICON` | `🌾` | Browser-tab icon |
+| `DEMO_CITATION_STYLE` | `dim` | `dim` sets the inline citations small, grey and italic; `plain` leaves the engine's `[Document, p. 12]` |
+| `DEMO_CITATION_DOC_CHARS` | `16` | Longest document stub inside an inline citation |
 | `DEMO_UI_LANGUAGE` | `it` | Interface language at startup; the reader can switch it |
 | `DEMO_DEBUG` | `0` | Show the strategy, the model id and the graph URL on the page |
 | `DEMO_DOMAIN_GATE` | `1` | Judge a question against the collection before retrieving. `0` answers everything |

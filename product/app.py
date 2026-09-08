@@ -45,6 +45,8 @@ from product import ui  # noqa: E402
 # the console demo: the two surfaces are documented as the same product and
 # must not drift apart again.
 from product.config import (  # noqa: E402
+    CITATION_DOC_CHARS,
+    CITATION_STYLE,
     DEBUG,
     EXAMPLE_QUESTIONS,
     LOG_DIR,
@@ -662,7 +664,15 @@ def _render_turn(turn: dict[str, Any], chat_id: str, *, with_evidence: bool) -> 
         if error:
             st.warning(ui.t(lang, "err_service" if error == "service" else "err_question"))
             return
-        st.markdown(turn.get("body", ""))
+        st.markdown(
+            ui.style_citations(
+                turn.get("body", ""),
+                doc_chars=CITATION_DOC_CHARS,
+                dim=CITATION_STYLE == "dim",
+            )
+            if CITATION_STYLE != "plain"
+            else turn.get("body", "")
+        )
         if turn.get("out_of_scope"):
             _render_out_of_scope(str(turn.get("turn_id") or ""))
             return

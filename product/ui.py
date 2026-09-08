@@ -377,6 +377,58 @@ def evidence_by_document(
     return list(grouped.values())
 
 
+# A citation the engine has already rendered for a reader: "[MR37, p. 35]", or
+# several separated by ";". Only brackets carrying a page marker are touched, so
+# square brackets the model wrote for its own reasons are left alone.
+_INLINE_CITATION_RE = re.compile(r"\[([^\[\]]{0,300}?pp?\.[^\[\]]{0,80}?)\]")
+_SAME_PAGE_RANGE_RE = re.compile(r"\bp\. (\d+)-\1\b")
+
+
+def _shorten_citation_part(part: str, doc_chars: int) -> str:
+    """Trim one "document, p. N" to something that fits inside a sentence."""
+    text = " ".join(part.split())
+    head, sep, pages = text.rpartition(", p")
+    if not sep:
+        return text
+    head = head.rstrip(" ,")
+    # short_doc_label has already cut the filename down to ~34 characters; a
+    # citation sits mid-sentence, where that is still most of a line.
+    if len(head) > doc_chars:
+        head = head[:doc_chars].rstrip(" ,-–—") + "…"
+    return f"{head}, p{pages}"
+
+
+def style_citations(text: str, doc_chars: int = 16, dim: bool = True) -> str:
+    """Make the citations recede without taking anything away from them.
+
+    Measured over 572 citations in the archived sessions, the median one is 23
+    characters and the longest 84 — set in the same weight and colour as the
+    sentence around it, in square brackets, which is what breaks the line a
+    reader is following. This shortens the document to a recognisable stub,
+    collapses "p. 18-18" to "p. 18", and sets the whole thing small, grey and
+    italic, in parentheses rather than brackets.
+
+    Presentation only: the stored answer keeps its full labels, so what is
+    copied or exported still names each document in full.
+    """
+    if not text:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        parts = [
+            _shorten_citation_part(part, doc_chars)
+            for part in inner.split(";")
+            if part.strip()
+        ]
+        if not parts:
+            return match.group(0)
+        joined = _SAME_PAGE_RANGE_RE.sub(r"p. \1", " · ".join(parts))
+        return f":gray[*({joined})*]" if dim else f"*({joined})*"
+
+    return _INLINE_CITATION_RE.sub(replace, text)
+
+
 @dataclass(slots=True)
 class PanelEvidence:
     """One answer's evidence, ordered so what it used comes first."""

@@ -249,6 +249,49 @@ def test_evidence_by_document_ignores_malformed_rows():
 
 
 # --------------------------------------------------------------------------- #
+# inline citations
+# --------------------------------------------------------------------------- #
+
+
+def test_style_citations_sets_a_citation_apart_from_the_sentence():
+    out = ui.style_citations("Le tre C sono Capitale e Ciclicità [MR37, p. 26].")
+    assert out == "Le tre C sono Capitale e Ciclicità :gray[*(MR37, p. 26)*]."
+
+
+def test_style_citations_shortens_a_long_document():
+    out = ui.style_citations("Il quadro [A Review of Principal Measuring…, p. 16].", doc_chars=16)
+    assert "A Review of Prin…, p. 16" in out
+    assert "Principal Measuring" not in out
+
+
+def test_style_citations_splits_a_grouped_citation():
+    out = ui.style_citations("Vedi [MR37, p. 26; Kenya Report, p. 79].")
+    assert out == "Vedi :gray[*(MR37, p. 26 · Kenya Report, p. 79)*]."
+
+
+def test_style_citations_collapses_a_one_page_range():
+    """"p. 18-18" is a range of one page, and it reads as a typo."""
+    assert "p. 18)" in ui.style_citations("Testo [MR37, p. 18-18].")
+    # A real range survives.
+    assert "p. 22-24" in ui.style_citations("Testo [MR37, p. 22-24].")
+
+
+def test_style_citations_leaves_other_brackets_alone():
+    """Only brackets carrying a page marker are citations."""
+    text = "Il modello ha scritto [una nota] e un elenco [a, b, c]."
+    assert ui.style_citations(text) == text
+
+
+def test_style_citations_can_be_asked_not_to_dim():
+    out = ui.style_citations("Testo [MR37, p. 26].", dim=False)
+    assert out == "Testo *(MR37, p. 26)*."
+
+
+def test_style_citations_survives_an_empty_body():
+    assert ui.style_citations("") == ""
+
+
+# --------------------------------------------------------------------------- #
 # the evidence panel
 # --------------------------------------------------------------------------- #
 

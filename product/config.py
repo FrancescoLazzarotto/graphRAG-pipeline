@@ -147,6 +147,13 @@ PRODUCT_TAGLINE_EN = os.environ.get(
     "is taken from.",
 )
 PRODUCT_ICON = os.environ.get("DEMO_PRODUCT_ICON", "\U0001F33E")
+# How the citations the engine renders into the prose are set on screen.
+# "dim" puts them in small grey italics between parentheses and shortens the
+# document to DEMO_CITATION_DOC_CHARS; "plain" leaves the engine's own
+# "[Document, p. 12]" untouched. Presentation only — the stored answer, and so
+# everything copied or exported, keeps the full label either way.
+CITATION_STYLE = os.environ.get("DEMO_CITATION_STYLE", "dim")
+CITATION_DOC_CHARS = int(os.environ.get("DEMO_CITATION_DOC_CHARS", "16"))
 # Interface language. Independent of the answer language, which the engine pins
 # to the language of the question.
 UI_LANGUAGE = os.environ.get("DEMO_UI_LANGUAGE", "it")
