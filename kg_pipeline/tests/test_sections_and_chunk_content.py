@@ -200,3 +200,80 @@ def test_a_section_without_offsets_still_means_the_whole_page():
 
     joined = "\n\n".join(c.text for c in chunks)
     assert "Alpha alpha alpha." in joined and "Beta beta beta." in joined
+
+
+# --- a paragraph bigger than the window ------------------------------------
+#
+# A markdown table's rows are separated by single newlines, so the whole table
+# is one paragraph and walked past the token budget untouched: 42 of the 55
+# oversized paragraphs in the corpus are tables, the largest 2 526 tokens
+# against a budget of 512. The other 13 are prose rendered as a single line.
+
+
+def _table(rows: int) -> str:
+    head = "|**Variable**|**Category**|**n**|\n|---|---|---|"
+    body = "\n".join(f"|variable number {i}|category {i}|{i}|" for i in range(rows))
+    return head + "\n" + body
+
+
+def test_a_table_is_split_into_row_groups(tmp_path):
+    doc = _doc(_pages("## Data\n\n" + _table(120)))
+
+    chunks = chunking.chunk_documents([doc], _CFG)
+
+    assert len(chunks) > 1
+    assert all(chunking._token_count(c.text) <= _CFG["chunking"]["medium_window_tokens"] * 1.3
+               for c in chunks)
+
+
+def test_every_group_of_a_split_table_carries_the_header():
+    groups = chunking._split_table(_table(120), max_tokens=200)
+
+    assert len(groups) > 1
+    for group in groups:
+        # Rows without their column names are unreadable, to a model as to a
+        # person.
+        assert group.startswith("|**Variable**|**Category**|**n**|")
+        assert "|---|---|---|" in group
+
+
+def test_a_split_table_keeps_every_row_exactly_once():
+    rows = [f"|variable number {i}|category {i}|{i}|" for i in range(120)]
+    groups = chunking._split_table(_table(120), max_tokens=200)
+
+    body = "\n".join(groups)
+    for row in rows:
+        assert body.count(row) == 1
+
+
+def test_a_table_that_already_fits_is_left_alone():
+    small = _table(3)
+    assert chunking._split_long_text(small, max_tokens=1000) == [small]
+
+
+def test_a_long_paragraph_with_no_line_breaks_is_split_on_sentences():
+    prose = " ".join(f"This is sentence number {i} of a very long paragraph." for i in range(200))
+
+    pieces = chunking._split_long_text(prose, max_tokens=100)
+
+    assert len(pieces) > 1
+    assert all(chunking._token_count(p) <= 120 for p in pieces)
+    # Nothing invented and nothing dropped.
+    assert " ".join(pieces).split() == prose.split()
+
+
+def test_a_paragraph_with_no_sentence_end_is_still_broken_up():
+    # A run-on line with no punctuation must not come back as one oversized
+    # piece: it would land in the graph as a single unusable chunk.
+    prose = " ".join(f"word{i}" for i in range(2000))
+
+    pieces = chunking._split_long_text(prose, max_tokens=100)
+
+    assert len(pieces) > 1
+
+
+def test_a_table_is_recognised_and_prose_is_not():
+    assert chunking._is_table(_table(10)) is True
+    assert chunking._is_table("Just a sentence.\nAnd another one.\nAnd a third.") is False
+    # Two lines are not enough to call it a table.
+    assert chunking._is_table("|a|b|\n|---|---|") is False

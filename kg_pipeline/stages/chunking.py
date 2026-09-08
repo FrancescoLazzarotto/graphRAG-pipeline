@@ -19,6 +19,10 @@ _WORD_RE = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
 # stated in fewer than three words, so a chunk below that is a page footer, a
 # table's "Cont." marker or a stray number — and it costs a full LLM call.
 _MIN_WORDS_PER_CHUNK = 3
+_TABLE_LINE_RE = re.compile(r"^\s*\|")
+# `|---|---|` under the header row.
+_TABLE_RULE_RE = re.compile(r"^\s*\|[\s|:-]+$")
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
 
 class ParagraphUnit(NamedTuple):
@@ -29,6 +33,89 @@ class ParagraphUnit(NamedTuple):
 
 def _token_count(text: str) -> int:
     return len(_TOKEN_RE.findall(text))
+
+
+def _is_table(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < 3:
+        return False
+    return sum(1 for line in lines if _TABLE_LINE_RE.match(line)) >= 0.6 * len(lines)
+
+
+def _split_table(text: str, max_tokens: int) -> list[str]:
+    """Split a markdown table into row groups, each carrying the header.
+
+    A table is one paragraph — its rows are separated by single newlines — so it
+    walked past the token budget untouched: 42 of the corpus's 55 oversized
+    paragraphs are tables, the largest 2 526 tokens against a budget of 512.
+    Cutting it blind would leave the rows without their column names, so each
+    group repeats the header.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    header_len = 2 if len(lines) > 2 and _TABLE_RULE_RE.match(lines[1]) else 1
+    header, body = lines[:header_len], lines[header_len:]
+    if not body:
+        return [text]
+
+    header_text = "\n".join(header)
+    budget = max(1, max_tokens - _token_count(header_text))
+    groups: list[str] = []
+    current: list[str] = []
+    used = 0
+    for row in body:
+        cost = _token_count(row)
+        if current and used + cost > budget:
+            groups.append("\n".join(header + current))
+            current, used = [], 0
+        current.append(row)
+        used += cost
+    if current:
+        groups.append("\n".join(header + current))
+    return groups
+
+
+def _split_long_text(text: str, max_tokens: int) -> list[str]:
+    """Break one oversized paragraph into pieces that fit the window."""
+    if _token_count(text) <= max_tokens:
+        return [text]
+    if _is_table(text):
+        return _split_table(text, max_tokens)
+
+    # Prose with no blank line in it — a whole page rendered as one line is
+    # common in this corpus. Sentences are the natural seam; a paragraph with no
+    # sentence end left in it is cut on whitespace so it still reaches the model.
+    pieces: list[str] = []
+    current: list[str] = []
+    used = 0
+    for part in _SENTENCE_END_RE.split(text):
+        cost = _token_count(part)
+        if current and used + cost > max_tokens:
+            pieces.append(" ".join(current))
+            current, used = [], 0
+        current.append(part)
+        used += cost
+    if current:
+        pieces.append(" ".join(current))
+
+    # A run-on line with no sentence end anywhere — a caption block, an OCR
+    # artefact — would come back as one oversized piece and land in the graph as
+    # a single unusable chunk. Cut it on whitespace so it still fits.
+    sized: list[str] = []
+    for piece in pieces:
+        if _token_count(piece) <= max_tokens:
+            sized.append(piece)
+            continue
+        words, run, used = piece.split(), [], 0
+        for word in words:
+            cost = _token_count(word)
+            if run and used + cost > max_tokens:
+                sized.append(" ".join(run))
+                run, used = [], 0
+            run.append(word)
+            used += cost
+        if run:
+            sized.append(" ".join(run))
+    return [piece for piece in sized if piece.strip()] or [text]
 
 
 def _window_text(window: list[ParagraphUnit]) -> str:
@@ -99,6 +186,21 @@ def _window_paragraphs(
     windows: list[list[ParagraphUnit]] = []
     if not paragraphs:
         return windows
+
+    # A single paragraph over budget cannot be windowed: split it first. Units
+    # that already fit are passed through as they are, not rebuilt — that is the
+    # overwhelming majority of them.
+    expanded: list[ParagraphUnit] = []
+    for unit in paragraphs:
+        pieces = _split_long_text(unit.text, max_tokens)
+        if len(pieces) == 1:
+            expanded.append(unit)
+            continue
+        expanded.extend(
+            ParagraphUnit(piece, unit.page_number, unit.section_title)
+            for piece in pieces
+        )
+    paragraphs = expanded
 
     idx = 0
     while idx < len(paragraphs):
