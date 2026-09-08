@@ -21,6 +21,9 @@ def _entropy(counts: list[int]) -> float:
 
 
 def _load_json(path: Path) -> Any:
+    if not path.exists():
+        # Optional artifact from an older run shape: absent is not a defect.
+        return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
@@ -28,19 +31,76 @@ def _load_json(path: Path) -> Any:
         return None
 
 
-def _count_failed_chunks(artifacts_dir: Path) -> int:
+def _count_failed_chunks(
+    artifacts_dir: Path, summary: Any = None
+) -> tuple[int, bool]:
+    """Return (chunks lost by stage 3, whether that number is an upper bound).
+
+    Counting the lines of ``failed_chunks.jsonl`` is not the answer and never
+    was. The file holds one row per *attempt*, so a chunk that burned three
+    retries contributes three rows; it carries no verdict, so a chunk that
+    failed attempt 1 and succeeded on attempt 2 is in there too; and until
+    2026-08 a well-formed empty array — a correct answer for a figure caption —
+    was written as a failure. On the production run that arithmetic published
+    **31.0 %** against a true loss of **3.4 %** (572 rows, 196 distinct chunks,
+    62 actually lost).
+
+    So stage 3 now writes ``stage3_summary.json`` and that is authoritative.
+    The log is only consulted for runs made before it existed, and then only as
+    an upper bound: chunks that appear in the log and produced no triple at all.
+    That still cannot separate a real loss from an accepted empty answer, which
+    is the whole reason the summary exists.
+    """
+    if isinstance(summary, dict) and "chunks_failed" in summary:
+        return int(summary["chunks_failed"]), False
+
     path = artifacts_dir / "failed_chunks.jsonl"
     if not path.exists():
-        return 0
-    count = 0
+        return 0, False
+    flagged: set[str] = set()
+    unreadable = 0
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
-                if line.strip():
-                    count += 1
-    except OSError:
-        pass
-    return count
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    # A run killed mid-append leaves a half-written last line.
+                    unreadable += 1
+                    continue
+                chunk_id = str(row.get("chunk_metadata", {}).get("chunk_id", "") or "")
+                if chunk_id:
+                    flagged.add(chunk_id)
+                else:
+                    unreadable += 1
+    except OSError as exc:
+        logger.warning(
+            "Could not read %s: %s — reporting 0 failed chunks, which is a "
+            "floor, not a measurement",
+            path,
+            exc,
+        )
+        return 0, True
+    if unreadable:
+        logger.warning(
+            "%d rows of %s could not be attributed to a chunk; the failure "
+            "count below excludes them",
+            unreadable,
+            path,
+        )
+
+    # A chunk that ended up with a triple was not lost, whatever the log says.
+    produced = _load_json(artifacts_dir / "stage3_triples_raw.json")
+    if isinstance(produced, list):
+        extracted = {
+            str(t.get("relationship_properties", {}).get("chunk_id", "") or "")
+            for t in produced
+            if isinstance(t, dict)
+        }
+        flagged -= extracted
+    return len(flagged), True
 
 
 def _median(values: list[float]) -> float:
@@ -142,8 +202,19 @@ def compute_from_artifacts(
     if n_chunks > 0:
         extra["n_chunks"] = n_chunks
 
-    failed = _count_failed_chunks(artifacts_dir)
+    stage3 = _load_json(artifacts_dir / "stage3_summary.json")
+    failed, is_upper_bound = _count_failed_chunks(artifacts_dir, stage3)
     result.failed_chunks = failed
+    if is_upper_bound:
+        # Say so, rather than let a bound be read as a measurement.
+        extra["failed_chunks_is_upper_bound"] = True
+    if isinstance(stage3, dict):
+        extra["stage3"] = stage3
+        # Chunks stage 3 never attempted (front/back matter) are not failures
+        # and do not belong in the denominator.
+        attempted = int(stage3.get("chunks_attempted", 0) or 0)
+        if attempted > 0:
+            n_chunks = attempted
     if n_chunks > 0:
         result.failed_chunks_ratio = failed / n_chunks
     elif failed > 0:

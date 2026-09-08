@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -574,7 +575,7 @@ async def _extract_all_batches_async(
                                 "total_chunks": total_chunks,
                                 "triples_count": len(all_triples),
                                 "acronym_map": acronym_map,
-                                "timestamp": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                             },
                         )
                         _log.info(
@@ -643,6 +644,7 @@ def extract_triples(
     """
     _log = logging.getLogger("kg_pipeline")
     allowed_label_set = set(allowed_labels)
+    chunks_in = len(chunks)
 
     # Drop front/back-matter chunks before any indexing so checkpoint indices
     # stay aligned with the filtered list.
@@ -752,6 +754,27 @@ def extract_triples(
         )
     else:
         _log.info("Stage 3: every chunk extracted, no chunk lost")
+
+    # `failed_chunks.jsonl` cannot answer "how many chunks did we lose?": it
+    # holds one row per *attempt*, carries no verdict, and does not know that a
+    # chunk which failed attempt 1 succeeded on attempt 2. Counting its lines
+    # published 31.0 % for a run that lost 3.4 %. Stage 3 is the only place that
+    # knows the answer, so it writes it down.
+    _save_json(
+        failed_chunks_path.parent / "stage3_summary.json",
+        {
+            "chunks_in": chunks_in,
+            "chunks_skipped_front_back_matter": len(skipped),
+            "chunks_eligible": len(chunks),
+            "chunks_resumed_from_checkpoint": start_chunk_idx,
+            "chunks_attempted": len(chunks_remaining),
+            "chunks_failed": len(failed_chunk_ids),
+            "failed_chunk_ids": failed_chunk_ids,
+            "triples_extracted": len(all_triples),
+            "max_retries_per_chunk": max_retries_per_chunk,
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        },
+    )
 
     return all_triples, acronym_map
 

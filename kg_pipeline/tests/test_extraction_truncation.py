@@ -360,3 +360,80 @@ def test_a_cancellation_is_not_filed_as_a_failed_chunk(tmp_path):
 
     # Shutting the run down is not a corpus defect: nothing is written.
     assert not (tmp_path / "failed_chunks.jsonl").exists()
+
+
+# --- ING-9: stage 3 writes down what only stage 3 knows ---------------------
+
+
+def test_stage_three_writes_a_summary_of_what_it_lost(tmp_path, monkeypatch):
+    script = [(_TRUNCATED, "length")]
+    monkeypatch.setattr(
+        llm_extraction,
+        "AsyncOpenAI",
+        lambda **kwargs: _FakeAsyncOpenAI(script, **kwargs),
+    )
+    monkeypatch.setattr(llm_extraction, "_MAX_OUTPUT_TOKENS", 100)
+    monkeypatch.setattr(llm_extraction, "_MAX_OUTPUT_TOKENS_CEILING", 100)
+
+    # One ordinary chunk and one that is back matter and never attempted.
+    back_matter = _chunk("c2")
+    back_matter.section_title = "References"
+
+    llm_extraction.extract_triples(
+        chunks=[_chunk("c1"), back_matter],
+        ner_map={},
+        allowed_labels=["Material"],
+        base_url="http://localhost:9/v1",
+        model_name="test-model",
+        api_key="EMPTY",
+        max_retries_per_chunk=1,
+        temperature=0.0,
+        seed=42,
+        use_structured_output=True,
+        failed_chunks_path=tmp_path / "failed_chunks.jsonl",
+        new_label_log_path=tmp_path / "new_labels.log",
+        relation_vocab=["USED_AS"],
+        checkpoint_every=0,
+    )
+
+    summary = json.loads((tmp_path / "stage3_summary.json").read_text(encoding="utf-8"))
+    assert summary["chunks_in"] == 2
+    assert summary["chunks_skipped_front_back_matter"] == 1
+    assert summary["chunks_attempted"] == 1
+    assert summary["chunks_failed"] == 1
+    assert summary["failed_chunk_ids"] == ["c1"]
+    assert summary["max_retries_per_chunk"] == 1
+    # The log holds one row per attempt; the summary holds the verdict.
+    rows = (tmp_path / "failed_chunks.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) >= summary["chunks_failed"]
+
+
+def test_a_clean_stage_three_says_zero_rather_than_saying_nothing(tmp_path, monkeypatch):
+    script = [(_COMPLETE, "stop")]
+    monkeypatch.setattr(
+        llm_extraction,
+        "AsyncOpenAI",
+        lambda **kwargs: _FakeAsyncOpenAI(script, **kwargs),
+    )
+
+    llm_extraction.extract_triples(
+        chunks=[_chunk("c1")],
+        ner_map={},
+        allowed_labels=["Material"],
+        base_url="http://localhost:9/v1",
+        model_name="test-model",
+        api_key="EMPTY",
+        max_retries_per_chunk=1,
+        temperature=0.0,
+        seed=42,
+        use_structured_output=True,
+        failed_chunks_path=tmp_path / "failed_chunks.jsonl",
+        new_label_log_path=tmp_path / "new_labels.log",
+        relation_vocab=["USED_AS"],
+        checkpoint_every=0,
+    )
+
+    summary = json.loads((tmp_path / "stage3_summary.json").read_text(encoding="utf-8"))
+    assert summary["chunks_failed"] == 0
+    assert summary["failed_chunk_ids"] == []
+    assert summary["triples_extracted"] == 1
