@@ -123,6 +123,15 @@ told exactly which wheel to take: `requirements.txt` (local, loose bounds),
 `requirements-cpu.txt` (CPU cluster nodes), `requirements-gpu.txt` (GPU nodes,
 CUDA 12.4, pins `torch==2.5.1+cu124`).
 
+To reproduce an environment rather than describe one, install
+`requirements.lock`: exact versions including transitive dependencies, captured
+from the environment the measured results were produced in. Use it whenever a
+number has to be comparable with a previous run.
+
+```bash
+pip install -r requirements.lock
+```
+
 > [!TIP]
 > Without `sacrebleu`, evalkit falls back to a simplified local BLEU. Keep it
 > installed so published metrics come from the reference implementation.
@@ -329,6 +338,7 @@ Health checks and smoke scripts: see
 ├── CITATION.cff
 ├── pyproject.toml
 ├── requirements.txt         # + requirements-cpu.txt / requirements-gpu.txt
+├── requirements.lock        # exact versions the results were produced with
 └── .env.example             # configuration template
 ```
 

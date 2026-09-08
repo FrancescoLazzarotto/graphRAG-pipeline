@@ -4,8 +4,13 @@
 # 12.4) select the right torch build; see README "Installation". None of the
 # three is pinned — they carry the same compatible-range bounds as this file,
 # so two installs a month apart are not the same environment. This comment used
-# to call them "pinned installs", which is what an operator would have relied
-# on when a campaign stopped reproducing. There is no lockfile yet.
+# to call them "pinned installs", which is what an operator would have relied on
+# when a campaign stopped reproducing.
+#
+# For an environment that reproduces, use `requirements.lock`: exact versions,
+# transitive dependencies included, captured from the environment every measured
+# result was produced in. This file says what the project needs; the lock says
+# what it ran with.
 torch>=2.3,<3.0
 langchain-community>=0.3,<0.4
 langchain-neo4j
