@@ -265,6 +265,11 @@ _RETRY_TEMPERATURE = float(os.getenv("KG_EXTRACTION_RETRY_TEMPERATURE", "0.3"))
 
 _DEFAULT_CONCURRENT_REQUESTS = 8
 
+# How many concurrency windows a dispatch batch holds. Deep enough that a slow
+# chunk has company while it finishes, shallow enough that a crash does not
+# throw away much more than one checkpoint interval of work.
+_BATCH_WINDOWS_IN_FLIGHT = 4
+
 
 def _record_failed_chunk(
     *,
@@ -559,6 +564,28 @@ async def _extract_all_batches_async(
 ) -> tuple[list[KGTriple], dict[str, str], list[str]]:
     _log = logging.getLogger("kg_pipeline")
     failed_chunk_ids: list[str] = []
+    chunks_since_checkpoint = 0
+
+    def _write_checkpoint(last_chunk_idx: int) -> None:
+        try:
+            save_triples(checkpoint_path, all_triples)
+            _save_json(
+                checkpoint_info_path,
+                {
+                    "last_completed_chunk_idx": last_chunk_idx,
+                    "total_chunks": total_chunks,
+                    "triples_count": len(all_triples),
+                    "acronym_map": acronym_map,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                },
+            )
+            _log.info(
+                f"Checkpoint saved at chunk {last_chunk_idx + 1}/{total_chunks}: "
+                f"{len(all_triples)} triples"
+            )
+        except Exception as e:
+            _log.warning(f"Failed to save checkpoint: {e}")
+
     async with AsyncOpenAI(
         base_url=base_url.rstrip("/"),
         api_key=api_key or "EMPTY",
@@ -611,27 +638,19 @@ async def _extract_all_batches_async(
                         )
 
                 progress.update(len(batch))
+                last_chunk_idx = batch_abs_start + len(batch) - 1
+                chunks_since_checkpoint += len(batch)
 
-                if checkpoint_every > 0:
-                    last_chunk_idx = batch_abs_start + len(batch) - 1
-                    try:
-                        save_triples(checkpoint_path, all_triples)
-                        _save_json(
-                            checkpoint_info_path,
-                            {
-                                "last_completed_chunk_idx": last_chunk_idx,
-                                "total_chunks": total_chunks,
-                                "triples_count": len(all_triples),
-                                "acronym_map": acronym_map,
-                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                            },
-                        )
-                        _log.info(
-                            f"Checkpoint saved at chunk {last_chunk_idx + 1}/{total_chunks}: "
-                            f"{len(all_triples)} triples"
-                        )
-                    except Exception as e:
-                        _log.warning(f"Failed to save checkpoint: {e}")
+                if checkpoint_every > 0 and chunks_since_checkpoint >= checkpoint_every:
+                    _write_checkpoint(last_chunk_idx)
+                    chunks_since_checkpoint = 0
+
+            # The loop above only checkpoints once it has enough chunks behind
+            # it, so a run whose last batches do not reach the threshold would
+            # leave the checkpoint pointing at an earlier chunk — and a rerun
+            # would redo work that is already in hand.
+            if checkpoint_every > 0 and chunks_since_checkpoint > 0:
+                _write_checkpoint(start_chunk_idx + len(chunks_remaining) - 1)
 
     return all_triples, acronym_map, failed_chunk_ids
 
@@ -683,12 +702,20 @@ def extract_triples(
     new_label_log_path: Path,
     relation_vocab: list[str] | None = None,
     checkpoint_every: int = 50,
+    batch_size: int | None = None,
 ) -> tuple[list[KGTriple], dict[str, str]]:
     """
     Extract triples from chunks with periodic checkpointing.
 
     Args:
-        checkpoint_every: Save checkpoint every N chunks (default 50). Set to 0 to disable.
+        checkpoint_every: Save a checkpoint at least every N chunks (default
+            50). Set to 0 to disable checkpointing entirely.
+        batch_size: How many chunks are dispatched to the model at once.
+            Defaults to a multiple of the concurrency limit. It used to be
+            `checkpoint_every` itself, which made one number mean two
+            unrelated things: asking for safer recovery (a smaller
+            `checkpoint_every`) also shrank the dispatch window, and widening
+            the window meant losing more work to a crash.
     """
     _log = logging.getLogger("kg_pipeline")
     allowed_label_set = set(allowed_labels)
@@ -755,7 +782,15 @@ def extract_triples(
     concurrent_requests = max(1, concurrent_requests)
 
     http_timeout = float(os.getenv("VLLM_HTTP_TIMEOUT", "900"))
-    batch_size = checkpoint_every if checkpoint_every > 0 else max(1, len(chunks))
+    # A batch is the dispatch window: `_run_batch_async` holds it all in flight
+    # behind a semaphore of `concurrent_requests`, and the next batch cannot
+    # start until the slowest chunk of this one returns. Sizing it at the
+    # concurrency limit means every straggler idles the whole window, so the
+    # default is a few windows deep; the checkpoint cadence is now its own
+    # number and no longer has a say in it.
+    if batch_size is None or batch_size <= 0:
+        batch_size = concurrent_requests * _BATCH_WINDOWS_IN_FLIGHT
+    batch_size = max(1, int(batch_size))
     chunks_remaining = chunks[start_chunk_idx:]
 
     all_triples, acronym_map, failed_chunk_ids = asyncio.run(

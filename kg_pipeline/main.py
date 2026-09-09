@@ -401,6 +401,7 @@ def _load_or_run_raw_triples(
         failed_chunks_path=paths["failed_chunks"],
         new_label_log_path=paths["new_labels_log"],
         checkpoint_every=int(config.get("llm", {}).get("checkpoint_every", 50)),
+        batch_size=config.get("llm", {}).get("batch_size"),
     )
 
     llm_extraction.save_triples(paths["triples_raw"], triples)
