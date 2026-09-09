@@ -1753,6 +1753,7 @@ def _refine_related_to_relationships(
 
     for batch_ids in _chunked(rel_ids, _RELATED_TO_BATCH_SIZE):
         report["batches"] += 1
+        batch_set = {int(item) for item in batch_ids}
         context_rows = _fetch_related_to_context(session, batch_ids)
         prompt = _related_to_refinement_prompt(canonical, context_rows)
         try:
@@ -1767,7 +1768,11 @@ def _refine_related_to_relationships(
                 rel_id = int(row.get("id", -1))
             except (TypeError, ValueError):
                 rel_id = -1
-            if rel_id < 0:
+            # An id the batch never asked about is a hallucination, and the
+            # update query below matches on id alone: it would happily retype
+            # a PART_OF edge on the other side of the graph. The reclass pass
+            # has always filtered on the batch; this one did not.
+            if rel_id < 0 or rel_id not in batch_set:
                 report["skipped"] += 1
                 continue
 
