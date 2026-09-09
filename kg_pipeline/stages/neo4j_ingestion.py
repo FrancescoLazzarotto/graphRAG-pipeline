@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
-from neo4j import GraphDatabase
 from tqdm import tqdm
 import logging
 from neo4j.exceptions import CypherTypeError
@@ -18,6 +16,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from kg_pipeline.models.types import KGTriple
+from kg_pipeline.utils import neo4j_env
+from kg_pipeline.utils.neo4j_env import resolve_target
 
 
 _ID_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -47,23 +47,13 @@ def _safe_identifier(value: str, fallback: str) -> str:
 
 
 def _resolve_neo4j_env() -> tuple[str, str, str, str | None]:
-    uri = os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL")
-    user = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME")
-    password = os.getenv("NEO4J_PASSWORD")
-    database = os.getenv("NEO4J_DATABASE") or None
+    """The shared resolver, kept as a tuple for the callers that expect one.
 
-    missing = []
-    if not uri:
-        missing.append("NEO4J_URI or NEO4J_URL")
-    if not user:
-        missing.append("NEO4J_USER or NEO4J_USERNAME")
-    if not password:
-        missing.append("NEO4J_PASSWORD")
-
-    if missing:
-        raise ValueError("Missing Neo4j env vars: " + ", ".join(missing))
-
-    return uri, user, password, database
+    Six modules import this name. The resolution itself moved to
+    `kg_pipeline.utils.neo4j_env`, which is what the other twenty-one driver
+    sites now use as well.
+    """
+    return tuple(resolve_target())  # type: ignore[return-value]
 
 
 def _is_primitive(value: object) -> bool:
@@ -310,7 +300,9 @@ def ingest_triples(
         grouped[query][1].append((triple, row))
 
     batch_size = max(1, int(batch_size))
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=database) as session:
             with tqdm(
                 total=total, desc="Stage 6 Neo4j Ingestion", unit="triple"
@@ -371,7 +363,9 @@ def summary_counts(
     password: str,
     database: str | None = None,
 ) -> dict:
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=database) as session:
             node_records = session.run(
                 "MATCH (n) UNWIND labels(n) AS label RETURN label, count(*) AS count ORDER BY count DESC"
@@ -418,7 +412,9 @@ RETURN labels(n) AS labels, n.name AS name LIMIT 20
         """.strip()
 
     report: dict[str, object] = {"queries": {}}
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=database) as session:
             for key, q in queries.items():
                 params = (

@@ -27,7 +27,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from neo4j import Driver, GraphDatabase
+from neo4j import Driver
+from kg_pipeline.utils import neo4j_env
 
 logger = logging.getLogger("kg_pipeline.kg_restore")
 
@@ -185,7 +186,14 @@ def main() -> int:
     schema = json.loads((args.backup_dir / "schema.json").read_text())
     logger.info("backup: %d nodes, %d edges", len(nodes), len(edges))
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     try:
         with driver.session(database=args.database) as session:
             existing = session.run("MATCH (n) RETURN count(n) AS c").single()["c"]

@@ -221,7 +221,7 @@ def extract_candidates(
         Summary dict (questions, matched entities, candidates written).
     """
     try:
-        from neo4j import GraphDatabase  # type: ignore
+        from kg_pipeline.utils import neo4j_env  # type: ignore
     except ImportError as exc:
         raise ImportError("Install neo4j: pip install neo4j") from exc
 
@@ -232,7 +232,11 @@ def extract_candidates(
     if not gold_rows:
         raise ValueError(f"No rows in gold file: {gold_path}")
 
-    driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=neo4j_url, user=neo4j_user, password=neo4j_password
+        )
+    )
     candidate_rows: list[dict[str, Any]] = []
     n_matched_entities = 0
     n_total_entities = 0

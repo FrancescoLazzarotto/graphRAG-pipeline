@@ -17,6 +17,7 @@ import pytest
 
 from kg_pipeline.models.types import KGTriple
 from kg_pipeline.stages import neo4j_ingestion
+from kg_pipeline.utils import neo4j_env
 
 
 def _triple(subject="Rice husk", predicate="USES", obj="substrate", **rel) -> KGTriple:
@@ -176,8 +177,10 @@ class _FakeDriver:
 def fake_driver(monkeypatch):
     def _install(session: _FakeSession) -> _FakeDriver:
         driver = _FakeDriver(session)
+        # Every driver in the repo is now built in one place; that is the
+        # seam to replace.
         monkeypatch.setattr(
-            neo4j_ingestion.GraphDatabase, "driver", lambda *a, **k: driver
+            neo4j_env.GraphDatabase, "driver", lambda *a, **k: driver
         )
         return driver
 

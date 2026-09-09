@@ -38,12 +38,9 @@ def _load_env(env_file: str) -> None:
 
 
 def _neo4j_driver():
-    from neo4j import GraphDatabase  # type: ignore
+    from kg_pipeline.utils import neo4j_env  # type: ignore
 
-    url = os.environ["NEO4J_URL"]
-    user = os.environ["NEO4J_USERNAME"]
-    password = os.environ["NEO4J_PASSWORD"]
-    return GraphDatabase.driver(url, auth=(user, password))
+    return neo4j_env.connect()
 
 
 def _fetch_all_entity_names(session) -> list[str]:

@@ -28,7 +28,7 @@ from collections import Counter
 from pathlib import Path
 
 import networkx as nx
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 CITATION_RE = re.compile(
     r"(et al\.?$|et al\.,|\b(19|20)\d{2}[a-z]?\)?$|^fig(ure)?\.? ?\d|^table ?\d)",
@@ -94,7 +94,14 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     with driver.session(database=args.database) as session:
         # :NodeVec carriers hold the embeddings on separate nodes (see
         # scripts/kg/kg_vector_index.py). They have no edges, so counting them

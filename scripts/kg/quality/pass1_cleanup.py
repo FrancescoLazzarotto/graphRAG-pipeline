@@ -25,7 +25,7 @@ import re
 import sys
 from pathlib import Path
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 # Generic/anaphoric entity names that carry no referent outside their chunk.
 GENERIC_NAME_RE = re.compile(
@@ -55,7 +55,14 @@ def main() -> int:
     args = parser.parse_args()
     args.report_dir.mkdir(parents=True, exist_ok=True)
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     with driver.session(database=args.database) as session:
         self_loops = session.run(
             "MATCH (n)-[r]->(n) "

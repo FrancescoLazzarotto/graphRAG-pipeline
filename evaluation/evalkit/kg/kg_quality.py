@@ -260,11 +260,15 @@ def compute_from_neo4j(
         KGQualityResult with live metrics.
     """
     try:
-        from neo4j import GraphDatabase  # type: ignore
+        from kg_pipeline.utils import neo4j_env  # type: ignore
     except ImportError as exc:
         raise ImportError("Install neo4j: pip install neo4j") from exc
 
-    driver = GraphDatabase.driver(neo4j_url, auth=(neo4j_user, neo4j_password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=neo4j_url, user=neo4j_user, password=neo4j_password
+        )
+    )
     result = KGQualityResult()
     extra: dict[str, Any] = {}
 

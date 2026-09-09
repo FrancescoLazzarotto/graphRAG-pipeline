@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 from openai import OpenAI
 from rich.console import Console
 
@@ -46,10 +46,13 @@ from kg_pipeline.utils.validation import parse_json_array
 
 load_dotenv(ROOT / "kg_pipeline" / ".env")
 
-NEO4J_URI      = os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL", "")
-NEO4J_USER     = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "").strip() or None
+# Resolved once, without raising: the guard in main() is what reports a
+# missing setting, and importing this module must not fail for it.
+_TARGET = neo4j_env.resolve_target(require=False)
+NEO4J_URI = _TARGET.uri
+NEO4J_USER = _TARGET.user
+NEO4J_PASSWORD = _TARGET.password
+NEO4J_DATABASE = _TARGET.database
 VLLM_BASE_URL  = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL     = os.getenv("VLLM_MODEL_NAME", "Qwen/Qwen2.5-32B-Instruct-AWQ")
 VLLM_API_KEY   = os.getenv("VLLM_API_KEY", "EMPTY")
@@ -677,11 +680,9 @@ def main() -> None:
     console.print()
 
     client = OpenAI(base_url=VLLM_BASE_URL, api_key=VLLM_API_KEY, timeout=300.0)
-    session_kwargs: dict[str, Any] = {}
-    if NEO4J_DATABASE:
-        session_kwargs["database"] = NEO4J_DATABASE
+    session_kwargs = _TARGET.session_kwargs()
 
-    with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
+    with neo4j_env.connect(_TARGET) as driver:
         with driver.session(**session_kwargs) as session:
 
             # ── Step 1

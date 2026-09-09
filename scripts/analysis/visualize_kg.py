@@ -7,7 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 try:
     from dotenv import load_dotenv
@@ -217,10 +217,10 @@ def main() -> None:
         print("Warning: python-dotenv not installed; .env file was not loaded.")
         print("Install it with: pip install python-dotenv")
 
-    uri, user, password, env_db = _resolve_neo4j_env()
-    database = args.database.strip() or env_db
+    target = neo4j_env.resolve_target(database=args.database)
+    uri, database = target.uri, target.database
 
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(target) as driver:
         with driver.session(database=database) as session:
             rows = _fetch_subgraph(
                 session,

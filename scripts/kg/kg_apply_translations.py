@@ -36,7 +36,7 @@ for extra in (REPO / "src", REPO / "evaluation"):
         sys.path.insert(0, str(extra))
 
 from evalkit.normalisation import match_key  # noqa: E402
-from neo4j import GraphDatabase  # noqa: E402
+from kg_pipeline.utils import neo4j_env  # noqa: E402
 
 logger = logging.getLogger("kg_apply_translations")
 
@@ -78,7 +78,14 @@ def main(argv: list[str] | None = None) -> int:
                Path(args.input).read_text(encoding="utf-8").splitlines() if line.strip()]
     logger.info("%d translation records", len(records))
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     ids = [r["id"] for r in records]
     current: dict[str, dict] = {}
     with driver.session(database=args.database) as session:

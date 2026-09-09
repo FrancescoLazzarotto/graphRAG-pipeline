@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 MERGE_QUERY = """
 MATCH (keep) WHERE elementId(keep) = $keep
@@ -45,7 +45,14 @@ def main() -> int:
     parser.add_argument("--database", default=None)
     args = parser.parse_args()
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     merged = 0
     with driver.session(database=args.database) as session:
         while True:

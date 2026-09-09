@@ -35,7 +35,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
-from neo4j import GraphDatabase  # noqa: E402
+from kg_pipeline.utils import neo4j_env  # noqa: E402
 from openai import AsyncOpenAI  # noqa: E402
 
 logger = logging.getLogger("kg_translate_names")
@@ -140,7 +140,14 @@ async def run_batch(client: AsyncOpenAI, model: str, batch: list[dict],
 
 
 async def amain(args) -> int:
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     with driver.session(database=args.database) as session:
         nodes = [dict(r) for r in session.run(FETCH, skip=SKIP_LABELS)]
     logger.info("%d nodes to translate", len(nodes))

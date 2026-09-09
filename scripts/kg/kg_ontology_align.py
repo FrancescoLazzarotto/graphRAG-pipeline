@@ -53,7 +53,7 @@ for extra in (REPO / "src", REPO / "evaluation"):
         sys.path.insert(0, str(extra))
 
 from evalkit.normalisation import match_key  # noqa: E402
-from neo4j import GraphDatabase  # noqa: E402
+from kg_pipeline.utils import neo4j_env  # noqa: E402
 
 logger = logging.getLogger("kg_ontology_align")
 
@@ -215,7 +215,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
 
     if args.revert:
         with driver.session(database=args.database) as session:

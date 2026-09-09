@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -2662,7 +2662,9 @@ def main() -> None:
     LOGGER.info("Starting Neo4j postprocess dry_run=%s", args.dry_run)
     LOGGER.info("Target database=%s", database or "<default>")
 
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=database) as session:
             apoc_available = _has_apoc(session)
             report["apoc_available"] = apoc_available

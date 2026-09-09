@@ -49,11 +49,15 @@ def _check_import(module_name: str) -> tuple[bool, str]:
 def _probe_graph(uri: str, username: str, password: str, database: str) -> tuple[bool, str]:
     """Whether one graph answers, holds nodes, and has both indexes ONLINE."""
     try:
-        from neo4j import GraphDatabase
+        from kg_pipeline.utils import neo4j_env
     except Exception as exc:
         return False, f"neo4j driver unavailable: {exc}"
 
-    driver = GraphDatabase.driver(uri, auth=(username, password))
+    # The fallback reads DEMO_NEO4J_FALLBACK_* on purpose, so the values are
+    # passed in rather than resolved here; only the construction is shared.
+    driver = neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, username, password, database or None)
+    )
     try:
         with driver.session(database=database) as session:
             row = session.run("RETURN 1 AS ok").single()

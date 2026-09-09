@@ -22,12 +22,11 @@ from __future__ import annotations
 import argparse
 import collections
 import json
-import os
 import statistics
 import sys
 from pathlib import Path
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -41,9 +40,7 @@ EDGES = ("MATCH (a)-[e]->(b) WHERE NOT a:NodeVec AND NOT b:NodeVec "
 
 def reach() -> tuple[list[int], list[int]]:
     """Distinct nodes within one hop and within two hops, for every domain node."""
-    url = os.environ.get("NEO4J_URL") or os.environ["NEO4J_URI"]
-    auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
-    driver = GraphDatabase.driver(url, auth=auth)
+    driver = neo4j_env.connect()
     try:
         with driver.session() as session:
             ids = [record["id"] for record in session.run(NODES)]
@@ -152,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sidecar = args.out_dir / f"{args.stem}.json"
     sidecar.write_text(json.dumps({
-        "graph": os.environ.get("NEO4J_URL") or os.environ.get("NEO4J_URI"),
+        "graph": neo4j_env.resolve_target(require=False).uri,
         "nodes": len(one_hop),
         "one_hop": summary(one_hop),
         "two_hops": summary(two_hop),

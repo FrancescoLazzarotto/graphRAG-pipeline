@@ -49,7 +49,7 @@ for extra in (REPO / "src", REPO / "evaluation"):
 
 from evalkit.metrics.resolver import fold_number  # noqa: E402
 from evalkit.normalisation import match_key as _match_key  # noqa: E402
-from neo4j import GraphDatabase  # noqa: E402
+from kg_pipeline.utils import neo4j_env  # noqa: E402
 
 
 def match_key(text: str) -> str:
@@ -165,7 +165,14 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     gold = json.loads(Path(args.gold).read_text(encoding="utf-8"))
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     by_name, by_any, names = load_graph_forms(driver, args.database, args.baseline_aliases)
     logger.info("graph: %d names, %d name keys, %d name+alias keys",
                 len(names), len(by_name), len(by_any))

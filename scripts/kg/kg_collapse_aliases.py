@@ -35,7 +35,7 @@ from typing import Any
 
 import yaml
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 ROOT = Path(__file__).resolve().parents[2]
 # The kg_pipeline package lives at the repo root and is not pip-installed, so
@@ -141,7 +141,9 @@ def main() -> None:
     if args.yes:
         require_hosted_target_named("KG Collapse Aliases", uri, db)
 
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=db) as session:
             nodes, rels = _counts(session)
             LOGGER.info(

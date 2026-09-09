@@ -24,7 +24,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 MIN_DEGREE_FOR_RENAME = 8
 CLAUSE_WORDS = 7  # names with at least this many words read as propositions
@@ -142,7 +142,14 @@ def main() -> int:
         import json
         overrides = json.loads(args.overrides.read_text())
 
-    driver = GraphDatabase.driver(args.uri, auth=(args.user, args.password))
+    driver = neo4j_env.connect(
+        neo4j_env.resolve_target(
+            uri=args.uri,
+            user=args.user,
+            password=args.password,
+            database=args.database,
+        )
+    )
     with driver.session(database=args.database) as session:
         rows, renames, merges = collect(session)
         # Overrides may be keyed by elementId or by exact old name, so the

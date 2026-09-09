@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 ROOT = Path(__file__).resolve().parents[2]
 # The kg_pipeline package lives at the repo root and is not pip-installed, so
@@ -105,7 +105,9 @@ def main() -> None:
     uri, user, password, env_db = neo4j_ingestion._resolve_neo4j_env()
     db = config.get("neo4j", {}).get("database") or env_db
 
-    with GraphDatabase.driver(uri, auth=(user, password)) as driver:
+    with neo4j_env.connect(
+        neo4j_env.Neo4jTarget(uri, user, password, None)
+    ) as driver:
         with driver.session(database=db) as session:
             updated = _refresh_search_text(session, args.batch_size)
             LOGGER.info("search_text refreshed on %d nodes.", updated)

@@ -21,11 +21,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import textwrap
 from pathlib import Path
 
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 QUERY = """
 MATCH (n {name: $anchor})-[r]-(m)
@@ -40,9 +39,7 @@ ORDER BY document, predicate
 
 
 def fetch(anchor: str) -> list[dict]:
-    url = os.environ.get("NEO4J_URL") or os.environ["NEO4J_URI"]
-    auth = (os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"])
-    driver = GraphDatabase.driver(url, auth=auth)
+    driver = neo4j_env.connect()
     try:
         with driver.session() as session:
             return [dict(record) for record in session.run(QUERY, anchor=anchor)]
@@ -136,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     sidecar = args.out_dir / f"{args.stem}.json"
     sidecar.write_text(json.dumps({
         "anchor": args.anchor,
-        "graph": os.environ.get("NEO4J_URL") or os.environ.get("NEO4J_URI"),
+        "graph": neo4j_env.resolve_target(require=False).uri,
         "documents": {tag: document for document, tag in tags.items()},
         "edges": edges,
     }, indent=1, ensure_ascii=False), encoding="utf-8")

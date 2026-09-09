@@ -19,13 +19,12 @@ Steps:
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 from dotenv import load_dotenv
-from neo4j import GraphDatabase
+from kg_pipeline.utils import neo4j_env
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,15 +34,18 @@ if str(ROOT) not in sys.path:
 
 load_dotenv(ROOT / "kg_pipeline" / ".env")
 
-NEO4J_URI = os.getenv("NEO4J_URI") or os.getenv("NEO4J_URL", "")
-NEO4J_USER = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "").strip() or None
+# Resolved once, without raising: the guard in main() is what reports a
+# missing setting, and importing this module must not fail for it.
+_TARGET = neo4j_env.resolve_target(require=False)
+NEO4J_URI = _TARGET.uri
+NEO4J_USER = _TARGET.user
+NEO4J_PASSWORD = _TARGET.password
+NEO4J_DATABASE = _TARGET.database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("kg_repair5")
 
-_SESSION_KWARGS: dict = {"database": NEO4J_DATABASE} if NEO4J_DATABASE else {}
+_SESSION_KWARGS: dict = _TARGET.session_kwargs()
 
 # ── 1. SAME_AS cluster merge ──────────────────────────────────────────────────
 
@@ -188,7 +190,7 @@ def main() -> None:
 
     logger.info("URI=%s DB=%s", NEO4J_URI, NEO4J_DATABASE or "<default>")
 
-    with GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)) as driver:
+    with neo4j_env.connect(_TARGET) as driver:
         with driver.session(**_SESSION_KWARGS) as session:
             logger.info("=== Step 1: SAME_AS cluster merge ===")
             merge_same_as_clusters(session)
