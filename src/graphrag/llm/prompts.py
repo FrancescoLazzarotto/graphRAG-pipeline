@@ -545,7 +545,14 @@ class PromptLibrary:
         # Torino" into a question this collection answers.
         names = [str(name).strip() for name in known_entities if str(name).strip()]
         if names:
-            listed = "; ".join(dict.fromkeys(names))
+            # Braces are escaped for the same reason as in `evidence_gate_prompt`
+            # below: these names come from the graph and the template parses
+            # what it is given. A node named "Progetto {LIFE}" raised KeyError
+            # inside `prompt.invoke`, and `classify_in_domain` swallows that by
+            # returning "in domain" — so the gate silently did not run for any
+            # question whose matched names contained a brace. The escape was
+            # applied to the sibling gate and not to this one.
+            listed = "; ".join(dict.fromkeys(names)).replace("{", "{{").replace("}", "}}")
             system_message += (
                 "\n\nThe collection is known to contain entries named: "
                 f"{listed}. These are real names from this collection, so a "

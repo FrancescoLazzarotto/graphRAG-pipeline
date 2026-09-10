@@ -154,15 +154,26 @@ def test_an_evidence_gate_that_cannot_reach_the_model_lets_the_question_in(
     assert "Evidence gate failed" in caplog.text
 
 
-def test_a_node_name_with_a_brace_breaks_the_domain_gate(monkeypatch):
-    # The names come from the graph and the prompt template parses braces, so
-    # `{` raises KeyError inside prompt.invoke — which the caller swallows by
-    # returning "in domain". The evidence gate escapes them; this one does not.
-    # Pinned as it stands so the fix, when it lands, has a test to flip.
+@pytest.mark.parametrize("name", ["Progetto {LIFE}", "a {b} c", "}{"])
+def test_a_node_name_with_a_brace_no_longer_silences_the_domain_gate(monkeypatch, name):
+    # The names come from the graph and the template parses what it is given,
+    # so `{` used to raise KeyError inside prompt.invoke — which the caller
+    # swallows by returning "in domain". The gate then silently did not run for
+    # that question. The escape was on the sibling gate and not on this one.
     manager = _manager(monkeypatch, [_Output("OUT")])
 
-    assert manager.classify_in_domain("q", _Config(), ["Progetto {LIFE}"]) is True
-    assert manager._fake_model.payloads == []  # the model was never reached
+    assert manager.classify_in_domain("q", _Config(), [name]) is False
+    assert manager._fake_model.payloads  # the model was reached
+
+
+def test_an_escaped_name_still_reads_as_itself_in_the_prompt(monkeypatch):
+    manager = _manager(monkeypatch, [_Output("IN")])
+
+    manager.classify_in_domain("q", _Config(), ["Progetto {LIFE}"])
+
+    rendered = str(manager._fake_model.payloads[0])
+    assert "Progetto {LIFE}" in rendered
+    assert "{{" not in rendered
 
 
 def test_the_evidence_gate_survives_the_same_name(monkeypatch):
