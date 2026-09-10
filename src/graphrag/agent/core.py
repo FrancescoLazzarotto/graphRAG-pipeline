@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from typing import Any, Callable, Sequence
@@ -320,19 +321,49 @@ class KGRAGAgent:
         if self.llm is not None and self.config.llm_warmup:
             self.llm.warmup()
 
+        # One agent serves every session, so the running totals cannot live on
+        # the instance: two browser tabs would add their stages together.
+        self._stage_clock = threading.local()
+
         self.graph = self._build_graph()
+
+    def _timed(self, name: str, node: Callable[[RAGState], dict]):
+        """Wrap a graph node so its wall time is recorded per invocation.
+
+        `latency_ms` alone says a turn took 33 seconds and nothing about where
+        they went; one probe in September put 93 % of it in a single LLM call,
+        5 % in retrieval and 4 % in the graph, but that was one measurement on
+        one day. This makes the split a property of every turn, so a
+        regression is visible in the session log rather than in a rerun.
+
+        A node can run more than once — `grade` sends the question back to
+        `rewrite` up to three times — so the times accumulate rather than
+        replace.
+        """
+
+        def _run(state: RAGState) -> dict:
+            started = time.perf_counter()
+            try:
+                return node(state)
+            finally:
+                elapsed_ms = (time.perf_counter() - started) * 1000.0
+                timings = getattr(self._stage_clock, "timings", None)
+                if timings is not None:
+                    timings[name] = round(timings.get(name, 0.0) + elapsed_ms, 1)
+
+        return _run
 
     def _build_graph(self):
         builder = StateGraph(RAGState)
 
-        builder.add_node("scope", self._scope_gate)
-        builder.add_node("refuse", self._refuse_out_of_scope)
-        builder.add_node("decompose", self._decompose)
-        builder.add_node("route", self._adaptive_route)
-        builder.add_node("retrieve", self._retrieve)
-        builder.add_node("grade", self._grade)
-        builder.add_node("rewrite", self._rewrite)
-        builder.add_node("generate", self._generate)
+        builder.add_node("scope", self._timed("scope", self._scope_gate))
+        builder.add_node("refuse", self._timed("refuse", self._refuse_out_of_scope))
+        builder.add_node("decompose", self._timed("decompose", self._decompose))
+        builder.add_node("route", self._timed("route", self._adaptive_route))
+        builder.add_node("retrieve", self._timed("retrieve", self._retrieve))
+        builder.add_node("grade", self._timed("grade", self._grade))
+        builder.add_node("rewrite", self._timed("rewrite", self._rewrite))
+        builder.add_node("generate", self._timed("generate", self._generate))
 
         builder.add_edge(START, "scope")
 
@@ -1992,6 +2023,9 @@ class KGRAGAgent:
             the original question, the question sent to retrieval and the
             entities that resolved it.
         """
+        # Reset per invocation, on this thread only: `_timed` adds to it as
+        # each node runs and `output` carries the result away.
+        self._stage_clock.timings = {}
         start = time.perf_counter()
         self._on_token = on_token
         initial_state = {
@@ -2088,6 +2122,9 @@ class KGRAGAgent:
             raise
         latency_ms = (time.perf_counter() - start) * 1000.0
         output["latency_ms"] = latency_ms
+        output["stage_timings_ms"] = dict(
+            getattr(self._stage_clock, "timings", None) or {}
+        )
 
         if memory is not None:
             output["original_question"] = question

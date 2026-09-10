@@ -223,6 +223,11 @@ def main() -> None:
             elapsed = time.perf_counter() - started
             record["answer"] = answer
             record["latency_s"] = round(elapsed, 2)
+            # Same split the Streamlit surface records: which stage spent the
+            # seconds, not just how many there were.
+            stage_timings = result.get("stage_timings_ms")
+            if stage_timings:
+                record["stage_timings_ms"] = stage_timings
             if result.get("rewritten_question"):
                 record["rewritten_question"] = result["rewritten_question"]
             # The trailing "Verifica nel grafo:" block carries internal node

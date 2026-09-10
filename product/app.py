@@ -489,6 +489,12 @@ def _ask(
         elapsed = time.perf_counter() - started
         record["answer"] = answer
         record["latency_s"] = round(elapsed, 2)
+        # Where the seconds went. `latency_s` alone says a turn took 33 of
+        # them; a probe once put 93 % in a single LLM call, but that was one
+        # measurement on one day and nothing has recorded the split since.
+        stage_timings = result.get("stage_timings_ms")
+        if stage_timings:
+            record["stage_timings_ms"] = stage_timings
         # What the answer was actually built from. A thin answer has two very
         # different causes — the gate refused, or retrieval came back empty —
         # and without these counts the log cannot tell them apart.

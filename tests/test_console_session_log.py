@@ -216,3 +216,20 @@ def test_resetting_before_asking_anything_logs_nothing(run_console):
     _, rows = run_console(["nuova", "esci"])
 
     assert rows == []
+
+
+def test_the_stage_split_is_recorded_when_the_agent_reports_one(run_console):
+    # `latency_s` says a turn took thirty seconds; this says which stage spent
+    # them, on every turn instead of in a one-off probe.
+    _, rows = run_console(
+        ["prima", "esci"],
+        answers=[{"answer": "x", "stage_timings_ms": {"retrieve": 900.0, "generate": 30000.0}}],
+    )
+
+    assert rows[0]["stage_timings_ms"] == {"retrieve": 900.0, "generate": 30000.0}
+
+
+def test_an_agent_that_reports_no_split_adds_no_field(run_console):
+    _, rows = run_console(["prima", "esci"], answers=[{"answer": "x"}])
+
+    assert "stage_timings_ms" not in rows[0]
