@@ -352,17 +352,25 @@ class KGRAGAgent:
         return builder.compile()
 
     def _scope_gate(self, state: RAGState) -> dict:
-        """Classify the question against the corpus domain before retrieving.
+        """Decide whether the question is worth retrieving for.
 
-        Runs on the question as typed, never on the memory-rewritten one: a
-        follow-up is rewritten with entities from the previous answer, which
-        would make an out-of-domain question look in-domain by inheritance.
+        Two gates live behind this node and `_gate_mode` picks between them.
+        The default is the evidence gate, which judges what the collection
+        returns rather than a description of the domain written into a prompt,
+        and which reads the question through `_gate_question` — so a
+        continuation is judged on its rewritten form, because its own words
+        carry no subject. `GRAPHRAG_GATE_MODE=scope` restores the older gate,
+        which judges the question as typed against `domain_scope`.
 
-        Follow-ups skip the gate entirely. A terse one carries no domain of its
-        own — measured on ten of them, "e quindi?", "in che senso?" and
-        "perché?" were all classified out of domain — and refusing those breaks
-        the conversation the demo exists to hold. The topic they continue was
-        gated when it was introduced; what they inherit was already admitted.
+        Neither exempts a follow-up any more. The scope gate used to: any
+        question `is_follow_up` called a continuation skipped it entirely,
+        which meant "e scrivimi una funzione python" was never judged at all.
+        What is left is a floor on length — a question of three words or fewer
+        carries no topic of its own, and refusing "in che senso?" or "perché?"
+        breaks the conversation the demo exists to hold. The floor does not
+        read the follow-up flag, on purpose: that flag comes from memory, which
+        fills only from KG entities, so it stays False for an obvious follow-up
+        to a text-only answer.
         """
         if not self.config.enable_domain_gate or self.llm is None:
             return {"in_domain": True}
@@ -1280,6 +1288,15 @@ class KGRAGAgent:
 
     def _generate(self, state: RAGState) -> dict:
         query = state.get("question", "")
+        # The generated answer picks its language with the transcript behind it
+        # (`LLMManager._answer_language`); every fixed string below used to pick
+        # with the question alone, and a continuation carries no marker: "Non ho
+        # capito niente" scores zero on both sides and the tie goes to English.
+        # Measured on the recorded sessions, seven of the expert's turns score
+        # zero either way — so an Italian conversation refused for lack of
+        # evidence answered in English, while a successful turn stayed Italian.
+        transcript = str(state.get("transcript", "") or "")
+        answer_language = LLMManager._answer_language(query, transcript)
         context = state.get("text_context", "")
         has_text_evidence = bool(str(context or "").strip())
         nodes_count = int(state.get("retrieved_nodes_count", 0) or 0)
@@ -1301,7 +1318,7 @@ class KGRAGAgent:
                 state.get("chosen_retrieval_mode", "HYBRID"),
                 str(query)[:200],
             )
-            if LLMManager._detect_query_language(query) == "it":
+            if answer_language == "it":
                 return {
                     "answer": (
                         "Il contesto disponibile non è sufficiente per dare una risposta fondata. "
@@ -1328,7 +1345,7 @@ class KGRAGAgent:
             # Match the instruction language to the question language: a fixed
             # Italian instruction on an English question pushes the model into
             # mixed-language answers.
-            if LLMManager._detect_query_language(query) == "it":
+            if answer_language == "it":
                 effective_query = (
                     query
                     + "\n\nIstruzione: rispondi direttamente usando solo il contesto disponibile. "
@@ -1386,7 +1403,7 @@ class KGRAGAgent:
                     query=query,
                     context=context,
                     triples=state.get("kg_triples", []) or [],
-                    language=LLMManager._detect_query_language(query),
+                    language=answer_language,
                 )
             evidence_items = evidence_from_dicts(
                 state.get("evidence_index", []) or []
@@ -1395,7 +1412,7 @@ class KGRAGAgent:
                 # The citation gate replaces the old verification block: the
                 # source list is now derived from what the model actually cited,
                 # not from the top-4 retrieved triples.
-                language = LLMManager._detect_query_language(query)
+                language = answer_language
                 visible = state.get("visible_evidence_refs")
                 report = verify_citations(
                     answer=answer,
@@ -1470,7 +1487,7 @@ class KGRAGAgent:
                 verification_section = self._build_verification_section(
                     triples=state.get("kg_triples", []) or [],
                     nodes=state.get("retrieved_nodes", []) or [],
-                    language=LLMManager._detect_query_language(query),
+                    language=answer_language,
                 )
                 if verification_section:
                     answer = answer.rstrip() + "\n\n" + verification_section
@@ -1957,7 +1974,14 @@ class KGRAGAgent:
                 self.config.recursion_limit,
                 question,
             )
-            if LLMManager._detect_query_language(question) == "it":
+            # Same rule as the messages in `_generate`: a mute continuation
+            # takes the conversation's language, not the tie's default.
+            if (
+                LLMManager._answer_language(
+                    question, str(initial_state.get("transcript", "") or "")
+                )
+                == "it"
+            ):
                 output = {
                     "answer": (
                         "Il processo ha raggiunto il limite di ricorsione dell'agente prima di convergere. "

@@ -784,3 +784,70 @@ def test_the_same_section_from_two_queries_appears_once():
 
 def test_an_empty_section_contributes_nothing():
     assert KGRAGAgent._merge_context_sections(["", "   ", "reale"]) == "reale"
+
+
+# --- the language of the messages the agent writes itself ------------------
+
+
+class _Retrieving:
+    """A retriever that exists, so the run is not the LLM-only baseline."""
+
+    kg_store = None
+    text_pipeline = None
+
+
+def _zero_evidence_state(question: str, transcript: str = "") -> dict[str, Any]:
+    return {
+        "question": question,
+        "transcript": transcript,
+        "text_context": "",
+        "kg_triples": [],
+        "retrieved_nodes_count": 0,
+        "retrieved_subgraph_count": 0,
+        "retrieved_shortest_path_count": 0,
+    }
+
+
+def test_a_refusal_for_lack_of_evidence_follows_the_conversation(caplog):
+    # The generated answer already picked its language with the transcript
+    # behind it; the fixed strings picked with the question alone, and a
+    # continuation carries no marker. An Italian conversation that ran out of
+    # evidence was told so in English.
+    agent = _agent(_Retrieving(), None, include_nodes=True)
+    italian = "Utente: Cosa contiene la scotta?\nAssistente: E' il residuo liquido."
+
+    with caplog.at_level(logging.WARNING):
+        out = agent._generate(_zero_evidence_state("Non ho capito niente", italian))
+
+    assert "Il contesto disponibile non è sufficiente" in out["answer"]
+
+
+def test_the_same_turn_in_an_english_conversation_is_told_in_english(caplog):
+    agent = _agent(_Retrieving(), None, include_nodes=True)
+    english = "User: What does rice husk contain?\nAssistant: It is the outer shell."
+
+    with caplog.at_level(logging.WARNING):
+        out = agent._generate(_zero_evidence_state("Non ho capito niente", english))
+
+    assert "The provided context is insufficient" in out["answer"]
+
+
+def test_a_question_that_states_its_own_language_is_not_overridden(caplog):
+    agent = _agent(_Retrieving(), None, include_nodes=True)
+    english = "User: What does rice husk contain?\nAssistant: It is the outer shell."
+
+    with caplog.at_level(logging.WARNING):
+        out = agent._generate(
+            _zero_evidence_state("Cosa contiene la scotta prodotta dai caseifici?", english)
+        )
+
+    assert "Il contesto disponibile non è sufficiente" in out["answer"]
+
+
+def test_with_no_conversation_behind_it_the_message_is_english(caplog):
+    agent = _agent(_Retrieving(), None, include_nodes=True)
+
+    with caplog.at_level(logging.WARNING):
+        out = agent._generate(_zero_evidence_state("Non ho capito niente"))
+
+    assert "The provided context is insufficient" in out["answer"]

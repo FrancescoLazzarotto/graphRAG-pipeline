@@ -485,3 +485,59 @@ def test_the_score_pair_is_what_the_verdict_is_read_from():
     it_score, en_score = LLMManager._language_scores("Cosa contiene la scotta?")
 
     assert it_score > en_score
+
+
+# --- the language of a turn that says nothing -------------------------------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Non ho capito niente",
+        "E SeED?",
+        "Ah okok, grazie mille. ora ho capito",
+        "Non ho capito molto, puoi approfondirlo?",
+        "Sicuro? Guarda bene se esiste materia rinnovabile numero 33",
+    ],
+)
+def test_a_turn_with_no_marker_takes_the_conversations_language(query):
+    # Measured over the 126 distinct questions in artifacts/demo_sessions plus
+    # the gold set: the detector is right on all 23 English gold questions, and
+    # every one of its misses is a 0-0 tie like these. The word lists are not
+    # the problem; the tie's default is.
+    italian = "Utente: Cosa contiene la scotta?\nAssistente: E' il residuo liquido."
+
+    assert LLMManager._detect_query_language(query) == "en"
+    assert LLMManager._answer_language(query, italian) == "it"
+
+
+def test_the_same_turn_in_an_english_conversation_stays_english():
+    english = "User: What does rice husk contain?\nAssistant: It is the outer shell."
+
+    assert LLMManager._answer_language("Not sure I follow", english) == "en"
+
+
+def test_the_words_typed_outrank_the_conversation():
+    # A mid-conversation switch of language is honoured.
+    italian = "Utente: Cosa contiene la scotta?\nAssistente: E' il residuo liquido."
+
+    assert LLMManager._answer_language("What is whey exactly?", italian) == "en"
+
+
+def test_with_no_conversation_behind_it_a_mute_turn_is_english():
+    assert LLMManager._answer_language("Non ho capito niente", "") == "en"
+
+
+@pytest.mark.parametrize(
+    "query, it_wins",
+    [
+        ("Sai dirmi qualcosa sul system thinking?", True),
+        ("Approfondisci l'economia circolare in Piemonte", True),
+        ("Spiegameli meglio", True),
+        ("What is the role of industrial symbiosis?", False),
+    ],
+)
+def test_the_marker_lists_carry_the_cases_they_were_corrected_for(query, it_wins):
+    it_score, en_score = LLMManager._language_scores(query)
+
+    assert (it_score > en_score) is it_wins
