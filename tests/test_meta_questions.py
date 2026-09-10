@@ -15,7 +15,11 @@ from typing import Any
 import pytest
 
 from graphrag.agent.core import KGRAGAgent
-from graphrag.agent.smalltalk import detect_meta_question
+from graphrag.agent.smalltalk import (
+    detect_meta_question,
+    guess_language,
+    has_searchable_subject,
+)
 from graphrag.config import AgentConfig
 from graphrag.llm.prompts import PromptLibrary
 
@@ -120,3 +124,94 @@ def test_an_out_of_scope_question_still_gets_the_refusal():
     assert out["out_of_scope"] is True
     assert "meta_question" not in out
     assert "non rispondo" in out["answer"]
+
+
+# --- the openings nobody enumerated ---------------------------------------
+#
+# The pattern list above cannot be complete. What "buondi", "grazie mille!" and
+# "mi senti?" have in common is not their wording but that they name nothing to
+# look up, and on the first turn that is decisive.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "buondi",
+        "grazie mille!",
+        "che ore sono?",
+        "mi senti?",
+        "ciao come stai amico mio",
+        "hello my friend",
+        "ok",
+    ],
+)
+def test_an_opening_with_no_subject_names_nothing_to_look_up(question):
+    assert has_searchable_subject(question) is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Che cos'e' SEeD?",
+        "Quali sono le 3C?",
+        "biochar?",
+        "Parlami del micelio",
+        "Cosa sono le eccedenze alimentari?",
+        "What is grape pomace used for?",
+    ],
+)
+def test_a_question_naming_something_keeps_its_subject(question):
+    assert has_searchable_subject(question) is True
+
+
+@pytest.mark.parametrize(
+    "question, language",
+    [
+        # `LLMManager._detect_query_language` reads both of these as English:
+        # two words are not enough text for a whole-text detector.
+        ("grazie mille!", "it"),
+        ("sei sveglio?", "it"),
+        ("buondi", "it"),
+        ("thanks a lot", "en"),
+        ("hello my friend", "en"),
+        # Nothing tells the two apart: the surface is opened in Italian.
+        ("ok", "it"),
+    ],
+)
+def test_a_wordless_opening_is_answered_in_its_own_language(question, language):
+    assert guess_language(question) == language
+
+
+def test_an_unlisted_opening_is_answered_on_the_first_turn():
+    agent = _agent(answer_meta_questions=True)
+
+    verdict = agent._scope_gate({"question": "buondi"})
+
+    assert verdict["meta_question"] is True
+    assert verdict["meta_language"] == "it"
+
+
+def test_the_same_words_are_a_continuation_once_something_was_said():
+    """The exemption that protects "in che senso?" must survive this."""
+    agent = _agent(answer_meta_questions=True)
+
+    verdict = agent._scope_gate(
+        {"question": "in che senso?", "transcript": "D: le 3C\nR: ..."}
+    )
+
+    assert verdict == {"in_domain": True}
+
+
+def test_a_follow_up_without_a_transcript_is_still_a_follow_up():
+    """`transcript` is demo-only; `follow_up` is what every other caller has."""
+    agent = _agent(answer_meta_questions=True)
+
+    verdict = agent._scope_gate({"question": "in che senso?", "follow_up": True})
+
+    assert verdict == {"in_domain": True}
+
+
+def test_the_fallback_never_fires_with_the_flag_off():
+    agent = _agent(answer_meta_questions=False)
+
+    assert agent._scope_gate({"question": "buondi"}) == {"in_domain": True}

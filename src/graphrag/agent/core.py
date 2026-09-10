@@ -29,7 +29,11 @@ from graphrag.agent.evidence import (
     verify_quotes,
 )
 from graphrag.agent.memory import ConversationMemory
-from graphrag.agent.smalltalk import detect_meta_question
+from graphrag.agent.smalltalk import (
+    detect_meta_question,
+    guess_language,
+    has_searchable_subject,
+)
 from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -381,6 +385,20 @@ class KGRAGAgent:
         # regex match on a question that is about to cost a model call anyway.
         if self.config.answer_meta_questions and question:
             language = detect_meta_question(question)
+            if language is None and self._is_opening_turn(state):
+                # The pattern list cannot be complete — "buondì", "grazie
+                # mille!", "mi senti?" are openings nobody enumerated — and what
+                # they have in common is not their wording but that they name
+                # nothing to look up. On the first turn that is decisive: a
+                # question with no subject and no previous turn to continue
+                # cannot be answered from any collection, and sending it to
+                # retrieval produced the "non so" this exists to remove.
+                #
+                # Only on the first turn, because from the second one the same
+                # emptiness is what a continuation looks like ("in che senso?"),
+                # and those must keep reaching the answer path.
+                if not has_searchable_subject(question):
+                    language = guess_language(question)
             if language is not None:
                 logger.info("Meta question answered without retrieval: %s", question[:100])
                 return {
@@ -424,6 +442,19 @@ class KGRAGAgent:
                 known or "none",
             )
         return {"in_domain": in_domain}
+
+    @staticmethod
+    def _is_opening_turn(state: RAGState) -> bool:
+        """Whether nothing has been said in this conversation yet.
+
+        Two tests, because neither covers the other: `transcript` is filled by
+        the demo's intra-session memory and stays empty everywhere else, and
+        `follow_up` comes from memory's KG entities, which stay empty on a turn
+        answered entirely from the text channel.
+        """
+        return not str(state.get("transcript", "") or "").strip() and not state.get(
+            "follow_up"
+        )
 
     def _evidence_gate(self, question: str) -> dict:
         """Judge the question against what the collection returns for it.

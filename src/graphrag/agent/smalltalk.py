@@ -120,6 +120,113 @@ def _normalise(question: str) -> str:
     return " ".join(text.split())
 
 
+# Words that are not a subject: greetings, courtesy, copulas, the interrogative
+# scaffolding both languages build a question out of. Not the retriever's
+# stopword list — that one exists to score search terms and keeps "ciao" and
+# "grazie", which is exactly what has to fall away here. Kept here rather than
+# imported from `agent.core` because core imports this module.
+_FILLER = {
+    # greetings and courtesy
+    "ciao", "salve", "buongiorno", "buonasera", "buondi", "giorno", "sera",
+    "pomeriggio", "grazie", "mille", "prego", "scusa", "scusi", "hello",
+    "hallo", "hey", "hiya", "thanks", "thank", "please", "sorry", "morning",
+    "afternoon", "evening", "good",
+    # copulas, pronouns, adverbs and the rest of the scaffolding
+    "sono", "sei", "siete", "essere", "stai", "state", "come", "cosa", "che",
+    "chi", "dove", "quando", "quanto", "quale", "quali", "perche", "questo",
+    "questa", "questi", "queste", "tuo", "tua", "mio", "mia", "tutto", "tutti",
+    "bene", "allora", "poi", "anche", "ancora", "adesso", "dimmi", "dirmi",
+    "sapere", "senti", "senso", "niente", "nulla", "davvero", "ovvero",
+    "insomma", "capito", "capisco", "sicuro", "certo", "vero", "amico",
+    "amica", "gentile", "cortesia", "favore", "aiuto", "aiutare", "aiutarmi",
+    "risposta", "rispondi", "domanda", "domande", "parlare", "parliamo",
+    "conversazione", "chiedere", "chiederti",
+    "what", "which", "when", "where", "who", "whom", "whose", "why", "how",
+    "this", "that", "these", "those", "your", "yours", "mine", "there",
+    "here", "well", "then", "also", "still", "again", "really", "sure",
+    "right", "friend", "help", "answer", "question", "questions", "ask",
+    "tell", "talk", "know", "doing", "going", "just", "okay", "yeah",
+    "please",
+}
+# Below this, a token carries nothing to search for once the filler is gone:
+# "ore", "sai", "dai", "boh". Same threshold the retriever's own content-term
+# filter uses, for the same reason.
+_MIN_SUBJECT_LEN = 4
+
+
+def has_searchable_subject(question: str) -> bool:
+    """Whether anything is left to look up once the filler is removed.
+
+    The retriever's own term builder cannot answer this: it ends with `if not
+    terms: terms.append(query_text)`, so it never returns nothing and "ciao"
+    reaches the graph as the search term "ciao". This is the test that
+    question does not carry a subject at all.
+
+    Args:
+        question: The question as typed.
+
+    Returns:
+        False when every token is a greeting, a courtesy formula, a copula or
+        interrogative scaffolding — "ciao come stai amico mio", "grazie
+        mille!", "che ore sono?". True for anything naming something, which is
+        every question that must keep reaching retrieval.
+    """
+    for token in _WORD_RE.findall(_normalise(question)):
+        if token in _FILLER:
+            continue
+        # An acronym or a name is a subject whatever its length: SEeD, PNRR,
+        # 3C. `_normalise` has already lowercased, so the test is on the
+        # original.
+        if len(token) >= _MIN_SUBJECT_LEN:
+            return True
+    for token in _WORD_RE.findall(question):
+        if len(token) < _MIN_SUBJECT_LEN and token.isupper() and len(token) > 1:
+            return True
+    return False
+
+
+# Which language a wordless opening is in. `LLMManager._detect_query_language`
+# is a whole-text detector and reads "grazie mille" and "sei sveglio?" as
+# English — on two words there is not enough text for it. These markers are
+# only ever consulted for strings that carry no subject, so they never have to
+# compete with the vocabulary of a real question.
+_LANG_MARKERS_IT = {
+    "ciao", "salve", "buongiorno", "buonasera", "buondi", "grazie", "prego",
+    "scusa", "scusi", "sono", "sei", "stai", "come", "cosa", "che", "chi",
+    "dove", "quando", "quale", "quali", "perche", "questo", "mio", "tuo",
+    "tutto", "bene", "senti", "dimmi", "niente", "amico", "ore", "va", "mi",
+    "ti", "ci", "un", "una", "il", "la", "lo", "gli", "le", "di", "e",
+}
+_LANG_MARKERS_EN = {
+    "hello", "hey", "hi", "thanks", "thank", "please", "sorry", "good",
+    "morning", "afternoon", "evening", "what", "which", "who", "how", "when",
+    "where", "why", "this", "your", "you", "are", "is", "am", "do", "does",
+    "the", "a", "an", "and", "there", "here", "well", "okay", "yeah",
+}
+
+
+def guess_language(question: str, default: str = "it") -> str:
+    """Italian or English, decided on function words alone.
+
+    Args:
+        question: The question as typed.
+        default: What to answer when nothing in it tells the two apart — a
+            bare "ok", an emoji. Italian, because the surface that asks for
+            this guess is opened in Italian and its expert users write in it.
+
+    Returns:
+        ``"it"`` or ``"en"``.
+    """
+    tokens = set(_WORD_RE.findall(_normalise(question)))
+    italian = len(tokens & _LANG_MARKERS_IT)
+    english = len(tokens & _LANG_MARKERS_EN)
+    if italian > english:
+        return "it"
+    if english > italian:
+        return "en"
+    return default
+
+
 def detect_meta_question(question: str) -> str | None:
     """Say whether this is a question about the assistant, and in which language.
 
