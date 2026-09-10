@@ -220,6 +220,21 @@ class AgentConfig:
     # Off by default: it adds a call and a terminal state, so the thesis
     # baselines are unaffected and the demo opts in.
     enable_domain_gate: bool = False
+    # Greetings, pings and questions about the assistant itself ("ciao", "chi
+    # sei?", "prova, sistema operativo?"). None of them has anything to
+    # retrieve, so before this they either reached the model with an empty
+    # context — which answered that it did not know — or were refused with a
+    # sentence about documents that never says what the assistant is. Answered
+    # here instead, deterministically, with a fixed introduction plus
+    # `example_questions`.
+    #
+    # Off by default, like the gate above: it adds a terminal state, and a
+    # measurement run must reach retrieval for every question in its set.
+    answer_meta_questions: bool = False
+    # The questions offered on a refusal and in that introduction. The engine
+    # never invents them: the corpus grows and its owner decides what is worth
+    # asking, so `product/config.py` (DEMO_EXAMPLE_QUESTIONS) supplies them.
+    example_questions: tuple[str, ...] = ()
     # What the gate lets through. Measured on 50 tuning questions (30 frozen gold
     # + 10 Italian probes + 10 out-of-domain) at 50/50, then on a held-out set at
     # 0/12 false refusals and 4/12 false accepts — the four being food-adjacent

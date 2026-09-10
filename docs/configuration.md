@@ -155,6 +155,7 @@ with, so nothing needs editing to try something else.
 | `DEMO_UI_LANGUAGE` | `it` | Interface language at startup; the reader can switch it |
 | `DEMO_DEBUG` | `0` | Show the strategy, the model id and the graph URL on the page |
 | `DEMO_DOMAIN_GATE` | `1` | Judge a question against the collection before retrieving. `0` answers everything |
+| `DEMO_META_REPLY` | `1` | Answer a greeting or a question about the assistant ("ciao", "chi sei?", "prova, sistema operativo?") with an introduction and the example questions, without retrieving. `0` sends them to retrieval |
 | `DEMO_MEMORY` | `1` | Intra-session memory: follow-up rewriting and the conversation transcript |
 | `DEMO_VECTOR_RETRIEVAL` | `1` | The embedding channel. `0` leaves retrieval lexical only |
 | `DEMO_CITE_EVIDENCE` | `1` | Numbered evidence and reference tags on specific claims |

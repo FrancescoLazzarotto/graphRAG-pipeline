@@ -77,6 +77,14 @@ class RAGState(TypedDict, total=False):
     # `follow_up` exempts a question that continues an already-admitted topic.
     in_domain: bool
     out_of_scope: bool
+    # The refusal was an introduction, not a refusal: the question was about the
+    # assistant itself. Declared so the surfaces can title it as such instead of
+    # telling someone who typed "ciao" that they are out of scope.
+    meta_question: bool
+    # Which language that introduction is written in. Carried in the state
+    # rather than re-detected in the terminal node: two words are not enough
+    # for `_detect_query_language`, but the pattern that matched knows.
+    meta_language: str
     follow_up: bool
     provenance: list[ProvenanceRecord]
     reflection_passed: bool

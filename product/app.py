@@ -394,6 +394,7 @@ def _ask(
         "counts": {"passages": 0, "facts": 0, "documents": 0},
         "latency_s": 0.0,
         "out_of_scope": False,
+        "meta_question": False,
         "vector_degraded": False,
         "error": "",
     }
@@ -424,6 +425,7 @@ def _ask(
         # different causes — the gate refused, or retrieval came back empty —
         # and without these counts the log cannot tell them apart.
         record["out_of_scope"] = bool(result.get("out_of_scope"))
+        record["meta_question"] = bool(result.get("meta_question"))
         record["insufficient"] = bool(result.get("insufficient_answer"))
         record["n_triples"] = len(result.get("kg_triples") or [])
         record["n_nodes"] = len(result.get("retrieved_nodes") or [])
@@ -466,6 +468,7 @@ def _ask(
                 "counts": ui.retrieval_counts(result),
                 "latency_s": round(elapsed, 1),
                 "out_of_scope": bool(result.get("out_of_scope")),
+                "meta_question": bool(result.get("meta_question")),
                 "vector_degraded": bool(record["vector_degraded"]),
             }
         )
@@ -574,17 +577,22 @@ def _render_evidence(turn: dict[str, Any], container: Any) -> None:
                 st.markdown(line if fact["cited"] else f":gray[{line}]")
 
 
-def _render_out_of_scope(turn_id: str) -> None:
+def _render_out_of_scope(turn_id: str, meta: bool = False) -> None:
     """Turn a refusal into a direction.
 
     The gate answers with a fixed sentence and nothing else, which ends the
     session for anyone who does not already know what the collection holds. The
     count comes from the corpus manifest, so it stays true as the corpus grows.
+
+    Args:
+        turn_id: The turn these buttons belong to; it keys their widget ids.
+        meta: The question was about the assistant, not out of scope. Same
+            panel, different title: the answer above it is an introduction.
     """
     lang = _lang()
     count = int(_corpus().get("count", 0) or 0)
     with st.container(border=True):
-        st.markdown(f"**{ui.t(lang, 'oos_title')}**")
+        st.markdown(f"**{ui.t(lang, 'meta_title' if meta else 'oos_title')}**")
         if count:
             st.write(ui.t(lang, "oos_covers", n=count))
         if EXAMPLE_QUESTIONS:
@@ -674,7 +682,9 @@ def _render_turn(turn: dict[str, Any], chat_id: str, *, with_evidence: bool) -> 
             else turn.get("body", "")
         )
         if turn.get("out_of_scope"):
-            _render_out_of_scope(str(turn.get("turn_id") or ""))
+            _render_out_of_scope(
+                str(turn.get("turn_id") or ""), meta=bool(turn.get("meta_question"))
+            )
             return
         if turn.get("limits"):
             # Folded, like the evidence: it qualifies the answer, it is not part

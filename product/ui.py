@@ -101,6 +101,9 @@ STRINGS: dict[str, dict[str, str]] = {
                         "Riprova, magari riformulandola.",
         # out of domain
         "oos_title": "Fuori dall'ambito coperto",
+        # A greeting is not a refusal, and titling it as one tells whoever
+        # typed "ciao" that they did something wrong.
+        "meta_title": "Ecco di cosa mi occupo",
         "oos_covers": "Rispondo solo sull'economia circolare del cibo, "
                       "sulla base di {n} documenti.",
         "oos_try": "Prova per esempio:",
@@ -170,6 +173,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "err_question": "This question did not go through. "
                         "Try again, perhaps rephrasing it.",
         "oos_title": "Outside the covered scope",
+        "meta_title": "What I can help with",
         "oos_covers": "I only answer on the circular economy of food, "
                       "from {n} documents.",
         "oos_try": "Try for example:",

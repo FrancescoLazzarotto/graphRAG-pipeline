@@ -676,6 +676,61 @@ class PromptLibrary:
         return base
 
     @staticmethod
+    def identity_message(
+        language: str = "en", examples: Sequence[str] = ()
+    ) -> str:
+        """The reply to a question about the assistant itself.
+
+        Fixed text, like the refusal above and for a stronger reason: asked
+        "chi sei?" with an empty context, a served model invents a product. It
+        answered as a generic assistant, which is the one thing this system is
+        not, and named no subject the reader could ask about next.
+
+        Args:
+            language: ``"it"`` or anything else, which is answered in English.
+            examples: Questions to offer. Empty prints the invitation without
+                a list, which is what the console demo does when its operator
+                configured none.
+
+        Returns:
+            The whole answer, ready to display.
+        """
+        listed = [" ".join(str(e).split()) for e in examples if str(e).strip()]
+        if language == "it":
+            text = (
+                "Sono un assistente sull'economia circolare applicata al cibo. "
+                "Rispondo solo a partire dai documenti che ho a disposizione e "
+                "cito il documento da cui prendo ogni affermazione, quindi su "
+                "tutto il resto non rispondo."
+            )
+            if listed:
+                text += "\n\nPuoi chiedermi per esempio:\n"
+                text += "\n".join(f"- {q}" for q in listed)
+            else:
+                text += (
+                    "\n\nChiedimi pure di sottoprodotti agroalimentari, scarti "
+                    "di filiera, packaging, indicatori di sostenibilità o dei "
+                    "progetti territoriali descritti nei documenti."
+                )
+            return text
+        text = (
+            "I am an assistant on the circular economy applied to food. I "
+            "answer only from the documents I have, and I cite the document "
+            "each statement comes from, so anything else is outside what I can "
+            "answer."
+        )
+        if listed:
+            text += "\n\nYou could ask, for example:\n"
+            text += "\n".join(f"- {q}" for q in listed)
+        else:
+            text += (
+                "\n\nAsk me about agri-food by-products, supply-chain "
+                "residues, packaging, sustainability indicators or the "
+                "territorial projects the documents describe."
+            )
+        return text
+
+    @staticmethod
     def refusal_retry_prompt(language: str = "en") -> ChatPromptTemplate:
         """Stricter prompt used for the single fallback attempt after a refusal.
 

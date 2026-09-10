@@ -100,6 +100,12 @@ TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
 # hard gate for both would stonewall legitimate questions, which is the
 # expensive error for a demo whose complaint was already genericity.
 DOMAIN_GATE = _flag("DEMO_DOMAIN_GATE")
+# The third layer, before either of those two: a greeting or a question about
+# the assistant ("ciao", "chi sei?", "prova, sistema operativo?") is answered
+# with an introduction and the example questions, not sent to retrieval. Both
+# other layers assume a subject to look up; these have none, and the demo used
+# to open by saying it did not know.
+META_REPLY = _flag("DEMO_META_REPLY")
 PARAMETRIC_FALLBACK = _flag("DEMO_PARAMETRIC_FALLBACK")
 # The cross-lingual half of retrieval: the graph is largely Italian, the
 # questions arrive in both languages. Measured on the gold set at the end of
@@ -323,6 +329,8 @@ def build_agent_config(strategy: str = STRATEGY) -> AgentConfig:
         text_retriever_mmr_lambda=TEXT_MMR_LAMBDA,
         text_retriever_max_per_doc=TEXT_MAX_PER_DOC,
         enable_domain_gate=DOMAIN_GATE,
+        answer_meta_questions=META_REPLY,
+        example_questions=EXAMPLE_QUESTIONS,
         allow_parametric_fallback=PARAMETRIC_FALLBACK,
         vector_retrieval=VECTOR_RETRIEVAL,
     )

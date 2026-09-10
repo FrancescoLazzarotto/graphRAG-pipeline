@@ -52,7 +52,23 @@ def test_thesis_campaign_reproduces_the_recorded_run(strategy: str) -> None:
     expected = _recorded()[strategy]
     actual = _serialise(build_config("thesis_campaign", strategy=strategy))
 
-    assert set(actual) == set(expected), "field set drifted from the recorded run"
+    missing = sorted(set(expected) - set(actual))
+    assert not missing, f"fields the recorded run had and the profile no longer sets: {missing}"
+
+    # A field added to `AgentConfig` after that run did not exist in its
+    # config.json, and the fixture is the record of what ran — editing it in
+    # would falsify the record. What has to hold instead is that such a field is
+    # inert: at its dataclass default it cannot move a published number, which is
+    # the guarantee this test exists for. A new field that is *not* at its
+    # default changes the campaign and fails here.
+    defaults = _serialise(AgentConfig())
+    added = {
+        field: actual[field]
+        for field in set(actual) - set(expected)
+        if actual[field] != defaults[field]
+    }
+    assert not added, f"{strategy}: fields added since the recorded run are not inert: {added}"
+
     differing = {k: (expected[k], actual[k]) for k in expected if expected[k] != actual[k]}
     assert not differing, f"{strategy}: profile differs from the recorded run: {differing}"
 
@@ -151,6 +167,7 @@ def test_demo_profile_matches_the_product() -> None:
         "prefer_verbatim_definitions": product_config.VERBATIM_DEFINITIONS,
         "vector_retrieval": product_config.VECTOR_RETRIEVAL,
         "enable_domain_gate": product_config.DOMAIN_GATE,
+        "answer_meta_questions": product_config.META_REPLY,
         "allow_parametric_fallback": product_config.PARAMETRIC_FALLBACK,
         "text_retriever_top_k": product_config.TEXT_TOP_K,
         "text_retriever_mmr": product_config.TEXT_MMR,

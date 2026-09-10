@@ -29,6 +29,7 @@ from graphrag.agent.evidence import (
     verify_quotes,
 )
 from graphrag.agent.memory import ConversationMemory
+from graphrag.agent.smalltalk import detect_meta_question
 from graphrag.config import AgentConfig
 from graphrag.kg.retriever import KGRetriever
 from graphrag.llm.manager import LLMManager
@@ -372,10 +373,25 @@ class KGRAGAgent:
         fills only from KG entities, so it stays False for an obvious follow-up
         to a text-only answer.
         """
+        question = state.get("question", "").strip()
+
+        # Before the gates, and independent of them: a greeting or a question
+        # about the assistant has nothing to retrieve, so neither gate can
+        # judge it and the answer path has no context to build on. Costs one
+        # regex match on a question that is about to cost a model call anyway.
+        if self.config.answer_meta_questions and question:
+            language = detect_meta_question(question)
+            if language is not None:
+                logger.info("Meta question answered without retrieval: %s", question[:100])
+                return {
+                    "in_domain": False,
+                    "meta_question": True,
+                    "meta_language": language,
+                }
+
         if not self.config.enable_domain_gate or self.llm is None:
             return {"in_domain": True}
 
-        question = state.get("question", "").strip()
         if not question:
             return {"in_domain": True}
 
@@ -562,6 +578,21 @@ class KGRAGAgent:
         is retrieved, so no evidence index exists and no source list can be
         rendered under it.
         """
+        if state.get("meta_question"):
+            # Not a refusal: the question was about the assistant, and it gets
+            # an answer — who it is and what is worth asking it. The language
+            # comes from the pattern that matched, because `_detect_query_language`
+            # reads "ciao" as English and answering a greeting in the wrong
+            # language is the first thing a reader notices.
+            return {
+                "answer": PromptLibrary.identity_message(
+                    language=str(state.get("meta_language") or "en"),
+                    examples=self.config.example_questions,
+                ),
+                "out_of_scope": True,
+                "meta_question": True,
+            }
+
         # Detected on the form the gate judged, not on the words typed. A bare
         # continuation is too short to classify: "Non ho capito niente" comes
         # back as English, and the expert who wrote it in Italian was refused in

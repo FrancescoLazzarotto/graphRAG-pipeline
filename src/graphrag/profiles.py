@@ -75,6 +75,11 @@ DEMO: dict[str, Any] = {
     "prefer_verbatim_definitions": True,
     "vector_retrieval": True,
     "enable_domain_gate": True,
+    # "ciao" and "chi sei?" are the first two things typed into a demo and
+    # neither is a retrieval question. `example_questions` is not declared
+    # here: it is the operator's list, read from the environment by
+    # product/config.py.
+    "answer_meta_questions": True,
     "allow_parametric_fallback": True,
     "text_retriever_top_k": 8,
     "text_retriever_mmr": True,
