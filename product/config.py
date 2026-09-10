@@ -92,6 +92,12 @@ TEXT_MMR = _flag("DEMO_TEXT_MMR")
 TEXT_MMR_LAMBDA = float(os.environ.get("DEMO_TEXT_MMR_LAMBDA", "0.7"))
 TEXT_MAX_PER_DOC = int(os.environ.get("DEMO_TEXT_MAX_PER_DOC", "2"))
 TEXT_RETRIEVER_BACKEND = os.environ.get("DEMO_TEXT_RETRIEVER_BACKEND", "dense")
+# Named once so the pipeline that gets built and the config that gets recorded
+# cannot drift apart: the model was a literal inside `build_text_pipeline` and
+# nothing tied it to what `build_agent_config` reported.
+DENSE_EMBEDDING_MODEL = os.environ.get(
+    "DEMO_DENSE_EMBEDDING_MODEL", "intfloat/multilingual-e5-base"
+)
 # Two layers over the same failure, because it has two causes that look alike.
 # An out-of-domain question is refused outright by the gate (~0.11 s, no
 # retrieval, no answer). An in-domain question whose retrieval came back weak —
@@ -305,7 +311,7 @@ def build_text_pipeline(backend: str = TEXT_RETRIEVER_BACKEND) -> object | None:
 
     ns = argparse.Namespace(
         text_retriever_backend=backend,
-        dense_embedding_model="intfloat/multilingual-e5-base",
+        dense_embedding_model=DENSE_EMBEDDING_MODEL,
         vector_index_dir=str(ROOT / "artifacts" / "vector_index"),
         text_docs_dir="",
         text_stage0_runs=TEXT_STAGE0_RUNS,
@@ -333,6 +339,14 @@ def build_agent_config(strategy: str = STRATEGY) -> AgentConfig:
         example_questions=EXAMPLE_QUESTIONS,
         allow_parametric_fallback=PARAMETRIC_FALLBACK,
         vector_retrieval=VECTOR_RETRIEVAL,
+        # Copied for the same reason the CLI copies it (audit §5.4): left at
+        # its default, the one field that records which text retriever
+        # answered reported "tfidf" while `build_text_pipeline` was building
+        # dense. Every session log and every bug report read from it was
+        # therefore naming the wrong backend.
+        text_retriever_backend=TEXT_RETRIEVER_BACKEND,
+        dense_embedding_model=DENSE_EMBEDDING_MODEL,
+        vector_index_dir=str(ROOT / "artifacts" / "vector_index"),
     )
     return apply_strategy(base, strategy)
 

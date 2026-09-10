@@ -140,6 +140,7 @@ with, so nothing needs editing to try something else.
 | `DEMO_CITATION_POLICY` | `mark` | Invented-tag handling |
 | `DEMO_CITATION_DISPLAY` | `label` | `[Document, p. 12]` instead of `[S1]` |
 | `DEMO_TEXT_RETRIEVER_BACKEND` | `dense` | Text channel backend |
+| `DEMO_DENSE_EMBEDDING_MODEL` | `intfloat/multilingual-e5-base` | Encoder for the dense text backend; recorded in the resolved config |
 | `DEMO_TEXT_TOP_K` | `8` | Text chunks retrieved |
 | `DEMO_TEXT_MAX_PER_DOC` | `2` | Cap on chunks from one document |
 | `DEMO_TEXT_MMR_LAMBDA` | `0.7` | MMR relevance/diversity balance |
