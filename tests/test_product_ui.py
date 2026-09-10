@@ -249,6 +249,48 @@ def test_evidence_by_document_ignores_malformed_rows():
 
 
 # --------------------------------------------------------------------------- #
+# streaming
+# --------------------------------------------------------------------------- #
+
+
+def _stream(scrubber, pieces):
+    return "".join(scrubber.feed(p) for p in pieces) + scrubber.flush()
+
+
+def test_scrubber_hides_a_tag_split_across_chunks():
+    """Tokens arrive in fragments: "[S" and "1]" are one tag, not two strings."""
+    out = _stream(ui.StreamScrubber(), ["Le tre C ", "[S", "1", "]", " e la quarta."])
+    assert out == "Le tre C  e la quarta."
+
+
+def test_scrubber_hides_a_grouped_tag():
+    assert _stream(ui.StreamScrubber(), ["Testo ", "[S2, T3]", "."]) == "Testo ."
+
+
+def test_scrubber_leaves_ordinary_brackets_alone():
+    text = ["Un elenco ", "[a, b, c]", " e una ", "[nota]", "."]
+    assert _stream(ui.StreamScrubber(), text) == "Un elenco [a, b, c] e una [nota]."
+
+
+def test_scrubber_releases_a_bracket_that_never_closes():
+    """A held fragment must reach the reader, or the answer loses its tail."""
+    assert _stream(ui.StreamScrubber(), ["testo [S", "1"]) == "testo [S1"
+
+
+def test_scrubber_releases_a_long_bracket_before_it_swallows_the_answer():
+    long_text = "[" + "x" * 60 + "]"
+    assert long_text in _stream(ui.StreamScrubber(), [long_text])
+
+
+def test_scrubber_reset_drops_a_discarded_retry():
+    scrubber = ui.StreamScrubber()
+    scrubber.feed("mezza risposta [S")
+    scrubber.reset()
+    assert scrubber.feed("nuova risposta") == "nuova risposta"
+    assert scrubber.flush() == ""
+
+
+# --------------------------------------------------------------------------- #
 # inline citations
 # --------------------------------------------------------------------------- #
 

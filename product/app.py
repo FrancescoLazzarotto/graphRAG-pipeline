@@ -20,6 +20,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import queue
+import threading
 import os
 import sys
 import time
@@ -69,6 +71,10 @@ logger = logging.getLogger("expert_demo")
 # `cite_evidence` is off. It carries internal element ids, so it is cut from
 # what the page shows; the evidence panel is built from `result` instead.
 LEGACY_VERIFICATION_MARKER = "\nVerifica nel grafo:"
+
+# Sentinel closing the token queue. A plain None already means "discard what you
+# have", which a retry sends, so the end of the stream needs its own value.
+_STREAM_DONE = object()
 
 try:  # pragma: no cover - depends on the installed driver
     from neo4j.exceptions import ServiceUnavailable, SessionExpired
@@ -340,6 +346,61 @@ def _vector_skips(agent: KGRAGAgent) -> int:
     )
 
 
+def _stream(run: Any, placeholder: Any) -> dict[str, Any]:
+    """Run one question in a thread and paint the answer as it is written.
+
+    Generation is nearly the whole wait — a median answer is 734 tokens and the
+    served model writes about 34 a second — so this is the difference between
+    twenty seconds of spinner and a page that fills. The agent runs off the
+    script thread because Streamlit only repaints from this one; the worker
+    touches nothing but the queue.
+
+    What arrives is the model's own text, minus the reference tags it writes as
+    it goes: the citation gate turns those into document labels afterwards, and
+    the caller replaces this draft with the verified answer.
+    """
+    lang = _lang()
+    sink: queue.Queue = queue.Queue()
+    box: dict[str, Any] = {}
+
+    def worker() -> None:
+        try:
+            box["result"] = run(sink.put)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the script thread
+            box["error"] = exc
+        finally:
+            sink.put(_STREAM_DONE)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    scrubber = ui.StreamScrubber()
+    shown = ""
+    painted = 0.0
+    placeholder.caption(ui.t(lang, "thinking"))
+    while True:
+        piece = sink.get()
+        if piece is _STREAM_DONE:
+            break
+        if piece is None:
+            # A retry threw away what it had already written.
+            scrubber.reset()
+            shown = ""
+        else:
+            shown += scrubber.feed(str(piece))
+        now = time.monotonic()
+        # Ten repaints a second is past what a reader can follow, and every one
+        # of them is a message over the socket.
+        if shown and now - painted > 0.1:
+            painted = now
+            placeholder.markdown(shown + " ▌")
+    thread.join()
+
+    if "error" in box:
+        raise box["error"]
+    return box.get("result") or {}
+
+
 def _ask(
     agent: KGRAGAgent,
     model_id: str,
@@ -350,6 +411,7 @@ def _ask(
     memory: ConversationMemory | None = None,
     chat_id: str = "",
     graph_label: str = "",
+    placeholder: Any = None,
 ) -> dict[str, Any]:
     """Answer one question and return everything the page needs to render it.
 
@@ -399,9 +461,12 @@ def _ask(
         "error": "",
     }
     skips_before = _vector_skips(agent)
-    try:
+
+    def _run(on_token: Any = None) -> dict[str, Any]:
+        """One question against the graph, with the mid-session failover."""
+        nonlocal agent, skips_before
         try:
-            result = agent.invoke(question, memory=memory)
+            return agent.invoke(question, memory=memory, on_token=on_token)
         except Exception as exc:  # noqa: BLE001 - only a graph outage is handled here
             if not (base_url and _is_graph_outage(exc)):
                 raise
@@ -416,7 +481,10 @@ def _ask(
             skips_before = _vector_skips(agent)
             # memory.observe() runs after a successful graph.invoke, so the
             # failed attempt left no turn behind and this is not a double count.
-            result = agent.invoke(question, memory=memory)
+            return agent.invoke(question, memory=memory, on_token=on_token)
+
+    try:
+        result = _stream(_run, placeholder) if placeholder is not None else _run()
         answer = str(result.get("answer", "")).strip()
         elapsed = time.perf_counter() - started
         record["answer"] = answer
@@ -884,18 +952,23 @@ with reading:
             with st.chat_message("user"):
                 st.markdown(question)
             with st.chat_message("assistant"):
-                with st.spinner(ui.t(LANG, "thinking")):
-                    turn = _ask(
-                        agent,
-                        model_id,
-                        question,
-                        turn_id=uuid.uuid4().hex[:12],
-                        turn_index=len(chat["messages"]),
-                        base_url=base_url,
-                        memory=chat["memory"],
-                        chat_id=st.session_state.current_chat,
-                        graph_label=graph_label,
-                    )
+                # The answer is painted here as it is written, then thrown away:
+                # what stays is the verified text, with its citations turned
+                # into document labels and its source list attached.
+                streaming = st.empty()
+                turn = _ask(
+                    agent,
+                    model_id,
+                    question,
+                    turn_id=uuid.uuid4().hex[:12],
+                    turn_index=len(chat["messages"]),
+                    base_url=base_url,
+                    memory=chat["memory"],
+                    chat_id=st.session_state.current_chat,
+                    graph_label=graph_label,
+                    placeholder=streaming,
+                )
+                streaming.empty()
             # Appended before rendering: a rerun raised inside the renderer (a
             # sidebar click during the spinner, a browser reconnect) used to
             # drop the answer from the transcript while the JSONL row was

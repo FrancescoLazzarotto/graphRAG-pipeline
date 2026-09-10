@@ -381,6 +381,59 @@ def evidence_by_document(
     return list(grouped.values())
 
 
+# The tags the model writes while it is still writing: "[S1]", "[T12]",
+# "[S1, T2]". The engine swaps them for document labels once the answer is
+# complete, so a reader watching the text arrive would otherwise see ids that
+# mean nothing to them and then change under their eyes.
+_RAW_TAG_RE = re.compile(r"^\[(?:[STst]\s?\d{1,3})(?:\s*[,;]\s*[STst]\s?\d{1,3})*\]$")
+_TAG_PREFIX_RE = re.compile(r"^\[[STst\s\d,;]*$")
+
+
+class StreamScrubber:
+    """Hide the raw reference tags from text arriving a fragment at a time.
+
+    A tag can be split across chunks — "[S", "1]" — so anything from an open
+    bracket is held back until it is known to be a tag or not. Everything else
+    passes through untouched and immediately.
+    """
+
+    __slots__ = ("_held",)
+
+    # Longest thing that can still turn out to be a tag; past it, the bracket
+    # belonged to the prose and the text is released.
+    _MAX_HOLD = 48
+
+    def __init__(self) -> None:
+        self._held = ""
+
+    def reset(self) -> None:
+        self._held = ""
+
+    def feed(self, piece: str) -> str:
+        """Return the part of ``piece`` that can be shown now."""
+        out: list[str] = []
+        for char in str(piece or ""):
+            if self._held:
+                self._held += char
+                if char == "]":
+                    if not _RAW_TAG_RE.match(self._held):
+                        out.append(self._held)
+                    self._held = ""
+                elif not _TAG_PREFIX_RE.match(self._held) or len(self._held) > self._MAX_HOLD:
+                    out.append(self._held)
+                    self._held = ""
+            elif char == "[":
+                self._held = char
+            else:
+                out.append(char)
+        return "".join(out)
+
+    def flush(self) -> str:
+        """Release whatever is still held, at the end of the stream."""
+        held, self._held = self._held, ""
+        return "" if _RAW_TAG_RE.match(held) else held
+
+
 # A citation the engine has already rendered for a reader: "[MR37, p. 35]", or
 # several separated by ";". Only brackets carrying a page marker are touched, so
 # square brackets the model wrote for its own reasons are left alone.

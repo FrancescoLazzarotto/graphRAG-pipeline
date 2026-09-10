@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -641,12 +641,43 @@ class LLMManager:
         )
         return any(marker in text for marker in markers)
 
-    def _invoke_with_retry(self, model: Any, payload: Any) -> Any:
-        """Invoke the model, retrying only on transient network/server errors."""
+    def _invoke_with_retry(
+        self, model: Any, payload: Any, on_token: Callable[[str | None], None] | None = None
+    ) -> Any:
+        """Invoke the model, retrying only on transient network/server errors.
+
+        Args:
+            model: The chat backend.
+            payload: The rendered prompt.
+            on_token: Called with each piece of text as it arrives, which turns
+                a twenty-second wait into a page that fills. Called with
+                ``None`` when a retry discards what was already emitted, so the
+                caller can drop it instead of appending the answer twice.
+
+        Returns:
+            The backend response. Streaming returns the summed chunks, which
+            carry the same ``content`` and ``response_metadata`` — including
+            the ``finish_reason`` the token-limit check reads.
+        """
         attempts = max(1, self.generate_retry_attempts)
         for attempt in range(1, attempts + 1):
             try:
-                return model.invoke(payload)
+                if on_token is None or not hasattr(model, "stream"):
+                    return model.invoke(payload)
+                if attempt > 1:
+                    # The previous attempt may have emitted a partial answer.
+                    on_token(None)
+                merged = None
+                for chunk in model.stream(payload):
+                    merged = chunk if merged is None else merged + chunk
+                    piece = getattr(chunk, "content", "") or ""
+                    if piece:
+                        on_token(str(piece))
+                if merged is None:
+                    # A stream that yielded nothing is not an answer; fall back
+                    # to the blocking call rather than returning an empty one.
+                    return model.invoke(payload)
+                return merged
             except Exception as exc:
                 if attempt >= attempts or not self._is_transient_error(exc):
                     raise
@@ -667,6 +698,7 @@ class LLMManager:
         context: str,
         config: AgentConfig,
         transcript: str = "",
+        on_token: Callable[[str | None], None] | None = None,
     ) -> dict[str, str]:
         response_language = self._answer_language(query, transcript)
 
@@ -700,7 +732,17 @@ class LLMManager:
         logger.info("Context length (chars): %d", len(context))
 
         model = self.load_llm()
-        output = self._invoke_with_retry(model, rendered)
+        # Only the first generation streams. The rescue retry and the language
+        # pass below rewrite the answer wholesale, and streaming those would
+        # show a reader two answers for one question; the caller replaces what
+        # it streamed with the final text either way.
+        # Passed only when someone is listening, so every existing caller — and
+        # every test that stands in for this method — sees the signature it had.
+        output = (
+            self._invoke_with_retry(model, rendered, on_token=on_token)
+            if on_token is not None
+            else self._invoke_with_retry(model, rendered)
+        )
 
         answer = str(output.content if hasattr(output, "content") else output).strip()
         logger.log(

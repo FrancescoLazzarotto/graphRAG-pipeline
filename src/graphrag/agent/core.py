@@ -7,7 +7,7 @@ import os
 import re
 import time
 import uuid
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -312,6 +312,10 @@ class KGRAGAgent:
             config.max_content_tokens, config.token_estimator_ratio
         )
         self.cache = LRUCache(config.cache_maxsize) if config.enable_cache else None
+        # Set for the length of one invoke(). A LangGraph node is handed the
+        # state and nothing else, so this is how the generate node reaches the
+        # caller's token sink; one agent answers one question at a time.
+        self._on_token: Callable[[str | None], None] | None = None
 
         if self.llm is not None and self.config.llm_warmup:
             self.llm.warmup()
@@ -1437,6 +1441,7 @@ class KGRAGAgent:
                 context=context,
                 config=generation_config,
                 transcript=str(state.get("transcript", "") or ""),
+                on_token=self._on_token,
             )
             answer = result.get("answer", "")
             # Carried to the artifacts so the abstention metric can be computed
@@ -1961,7 +1966,10 @@ class KGRAGAgent:
         return rewritten
 
     def invoke(
-        self, question: str, memory: ConversationMemory | None = None
+        self,
+        question: str,
+        memory: ConversationMemory | None = None,
+        on_token: Callable[[str | None], None] | None = None,
     ) -> dict:
         """Answer one question, optionally in the context of a conversation.
 
@@ -1970,6 +1978,14 @@ class KGRAGAgent:
             memory: Intra-session memory (WP7). With `None` — the default, and
                 what every CLI, gold and experiment run uses — the behaviour is
                 identical to before WP7, down to the rendered prompt.
+            on_token: Called with each piece of the answer as the model writes
+                it, and with `None` when a retry discards what was already
+                sent. Generation is almost the whole wait — a median answer is
+                734 tokens and the served model writes ~34 a second — so this
+                is what turns twenty seconds of spinner into a page that
+                fills. The text it emits is the model's own: the citation gate
+                and the source list are applied after, and the caller is
+                expected to replace what it streamed with the final answer.
 
         Returns:
             The final graph state, plus `latency_ms` and, when memory is active,
@@ -1977,6 +1993,7 @@ class KGRAGAgent:
             entities that resolved it.
         """
         start = time.perf_counter()
+        self._on_token = on_token
         initial_state = {
             "question": question,
             "run_id": str(uuid.uuid4()),
