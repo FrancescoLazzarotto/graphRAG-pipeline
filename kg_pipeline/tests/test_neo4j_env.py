@@ -218,13 +218,14 @@ def test_the_two_local_ports_are_different_targets_with_the_same_host():
 
 
 def test_describing_a_target_never_prints_the_password():
-    target = neo4j_env.Neo4jTarget(
-        "bolt://localhost:7689", "neo4j", "staging-kg-v2", "neo4j"
-    )
+    # A literal that is obviously not a real credential: this file is tracked,
+    # and a test fixture is one more place a rotation would have to find.
+    secret = "not-the-real-password"
+    target = neo4j_env.Neo4jTarget("bolt://localhost:7689", "neo4j", secret, "neo4j")
 
     described = target.describe()
 
-    assert "staging-kg-v2" not in described
+    assert secret not in described
     assert "bolt://localhost:7689" in described
     assert "neo4j" in described
 
