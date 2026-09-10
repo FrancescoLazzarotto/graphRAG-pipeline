@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import readline  # noqa: F401 - enables line editing/history in input()
+import uuid
 import sys
 import time
 import traceback
@@ -170,6 +171,14 @@ def main() -> None:
     print(f"[log sessione: {session_log}]\n")
 
     n_questions = 0
+    # Same three ids the Streamlit surface writes, for the same reason: the
+    # feedback record points at a `turn_id`, several conversations share one
+    # log file, and neither of those says whether an answer was the opening
+    # question or the fifth follow-up. Without them a console turn could not be
+    # rated at all and its session could not be put back in order, while
+    # `surface`/`kind` promised the two logs were comparable.
+    chat_id = uuid.uuid4().hex[:8]
+    turn_index = 0
     while True:
         try:
             question = input("Domanda> ").strip()
@@ -183,10 +192,13 @@ def main() -> None:
         if question.lower() in {"nuova", "new", "reset"}:
             if memory is not None:
                 memory.reset()
+            chat_id = uuid.uuid4().hex[:8]
+            turn_index = 0
             print("[nuova conversazione: il contesto precedente è stato azzerato]\n")
             continue
 
         started = time.perf_counter()
+        turn_index += 1
         record: dict[str, object] = {
             "ts": dt.datetime.now().isoformat(timespec="seconds"),
             # The console and the Streamlit demo write different shapes into
@@ -197,6 +209,12 @@ def main() -> None:
             "question": question,
             "strategy": settings.STRATEGY,
             "model_id": model_id,
+            # Which graph answered. Without it a session served by the local
+            # mirror during an Aura outage reads exactly like a healthy one.
+            "graph_label": graph_label,
+            "chat_id": chat_id,
+            "turn_id": uuid.uuid4().hex[:12],
+            "turn_index": turn_index,
         }
         try:
             print("... sto consultando il grafo e i documenti (10-30 secondi) ...")
