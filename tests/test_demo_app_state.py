@@ -363,3 +363,246 @@ def test_a_run_that_returns_nothing_yields_an_empty_result():
     app._init_state()
 
     assert app._stream(lambda sink: None, _placeholder()) == {}
+
+
+# --- answering one question ------------------------------------------------
+
+
+class _Agent:
+    """Answers, or fails, and counts the skips the notice is built from."""
+
+    def __init__(self, results: list[Any] | None = None, skips: list[int] | None = None):
+        self.results = list(results or [])
+        self.skips = list(skips or [])
+        self.asked: list[str] = []
+
+        class _Store:
+            vector_skips = 0
+
+        class _Retriever:
+            vector_skips = 0
+            kg_store = _Store()
+
+        self.kg_retriever = _Retriever()
+
+    def invoke(self, question: str, memory=None, on_token=None) -> dict[str, Any]:
+        self.asked.append(question)
+        if self.skips:
+            self.kg_retriever.vector_skips = self.skips.pop(0)
+        outcome = self.results.pop(0) if self.results else {"answer": "una risposta"}
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _ask(agent, **kwargs: Any) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
+        "model_id": "qwen",
+        "question": "cos'e' la scotta?",
+        "turn_id": "t1",
+        "turn_index": 1,
+        "chat_id": "c1",
+        "graph_label": "aura",
+    }
+    defaults.update(kwargs)
+    return app._ask(agent, **defaults)
+
+
+def _turn_rows() -> list[dict[str, Any]]:
+    return [r for r in _rows(app._session_log_path()) if r.get("kind") == "turn"]
+
+
+def test_a_turn_is_logged_with_the_identity_a_rating_points_at():
+    _ask(_Agent([{"answer": "La scotta e' un residuo."}]))
+
+    row = _turn_rows()[0]
+    assert (row["turn_id"], row["chat_id"], row["turn_index"]) == ("t1", "c1", 1)
+    assert row["graph_label"] == "aura"
+    assert row["answer"] == "La scotta e' un residuo."
+
+
+def test_the_counts_say_what_the_answer_was_built_from():
+    # A thin answer has two very different causes — the gate refused, or
+    # retrieval came back empty — and without these the log cannot tell them
+    # apart.
+    _ask(
+        _Agent([{
+            "answer": "x",
+            "kg_triples": [{"subject": "a"}, {"subject": "b"}],
+            "retrieved_nodes": [{"text": "n"}],
+            "retrieved_text_sources": [{"source": "s"}],
+        }])
+    )
+
+    row = _turn_rows()[0]
+    assert (row["n_triples"], row["n_nodes"], row["n_text_sources"]) == (2, 1, 1)
+
+
+def test_a_refused_question_is_marked_as_such():
+    payload = _ask(_Agent([{"answer": "fuori dominio", "out_of_scope": True}]))
+
+    assert payload["out_of_scope"] is True
+    assert _turn_rows()[0]["out_of_scope"] is True
+
+
+def test_the_question_sent_to_retrieval_is_logged_next_to_the_one_typed():
+    # Logged separately so a rewrite that hurt the answer can be recognised as
+    # such after the session.
+    memory = object()
+    _ask(
+        _Agent([{
+            "answer": "x",
+            "retrieval_question": "cos'e' la scotta di caseificio?",
+            "follow_up": True,
+            "memory_entities": ["Scotta"],
+        }]),
+        memory=memory,
+    )
+
+    row = _turn_rows()[0]
+    assert row["question"] == "cos'e' la scotta?"
+    assert row["retrieval_question"] == "cos'e' la scotta di caseificio?"
+    assert row["follow_up"] is True
+
+
+def test_without_memory_no_follow_up_fields_are_written():
+    _ask(_Agent([{"answer": "x", "follow_up": True}]), memory=None)
+
+    assert "follow_up" not in _turn_rows()[0]
+
+
+def test_the_citation_report_reaches_both_the_log_and_the_page():
+    report = {"cited_refs": ["S1"], "phantom": 0}
+
+    payload = _ask(_Agent([{"answer": "x [S1]", "citation_report": report}]))
+
+    assert payload["citation_report"] == report
+    assert payload["cited_refs"] == ["S1"]
+    assert _turn_rows()[0]["citation_report"] == report
+
+
+def test_the_stage_split_is_logged_when_the_agent_reports_one():
+    _ask(_Agent([{"answer": "x", "stage_timings_ms": {"generate": 30000.0}}]))
+
+    assert _turn_rows()[0]["stage_timings_ms"] == {"generate": 30000.0}
+
+
+def test_the_debugging_dump_never_reaches_the_page():
+    # It carries element ids; the evidence panel shows the same facts as
+    # sentences instead.
+    answer = f"La risposta.{app.LEGACY_VERIFICATION_MARKER}4:abc:1"
+
+    payload = _ask(_Agent([{"answer": answer}]))
+
+    assert "4:abc:1" not in payload["body"]
+    assert "4:abc:1" in _turn_rows()[0]["answer"]
+
+
+# --- an answer given while a channel was down ------------------------------
+
+
+def test_an_answer_built_without_the_vector_channel_says_so():
+    # Per question, not per session: the encoder can come back, and an answer
+    # given while it was down is worth less than the one before it.
+    payload = _ask(_Agent([{"answer": "x"}], skips=[1]))
+
+    assert payload["vector_degraded"] is True
+    assert app.DEGRADED_NOTICE.strip() in payload["body"]
+
+
+def test_an_answer_given_while_everything_worked_says_nothing():
+    payload = _ask(_Agent([{"answer": "x"}]))
+
+    assert payload["vector_degraded"] is False
+    assert app.DEGRADED_NOTICE.strip() not in payload["body"]
+
+
+def test_a_skip_from_an_earlier_turn_does_not_mark_this_one():
+    agent = _Agent([{"answer": "prima"}, {"answer": "seconda"}], skips=[1, 1])
+
+    _ask(agent)
+    second = _ask(agent, turn_id="t2", turn_index=2)
+
+    assert second["vector_degraded"] is False
+
+
+# --- the mid-session failover ----------------------------------------------
+
+
+def test_a_graph_outage_is_retried_on_the_rebuilt_agent(monkeypatch):
+    if not app._GRAPH_OUTAGE_EXCEPTIONS:
+        pytest.skip("neo4j exception classes unavailable")
+    outage = app._GRAPH_OUTAGE_EXCEPTIONS[0]("unreachable")
+    fallback = _Agent([{"answer": "dalla copia locale"}])
+    monkeypatch.setattr(
+        app, "_rebuild_agent", lambda base_url, model_id: (fallback, "", "local mirror")
+    )
+
+    payload = _ask(_Agent([outage]), base_url="http://localhost:8000/v1")
+
+    assert payload["body"].startswith("dalla copia locale")
+    row = _turn_rows()[0]
+    assert row["graph_failover"] is True
+    assert row["graph_label"] == "local mirror"
+
+
+def test_without_a_model_url_there_is_nothing_to_fail_over_to(monkeypatch):
+    if not app._GRAPH_OUTAGE_EXCEPTIONS:
+        pytest.skip("neo4j exception classes unavailable")
+    monkeypatch.setattr(
+        app, "_rebuild_agent", lambda base_url, model_id: pytest.fail("must not rebuild")
+    )
+
+    payload = _ask(_Agent([app._GRAPH_OUTAGE_EXCEPTIONS[0]("unreachable")]), base_url="")
+
+    assert payload["error"] == "service"
+
+
+def test_a_rebuild_that_fails_leaves_the_original_failure(monkeypatch):
+    if not app._GRAPH_OUTAGE_EXCEPTIONS:
+        pytest.skip("neo4j exception classes unavailable")
+    monkeypatch.setattr(app, "_rebuild_agent", lambda base_url, model_id: None)
+
+    payload = _ask(
+        _Agent([app._GRAPH_OUTAGE_EXCEPTIONS[0]("unreachable")]),
+        base_url="http://localhost:8000/v1",
+    )
+
+    assert payload["error"] == "service"
+
+
+def test_an_ordinary_failure_is_not_retried_anywhere(monkeypatch):
+    monkeypatch.setattr(
+        app, "_rebuild_agent", lambda base_url, model_id: pytest.fail("must not rebuild")
+    )
+
+    payload = _ask(_Agent([ValueError("bad prompt")]), base_url="http://x/v1")
+
+    assert payload["error"] == "question"
+
+
+# --- a failed turn -------------------------------------------------------
+
+
+def test_a_failed_turn_is_logged_with_its_error_and_its_identity():
+    _ask(_Agent([RuntimeError("vLLM down")]))
+
+    row = _turn_rows()[0]
+    assert row["error"] == "RuntimeError: vLLM down"
+    assert row["turn_id"] == "t1"
+
+
+def test_a_failure_tells_the_reader_which_kind_it_was():
+    payload = _ask(_Agent([RuntimeError("vLLM down")]))
+
+    assert payload["error"] == "question"
+    assert payload["body"] == ""
+
+
+def test_a_turn_is_logged_whatever_happened():
+    agent = _Agent([RuntimeError("boom"), {"answer": "ok"}])
+
+    _ask(agent)
+    _ask(agent, turn_id="t2", turn_index=2)
+
+    assert len(_turn_rows()) == 2
