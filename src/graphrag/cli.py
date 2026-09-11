@@ -900,6 +900,8 @@ def _run_experiments(
     tag = args.experiment_tag.strip() or "batch"
     output_dir = Path(args.output_dir) / f"{timestamp}_{tag}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    # From here every log line names the directory its results land in.
+    set_run_id(output_dir.name)
 
     jsonl_path = output_dir / "results.jsonl"
     csv_path = output_dir / "results.csv"
@@ -979,6 +981,49 @@ def _run_experiments(
     logger.info("Summary:\n%s", summary_text)
 
 
+# The run the process is currently working on. A campaign writes its results
+# into `<timestamp>_<tag>/`, and that directory name is the only identifier the
+# run has — so it is the one worth stamping on every log line. Held in a dict
+# rather than a plain global so `set_run_id` can rebind it after the handlers
+# are already attached: logging is configured before the output directory
+# exists, and the two cannot be reordered without moving the .env load.
+_RUN_ID: dict[str, str] = {"value": "-"}
+
+_LOG_FORMAT = "%(asctime)s | %(levelname)s | %(run_id)s | %(name)s | %(message)s"
+
+
+class _RunIdFilter(logging.Filter):
+    """Stamps the current run id on every record that passes a handler.
+
+    Attached to handlers rather than loggers on purpose: a record from a
+    third-party logger would otherwise reach the formatter without the
+    attribute and raise while trying to format it.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.run_id = _RUN_ID["value"]
+        return True
+
+
+def set_run_id(run_id: str) -> None:
+    """Name the run whose lines follow.
+
+    Two campaigns in one nohup file, or one campaign whose arms run in
+    parallel, produced interleaved lines with nothing to separate them: a
+    warning could not be attributed to the run whose results it explains.
+
+    Args:
+        run_id: Usually the output directory's name. Empty restores ``-``.
+    """
+    _RUN_ID["value"] = str(run_id).strip() or "-"
+
+
+def _attach_run_id(handler: logging.Handler) -> None:
+    """Give ``handler`` the run-id filter, once."""
+    if not any(isinstance(f, _RunIdFilter) for f in handler.filters):
+        handler.addFilter(_RunIdFilter())
+
+
 def _configure_logging() -> None:
     """Give a campaign log a timestamp and, on request, a file of its own.
 
@@ -993,10 +1038,9 @@ def _configure_logging() -> None:
     of the experiment's identity, recorded in config.json and compared across
     arms — where the log is written is not.
     """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
+    for handler in logging.getLogger().handlers:
+        _attach_run_id(handler)
 
     log_file = os.getenv("GRAPHRAG_LOG_FILE", "").strip()
     if not log_file:
@@ -1008,9 +1052,8 @@ def _configure_logging() -> None:
     path = Path(log_file).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(path, encoding="utf-8")
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
-    )
+    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+    _attach_run_id(handler)
     handler._graphrag_file_handler = True  # type: ignore[attr-defined]
     root.addHandler(handler)
     logger.info("Logging to %s", path)
