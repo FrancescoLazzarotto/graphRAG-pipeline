@@ -20,6 +20,12 @@ from typing import Any
 
 import pytest
 
+# CI installs `.[dev]`, and streamlit lives in `.[demo]` — importing
+# `product.app` without it fails at collection and takes the whole test job
+# with it. The module under test is the browser demo, so skipping is the
+# honest outcome where the browser demo is not installed.
+pytest.importorskip("streamlit", reason="product/app.py needs the [demo] extra")
+
 # `product/app.py` is a Streamlit script, and importing it runs its body —
 # including `_configure_logging`, which calls `logging.basicConfig`, pins the
 # "graphrag" and "expert_demo" loggers to WARNING and attaches a file handler,
